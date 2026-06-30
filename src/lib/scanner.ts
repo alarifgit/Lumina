@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { db } from "@/lib/db";
 import { searchTmdb, applyTmdbMetadata } from "@/lib/tmdb";
+import { findSubtitlesForVideo } from "@/lib/subtitles";
 import type { ScanResult } from "@/lib/types";
 
 const VIDEO_EXTS = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".ts"];
@@ -16,7 +17,7 @@ function isVideo(name: string): boolean {
 function cleanTitle(raw: string): { title: string; year: number | null } {
   let t = path.basename(raw, path.extname(raw));
   t = t.replace(/[._]/g, " ");
-  t = t.replace(/\b(1080p|720p|480p|2160p|4k|x264|x265|h264|h265|hevc|bluray|web-dl|webrip|web|brrip|bdrip|dvdrip|remux|hdr|atmos|aac|ac3|5\.1|2\.0|10bit)\b/gi, " ");
+  t = t.replace(/\b(1080p|720p|480p|2160p|4k|x264|x265|h264|h265|hevc|bluray|web-dl|webrip|web|brrip|bdrip|dvdrip|remux|hdr|atmos|aac|ac3|5\.1|2\.0|10bit|dual|audio)\b/gi, " ");
   const yearMatch = t.match(/\((\d{4})\)|\b(19\d{2}|20\d{2})\b/);
   const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
   t = t.replace(/\(|\)|\[|\]/g, " ");
@@ -24,37 +25,42 @@ function cleanTitle(raw: string): { title: string; year: number | null } {
   return { title: t || raw, year };
 }
 
-export async function scanLibrary(opts: {
+export interface ScanOptions {
+  sectionId: string;
   mediaDir?: string;
   tmdbKey?: string;
   autoMatch?: boolean;
-}): Promise<ScanResult> {
+}
+
+/** Scan a single library section's media directory. */
+export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
   const start = Date.now();
-  const cfg = await db.libraryConfig.upsert({
-    where: { id: "default" },
-    update: {},
-    create: { id: "default", mediaDir: opts.mediaDir ?? "/media" },
-  });
-  const mediaDir = opts.mediaDir ?? cfg.mediaDir ?? process.env.MEDIA_DIR ?? "/media";
-  const tmdbKey = opts.tmdbKey ?? cfg.tmdbKey ?? process.env.TMDB_API_KEY ?? null;
-  const autoMatch = opts.autoMatch ?? !!tmdbKey;
+  const section = await db.librarySection.findUnique({ where: { id: opts.sectionId } });
+  if (!section) {
+    return {
+      scanned: 0, added: 0, updated: 0, skipped: 0,
+      errors: [`Section not found: ${opts.sectionId}`],
+      durationMs: Date.now() - start,
+      sectionId: opts.sectionId,
+    };
+  }
 
+  const mediaDir = opts.mediaDir ?? section.mediaDir;
+  const tmdbKey = opts.tmdbKey ?? section.tmdbKey ?? (await db.libraryConfig.findUnique({ where: { id: "default" } }))?.tmdbKey ?? null;
+  const autoMatch = opts.autoMatch ?? section.autoMatch;
   const errors: string[] = [];
-  let scanned = 0;
-  let added = 0;
-  let updated = 0;
-  let skipped = 0;
+  let scanned = 0, added = 0, updated = 0, skipped = 0;
 
-  let entries: string[] = [];
+  let entries: string[];
   try {
     entries = await fs.readdir(mediaDir);
   } catch (e) {
     errors.push(`Cannot read media directory "${mediaDir}": ${(e as Error).message}`);
-    await db.libraryConfig.update({
-      where: { id: "default" },
+    await db.librarySection.update({
+      where: { id: section.id },
       data: { lastScan: new Date(), scanCount: { increment: 1 }, mediaDir },
     });
-    return { scanned, added, updated, skipped, errors, durationMs: Date.now() - start };
+    return { scanned, added, updated, skipped, errors, durationMs: Date.now() - start, sectionId: section.id, sectionName: section.name };
   }
 
   for (const entry of entries) {
@@ -71,24 +77,26 @@ export async function scanLibrary(opts: {
       if (stat.isFile() && isVideo(entry)) {
         scanned++;
         const { title, year } = cleanTitle(entry);
-        const existing = await db.media.findFirst({ where: { title, type: "MOVIE" } });
+        const existing = await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } });
         if (existing) {
           await db.media.update({ where: { id: existing.id }, data: { filePath: entryPath, year: existing.year ?? year } });
+          await syncSubtitles(existing.id, null, entryPath);
           updated++;
         } else {
-          await db.media.create({
-            data: { type: "MOVIE", title, filePath: entryPath, year, sortTitle: title.toLowerCase() },
+          const m = await db.media.create({
+            data: { type: section.type, title, filePath: entryPath, year, sortTitle: title.toLowerCase(), sectionId: section.id, category: section.category },
           });
+          await syncSubtitles(m.id, null, entryPath);
           added++;
         }
-        if (autoMatch && tmdbKey && !existing?.tmdbId) {
-          await autoMatchTmdb((existing?.id) || (await db.media.findFirst({ where: { title, type: "MOVIE" } }))!.id, title, "MOVIE", year, tmdbKey, errors);
+        const target = existing ?? (await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } }));
+        if (autoMatch && tmdbKey && target && !target.tmdbId) {
+          await autoMatchTmdb(target.id, title, section.type as "MOVIE" | "TV", year, tmdbKey, errors);
         }
         continue;
       }
 
       if (stat.isDirectory()) {
-        // Detect TV show: has Season subdirs or episode-coded files
         let subEntries: string[] = [];
         try {
           subEntries = await fs.readdir(entryPath);
@@ -97,7 +105,6 @@ export async function scanLibrary(opts: {
           continue;
         }
 
-        const subdirs = subEntries.filter(async (s) => (await fs.stat(path.join(entryPath, s)).catch(() => ({ isDirectory: () => false }))).isDirectory());
         const hasSeasonDir = subEntries.some((s) => SEASON_RE.test(s));
         const allFiles = subEntries.filter((s) => isVideo(s));
         const hasEpisodeFiles = allFiles.some((s) => EPISODE_RE.test(s));
@@ -106,10 +113,10 @@ export async function scanLibrary(opts: {
           // TV show
           scanned++;
           const { title } = cleanTitle(entry);
-          let show = await db.media.findFirst({ where: { title, type: "TV" } });
+          let show = await db.media.findFirst({ where: { title, type: "TV", sectionId: section.id } });
           if (!show) {
             show = await db.media.create({
-              data: { type: "TV", title, filePath: entryPath, sortTitle: title.toLowerCase() },
+              data: { type: "TV", title, filePath: entryPath, sortTitle: title.toLowerCase(), sectionId: section.id, category: section.category },
             });
             added++;
           } else {
@@ -117,7 +124,6 @@ export async function scanLibrary(opts: {
             updated++;
           }
 
-          // collect episode files recursively (one level into season dirs)
           const epFiles: { season: number; episode: number; file: string }[] = [];
           for (const sub of subEntries) {
             const subPath = path.join(entryPath, sub);
@@ -145,10 +151,12 @@ export async function scanLibrary(opts: {
             });
             if (existingEp) {
               await db.episode.update({ where: { id: existingEp.id }, data: { filePath: ep.file } });
+              await syncSubtitles(show.id, existingEp.id, ep.file);
             } else {
-              await db.episode.create({
+              const newEp = await db.episode.create({
                 data: { mediaId: show.id, seasonNumber: ep.season, episodeNumber: ep.episode, title: epTitle, filePath: ep.file },
               });
+              await syncSubtitles(show.id, newEp.id, ep.file);
             }
           }
 
@@ -158,25 +166,26 @@ export async function scanLibrary(opts: {
           continue;
         }
 
-        // Otherwise: treat as a movie folder (single video inside)
-        const videos = allFiles;
-        if (videos.length > 0) {
+        // Movie folder (single video inside)
+        if (allFiles.length > 0) {
           scanned++;
           const { title, year } = cleanTitle(entry);
-          const file = path.join(entryPath, videos[0]);
-          const existing = await db.media.findFirst({ where: { title, type: "MOVIE" } });
+          const file = path.join(entryPath, allFiles[0]);
+          const existing = await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } });
           if (existing) {
             await db.media.update({ where: { id: existing.id }, data: { filePath: file, year: existing.year ?? year } });
+            await syncSubtitles(existing.id, null, file);
             updated++;
           } else {
-            await db.media.create({
-              data: { type: "MOVIE", title, filePath: file, year, sortTitle: title.toLowerCase() },
+            const m = await db.media.create({
+              data: { type: section.type, title, filePath: file, year, sortTitle: title.toLowerCase(), sectionId: section.id, category: section.category },
             });
+            await syncSubtitles(m.id, null, file);
             added++;
           }
-          if (autoMatch && tmdbKey && !existing?.tmdbId) {
-            const created = await db.media.findFirst({ where: { title, type: "MOVIE" } });
-            if (created) await autoMatchTmdb(created.id, title, "MOVIE", year, tmdbKey, errors);
+          const target = existing ?? (await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } }));
+          if (autoMatch && tmdbKey && target && !target.tmdbId) {
+            await autoMatchTmdb(target.id, title, section.type as "MOVIE" | "TV", year, tmdbKey, errors);
           }
         } else {
           skipped++;
@@ -187,12 +196,41 @@ export async function scanLibrary(opts: {
     }
   }
 
+  await db.librarySection.update({
+    where: { id: section.id },
+    data: { lastScan: new Date(), scanCount: { increment: 1 }, mediaDir, tmdbKey: tmdbKey ?? section.tmdbKey },
+  });
   await db.libraryConfig.update({
     where: { id: "default" },
-    data: { lastScan: new Date(), scanCount: { increment: 1 }, mediaDir, tmdbKey: tmdbKey ?? cfg.tmdbKey },
-  });
+    data: { lastScan: new Date(), scanCount: { increment: 1 } },
+  }).catch(() => {});
 
-  return { scanned, added, updated, skipped, errors, durationMs: Date.now() - start };
+  return { scanned, added, updated, skipped, errors, durationMs: Date.now() - start, sectionId: section.id, sectionName: section.name };
+}
+
+/** Detect + persist subtitle tracks for a video file (movie or episode). */
+async function syncSubtitles(mediaId: string, episodeId: string | null, videoPath: string) {
+  const found = await findSubtitlesForVideo(videoPath, (p) => fs.readdir(p));
+  // Remove existing subtitles for this target
+  if (episodeId) {
+    await db.subtitle.deleteMany({ where: { mediaId, episodeId } });
+  } else {
+    await db.subtitle.deleteMany({ where: { mediaId, episodeId: null } });
+  }
+  for (let i = 0; i < found.length; i++) {
+    const s = found[i];
+    await db.subtitle.create({
+      data: {
+        mediaId,
+        episodeId,
+        language: s.language,
+        label: s.label,
+        filePath: s.filePath,
+        format: s.format,
+        isDefault: i === 0,
+      },
+    });
+  }
 }
 
 async function autoMatchTmdb(

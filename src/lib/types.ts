@@ -36,6 +36,15 @@ export interface MediaSummary {
   progressUpdatedAt?: string | null;
 }
 
+export interface Subtitle {
+  id: string;
+  language: string;
+  label: string;
+  format: string;
+  isDefault: boolean;
+  url: string;
+}
+
 export interface Episode {
   id: string;
   seasonNumber: number;
@@ -47,6 +56,7 @@ export interface Episode {
   runtime: number | null;
   streamUrl: string | null;
   filePath: string | null;
+  subtitles: Subtitle[];
   progressPercent?: number;
   progressPosition?: number;
   progressDuration?: number;
@@ -70,6 +80,9 @@ export interface MediaDetail extends MediaSummary {
   releaseDate: string | null;
   streamUrl: string | null;
   filePath: string | null;
+  subtitles: Subtitle[];
+  sectionId: string | null;
+  category: string;
   seasons: Season[];
   episodes: Episode[]; // episodes of the currently-selected season
   nextEpisode?: Episode | null;
@@ -114,4 +127,19 @@ export interface ScanResult {
   skipped: number;
   errors: string[];
   durationMs: number;
+  sectionId?: string;
+  sectionName?: string;
+}
+
+export interface LibrarySectionInfo {
+  id: string;
+  name: string;
+  type: MediaType;
+  category: string;
+  mediaDir: string;
+  tmdbKey: string | null;
+  autoMatch: boolean;
+  lastScan: string | null;
+  scanCount: number;
+  mediaCount: number;
 }

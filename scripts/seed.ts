@@ -39,6 +39,7 @@ interface TitleSeed {
   releaseDate: string;
   status: string;
   episodes?: { title: string; overview: string; runtime: number }[];
+  category?: string; // "default" | "anime"
 }
 
 const DATA: TitleSeed[] = [
@@ -308,10 +309,76 @@ const DATA: TitleSeed[] = [
       { title: "Contrapasso", overview: "The Man in Black closes in on a secret.", runtime: 57 },
     ],
   },
+  // ── Anime Movies ──
+  {
+    type: "MOVIE", title: "Spirited Away", year: 2001, rating: 8.5, runtime: 125,
+    genres: ["Animation", "Family", "Fantasy"], certification: "PG",
+    tagline: "The tunnel led Chihiro to a mysterious town...",
+    overview: "A young girl, Chihiro, becomes trapped in a strange new world of spirits. When her parents undergo a mysterious transformation, she must call upon the courage she never knew she had to free her family.",
+    popularity: 75.6, releaseDate: "2001-07-20", status: "Released", category: "anime",
+  },
+  {
+    type: "MOVIE", title: "Akira", year: 1988, rating: 8.0, runtime: 124,
+    genres: ["Animation", "Science Fiction", "Action"], certification: "R",
+    tagline: "Neo-Tokyo is about to E.X.P.L.O.D.E.",
+    overview: "Childhood friends Tetsuo and Kaneda are pulled into the gang life of a dystopian Neo-Tokyo. When Tetsuo acquires psychic powers, his descent into madness threatens the entire city.",
+    popularity: 68.4, trending: true, releaseDate: "1988-07-16", status: "Released", category: "anime",
+  },
+  {
+    type: "MOVIE", title: "Your Name", year: 2016, rating: 8.4, runtime: 106,
+    genres: ["Animation", "Romance", "Drama"], certification: "PG",
+    tagline: "It was the first time they met. It was the last time they saw each other.",
+    overview: "Two strangers find themselves linked in a bizarre way: when a teenage girl switches bodies with a high school boy, a connection forms that will transcend time and space.",
+    popularity: 72.9, releaseDate: "2016-08-26", status: "Released", category: "anime",
+  },
+  // ── Anime TV ──
+  {
+    type: "TV", title: "Attack on Titan", year: 2013, rating: 8.5, runtime: 24,
+    genres: ["Animation", "Action", "Drama"], certification: "TV-MA",
+    tagline: "The last hope of humanity.",
+    overview: "After his hometown is destroyed by the Titans, young Eren Yeager vows to cleanse the earth of the giant humanoid creatures that threaten to destroy what remains of humanity.",
+    popularity: 84.2, featured: true, trending: true, releaseDate: "2013-04-07", status: "Ended", category: "anime",
+    episodes: [
+      { title: "To You, 2000 Years From Now", overview: "The Scout Regiment fights the Titans in the ruins of Shiganshina.", runtime: 24 },
+      { title: "That Day", overview: "Eren trains to become a soldier alongside his friends.", runtime: 24 },
+      { title: "A Dim Light Amid Despair", overview: "The cadets face their first real battle against the Titans.", runtime: 24 },
+      { title: "The Night of the Closing Ceremony", overview: "Graduation day arrives for the training corps.", runtime: 24 },
+      { title: "First Battle", overview: "Eren and his squad are sent to the front lines.", runtime: 24 },
+    ],
+  },
+  {
+    type: "TV", title: "Death Note", year: 2006, rating: 8.6, runtime: 23,
+    genres: ["Animation", "Crime", "Thriller"], certification: "TV-14",
+    tagline: "I am justice.",
+    overview: "An intelligent high school student goes on a secret crusade to eliminate criminals from the world after discovering a notebook capable of killing anyone whose name is written into it.",
+    popularity: 78.8, trending: true, releaseDate: "2006-10-04", status: "Ended", category: "anime",
+    episodes: [
+      { title: "Rebirth", overview: "Light Yagami discovers the Death Note.", runtime: 23 },
+      { title: "Confrontation", overview: "L challenges Kira on live television.", runtime: 23 },
+      { title: "Deals", overview: "Light makes a deal with a Shinigami.", runtime: 23 },
+      { title: "Pursuit", overview: "The FBI begins tracking suspects.", runtime: 23 },
+      { title: "Tactics", overview: "A trap is set to catch Kira.", runtime: 23 },
+    ],
+  },
+  {
+    type: "TV", title: "Cowboy Bebop", year: 1998, rating: 8.4, runtime: 24,
+    genres: ["Animation", "Sci-Fi & Fantasy", "Action & Adventure"], certification: "TV-14",
+    tagline: "See you, space cowboy.",
+    overview: "A ragtag crew of bounty hunters on the spaceship Bebop chase criminals across the solar system, each running from their own past.",
+    popularity: 70.5, releaseDate: "1998-04-03", status: "Ended", category: "anime",
+    episodes: [
+      { title: "Asteroid Blues", overview: "Spike and Jet pursue a bounty on a drug dealer.", runtime: 24 },
+      { title: "Stray Dog Strut", overview: "The crew hunts a data dog thief.", runtime: 24 },
+      { title: "Honky Tonk Women", overview: "A mysterious chess piece becomes the target.", runtime: 24 },
+      { title: "Gateway Shuffle", overview: "An eco-terrorist group threatens a planet.", runtime: 24 },
+      { title: "Ballad of Fallen Angels", overview: "Spike's past catches up with him.", runtime: 24 },
+    ],
+  },
 ];
 
 async function main() {
   console.log("Clearing existing data...");
+  await db.subtitle.deleteMany();
   await db.watchProgress.deleteMany();
   await db.collectionItem.deleteMany();
   await db.collection.deleteMany();
@@ -319,7 +386,18 @@ async function main() {
   await db.mediaGenre.deleteMany();
   await db.media.deleteMany();
   await db.genre.deleteMany();
+  await db.librarySection.deleteMany();
   await db.libraryConfig.deleteMany();
+
+  console.log("Creating library sections...");
+  const sections = await Promise.all([
+    db.librarySection.create({ data: { name: "Movies", type: "MOVIE", category: "default", mediaDir: "/media/movies" } }),
+    db.librarySection.create({ data: { name: "Movies (Anime)", type: "MOVIE", category: "anime", mediaDir: "/media/movies-anime" } }),
+    db.librarySection.create({ data: { name: "TV Shows", type: "TV", category: "default", mediaDir: "/media/tv" } }),
+    db.librarySection.create({ data: { name: "TV Shows (Anime)", type: "TV", category: "anime", mediaDir: "/media/tv-anime" } }),
+  ]);
+  const sectionByTypeCategory = (type: string, category: string) =>
+    sections.find((s) => s.type === type && s.category === category)!.id;
 
   console.log("Creating genres...");
   const usedGenres = new Set<string>();
@@ -330,10 +408,12 @@ async function main() {
 
   console.log(`Creating ${DATA.length} titles...`);
   let streamIdx = 0;
-  const createdMedia: { id: string; title: string; type: string }[] = [];
+  const createdMedia: { id: string; title: string; type: string; category: string }[] = [];
 
   for (const t of DATA) {
     const isMovie = t.type === "MOVIE";
+    const category = t.category ?? "default";
+    const sectionId = sectionByTypeCategory(t.type, category);
     const media = await db.media.create({
       data: {
         type: t.type,
@@ -353,12 +433,14 @@ async function main() {
         popularity: t.popularity,
         streamUrl: isMovie ? streamUrl(streamIdx) : null,
         filePath: isMovie ? `/media/${t.title} (${t.year}).mp4` : `/media/${t.title}`,
+        sectionId,
+        category,
         genres: {
           create: t.genres.map((g) => ({ genre: { connect: { name: g } } })),
         },
       },
     });
-    createdMedia.push({ id: media.id, title: t.title, type: t.type });
+    createdMedia.push({ id: media.id, title: t.title, type: t.type, category });
 
     if (!isMovie && t.episodes) {
       for (let i = 0; i < t.episodes.length; i++) {
@@ -422,7 +504,38 @@ async function main() {
     data: { id: "default", mediaDir: process.env.MEDIA_DIR ?? "/media", scanCount: 0 },
   });
 
-  console.log(`Done. Created ${createdMedia.length} titles.`);
+  console.log("Seeding subtitles...");
+  // Attach a demo English subtitle to a few movies + the first episode of some shows.
+  const subtitleTargets = [
+    { title: "The Dark Knight", episode: null as number | null },
+    { title: "Dune", episode: null },
+    { title: "Akira", episode: null },
+    { title: "Breaking Bad", episode: 1 },
+    { title: "Attack on Titan", episode: 1 },
+    { title: "Death Note", episode: 1 },
+  ];
+  for (const st of subtitleTargets) {
+    const m = createdMedia.find((x) => x.title === st.title);
+    if (!m) continue;
+    let episodeId: string | null = null;
+    if (st.episode) {
+      const ep = await db.episode.findFirst({ where: { mediaId: m.id, seasonNumber: 1, episodeNumber: st.episode } });
+      episodeId = ep?.id ?? null;
+    }
+    await db.subtitle.create({
+      data: {
+        mediaId: m.id,
+        episodeId,
+        language: "en",
+        label: "English",
+        streamUrl: "/subtitles/sample-en.vtt",
+        format: "vtt",
+        isDefault: true,
+      },
+    });
+  }
+
+  console.log(`Done. Created ${createdMedia.length} titles across ${sections.length} sections.`);
 }
 
 main()

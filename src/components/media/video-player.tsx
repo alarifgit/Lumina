@@ -14,6 +14,7 @@ import {
   SkipForward,
   Loader2,
   Settings,
+  Captions,
 } from "lucide-react";
 import { useMediaStore } from "@/store/media-store";
 import { useMediaDetail } from "@/lib/queries";
@@ -66,6 +67,8 @@ function PlayerSession({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [rateOpen, setRateOpen] = useState(false);
+  const [ccOpen, setCcOpen] = useState(false);
+  const [activeSubId, setActiveSubId] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [buffering, setBuffering] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
@@ -94,6 +97,9 @@ function PlayerSession({
     }
     return d.nextEpisode ?? d.episodes[0] ?? null;
   }, [d, activeEpId]);
+
+  // Subtitles for the currently-playing item (episode subs for TV, media subs for movies)
+  const subtitles = currentEpisode?.subtitles ?? d?.subtitles ?? [];
 
   const source = d
     ? currentEpisode
@@ -241,7 +247,26 @@ function PlayerSession({
     }
     v.volume = volume;
     v.play().catch(() => {});
+    // Initialise the active subtitle from the default track (if any)
+    const def = subtitles.find((s) => s.isDefault) ?? null;
+    setActiveSubId(def?.id ?? null);
+    if (def) {
+      // Ensure the default track is showing (browser may need a tick)
+      requestAnimationFrame(() => applySubtitle(def.id));
+    }
     flashControls();
+  };
+
+  /** Set a subtitle track as showing (or disable all if id is null). */
+  const applySubtitle = (id: string | null) => {
+    const v = videoRef.current;
+    if (!v) return;
+    const tracks = v.textTracks;
+    for (let i = 0; i < tracks.length && i < subtitles.length; i++) {
+      // tracks[i] corresponds to subtitles[i] (same render order)
+      tracks[i].mode = subtitles[i].id === id ? "showing" : "disabled";
+    }
+    setActiveSubId(id);
   };
 
   const seek = (val: number) => {
@@ -263,6 +288,7 @@ function PlayerSession({
       setResumeAt(0);
       setEnded(false);
       setCurrent(0);
+      setActiveSubId(null);
     }
   };
 
@@ -321,7 +347,17 @@ function PlayerSession({
             saveProgress(true);
             if (nextUp) playNext();
           }}
-        />
+        >
+          {subtitles.map((s) => (
+            <track
+              key={s.id}
+              kind="subtitles"
+              src={s.url}
+              srcLang={s.language}
+              label={s.label}
+            />
+          ))}
+        </video>
       )}
 
       {buffering && source && (
@@ -452,7 +488,7 @@ function PlayerSession({
 
           <div className="ml-auto flex items-center gap-2">
             <div className="relative">
-              <CtrlButton onClick={() => setRateOpen((o) => !o)} label="Playback speed">
+              <CtrlButton onClick={() => { setCcOpen(false); setRateOpen((o) => !o); }} label="Playback speed">
                 <Settings className="h-5 w-5" />
               </CtrlButton>
               {rateOpen && (
@@ -475,6 +511,53 @@ function PlayerSession({
             <span className="hidden text-xs font-medium text-white/60 sm:inline">
               {rate !== 1 ? `${rate}x` : "1x"}
             </span>
+
+            {/* Subtitles / CC */}
+            {subtitles.length > 0 && (
+              <div className="relative">
+                <CtrlButton
+                  onClick={() => {
+                    setRateOpen(false);
+                    setCcOpen((o) => !o);
+                  }}
+                  label="Subtitles"
+                >
+                  <Captions className={cn("h-5 w-5", activeSubId && "text-primary")} />
+                </CtrlButton>
+                {ccOpen && (
+                  <div className="absolute bottom-12 right-0 w-44 rounded-lg border border-white/15 bg-black/90 p-1 backdrop-blur">
+                    <button
+                      onClick={() => {
+                        applySubtitle(null);
+                        setCcOpen(false);
+                      }}
+                      className={cn(
+                        "block w-full rounded px-3 py-1.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
+                        activeSubId === null && "bg-white/10 font-semibold text-white"
+                      )}
+                    >
+                      Off
+                    </button>
+                    {subtitles.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => {
+                          applySubtitle(s.id);
+                          setCcOpen(false);
+                        }}
+                        className={cn(
+                          "block w-full rounded px-3 py-1.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
+                          activeSubId === s.id && "bg-white/10 font-semibold text-white"
+                        )}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <CtrlButton onClick={toggleFullscreen} label={fullscreen ? "Exit fullscreen" : "Fullscreen"}>
               {fullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
             </CtrlButton>

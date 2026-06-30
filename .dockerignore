@@ -1,0 +1,37 @@
+# Build artifacts
+.next
+node_modules
+
+# Local dev database & logs
+db
+dev.log
+server.log
+*.log
+
+# Environment (compose sets these at runtime)
+.env
+.env.*
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-entrypoint.sh
+.dockerignore
+
+# Verification screenshots (dev only)
+verify-*.png
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prisma generated client is regenerated during build
+# (kept out of context to reduce build size — copied from builder stage)

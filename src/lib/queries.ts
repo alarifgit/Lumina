@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import type {
   HomeData,
   LibraryStats,
+  LibrarySectionInfo,
   MediaDetail,
   MediaSummary,
   MediaType,
@@ -61,6 +62,7 @@ export function useMediaDetail(id: string | null, season?: number) {
 export interface BrowseParams {
   type?: MediaType;
   genre?: string | null;
+  category?: string | null;
   sort?: string;
   page: number;
   pageSize?: number;
@@ -71,6 +73,7 @@ export function useBrowse(params: BrowseParams) {
   const qs = new URLSearchParams();
   if (params.type) qs.set("type", params.type);
   if (params.genre) qs.set("genre", params.genre);
+  if (params.category) qs.set("category", params.category);
   if (params.q) qs.set("q", params.q);
   if (params.sort) qs.set("sort", params.sort);
   qs.set("page", String(params.page));
@@ -101,6 +104,7 @@ export function useBrowseInfinite(params: Omit<BrowseParams, "page">) {
     const qs = new URLSearchParams();
     if (params.type) qs.set("type", params.type);
     if (params.genre) qs.set("genre", params.genre);
+    if (params.category) qs.set("category", params.category);
     if (params.q) qs.set("q", params.q);
     if (params.sort) qs.set("sort", params.sort);
     qs.set("page", String(page));
@@ -112,6 +116,7 @@ export function useBrowseInfinite(params: Omit<BrowseParams, "page">) {
       "browse-infinite",
       params.type ?? "all",
       params.genre ?? "all",
+      params.category ?? "all",
       params.sort ?? "popular",
       params.q ?? "",
     ],
@@ -194,6 +199,76 @@ export function useApplyMetadata() {
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+// ── Library sections ──────────────────────────────────────────────
+
+export function useSections() {
+  return useQuery<LibrarySectionInfo[]>({
+    queryKey: ["sections"],
+    queryFn: () => fetchJson<LibrarySectionInfo[]>("/api/sections"),
+  });
+}
+
+export function useCreateSection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      type: MediaType;
+      category?: string;
+      mediaDir: string;
+      tmdbKey?: string;
+      autoMatch?: boolean;
+    }) => fetchJson<LibrarySectionInfo>("/api/sections", post(body)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sections"] }),
+  });
+}
+
+export function useUpdateSection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      id: string;
+      name?: string;
+      mediaDir?: string;
+      tmdbKey?: string;
+      autoMatch?: boolean;
+    }) => fetchJson<{ ok: boolean; id: string }>(`/api/sections/${body.id}`, { ...post(body), method: "PATCH" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sections"] }),
+  });
+}
+
+export function useDeleteSection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetchJson<{ ok: boolean }>(`/api/sections/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sections"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+}
+
+/** Scan a single section by its ID. */
+export function useScanSection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      sectionId: string;
+      mediaDir?: string;
+      tmdbKey?: string;
+      autoMatch?: boolean;
+    }) => fetchJson<ScanResult>("/api/sections/scan", post(body)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sections"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["home"] });
+      qc.invalidateQueries({ queryKey: ["genres"] });
+      qc.invalidateQueries({ queryKey: ["browse"], exact: false });
     },
   });
 }

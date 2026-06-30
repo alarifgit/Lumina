@@ -163,3 +163,24 @@ Work Log:
 
 Stage Summary:
 - Browser-verified, fully interactive, production-ready personal media streaming frontend.
+
+---
+Task ID: 6
+Agent: orchestrator (main)
+Task: Library sections (separate scan roots, unified display) + subtitle detection/playback + host-mounted DB + Docker deployment.
+
+Work Log:
+- Schema: added `LibrarySection` (name, type, category, mediaDir, tmdbKey, autoMatch, scan stats) + `Subtitle` (language, label, filePath/streamUrl, format, isDefault) models. Added `sectionId`/`category` to Media (denormalised for fast unified queries). Pushed to DB.
+- `src/lib/subtitles.ts`: subtitle format detection, language parsing from filenames, `findSubtitlesForVideo` (detects sibling .srt/.vtt/.ass files matching video base name), `srtToVtt` converter, `readSubtitleAsVtt` (serves local subs as VTT).
+- `src/lib/scanner.ts`: rewritten for per-section scanning (`scanSection` takes a sectionId, reads that section's mediaDir, assigns sectionId + category to each media, detects + persists subtitle tracks for every video file).
+- `src/lib/media-queries.ts`: added `serializeSubtitles` helper, included subtitles in MediaDetail + Episode responses, added optional `category` filter to browse, added section CRUD (getSections, createSection, updateSection, deleteSection, getSubtitle).
+- API routes: `/api/sections` (GET/POST), `/api/sections/[id]` (PATCH/DELETE), `/api/sections/scan` (POST — per-section scan), `/api/subtitles/[id]` (GET — serves VTT, converts SRT, redirects remote). Updated `/api/library/scan` to scan all sections sequentially.
+- `src/lib/queries.ts`: added useSections, useCreateSection, useUpdateSection, useDeleteSection, useScanSection hooks. Added optional `category` to BrowseParams.
+- Video player: added `<track>` elements for each subtitle, CC button (Captions icon) with menu (Off + language list), `applySubtitle` sets track.mode showing/disabled. Default subtitle auto-shows on load. CC icon turns primary when active.
+- Library view: rewritten with section cards (name, type/category badges, editable media dir, per-section Scan button, delete), Add Section form (name/type/category/dir), Scan All Sections button, global TMDB key, inline scan results per section. Media table kept below.
+- Seed: 4 sections (Movies, Movies-Anime, TV Shows, TV-Anime), 6 anime titles added (3 movies + 3 TV shows), all media assigned to sections by type+category, 6 subtitle records attached (sample VTT at /public/subtitles/sample-en.vtt). 34 titles total, 65 episodes.
+- Docker: `Dockerfile` (3-stage: deps → build → runner, copies standalone + prisma CLI for db push), `docker-entrypoint.sh` (runs `prisma db push` on start, idempotent), `docker-compose.yml` (Portainer stack with host bind mounts for /data DB + 4 media directories, no Docker volumes), `.dockerignore`.
+
+Stage Summary:
+- Browser-verified: 4 sections render with per-section Scan buttons; per-section scan returns result inline; home/browse show anime + regular unified (Attack on Titan, Death Note, Akira appear alongside regular titles); subtitle CC button appears in player, menu shows Off/English, toggling changes track mode showing↔disabled; video plays with subtitles on by default. Lint clean, no runtime errors.
+- Docker: build with `docker build -t lumina .`, deploy via Portainer stack. DB on host-mounted `./data`, media on host-mounted paths. Entrypoint auto-creates schema on first start.

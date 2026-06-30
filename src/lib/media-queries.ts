@@ -8,8 +8,33 @@ import type {
   HomeData,
   ContentRow,
   LibraryStats,
+  LibrarySectionInfo,
   MediaType,
+  Subtitle,
 } from "@/lib/types";
+
+type SubtitleRow = {
+  id: string;
+  language: string;
+  label: string;
+  format: string;
+  isDefault: boolean;
+  streamUrl: string | null;
+  filePath: string | null;
+};
+
+/** Serialise subtitle rows into the client-facing shape with a serving URL. */
+function serializeSubtitles(rows: SubtitleRow[]): Subtitle[] {
+  return rows.map((s) => ({
+    id: s.id,
+    language: s.language,
+    label: s.label,
+    format: s.format,
+    isDefault: s.isDefault,
+    // Remote subs use their URL directly; local subs are served (and SRT→VTT converted) by the API
+    url: s.streamUrl ?? `/api/subtitles/${s.id}`,
+  }));
+}
 
 const MY_LIST_SLUG = "my-list";
 
@@ -283,8 +308,10 @@ export async function getMediaDetail(
     where: { id },
     include: {
       genres: { include: { genre: true } },
+      subtitles: true,
       episodes: {
         orderBy: [{ seasonNumber: "asc" }, { episodeNumber: "asc" }],
+        include: { subtitles: true },
       },
     },
   });
@@ -335,6 +362,7 @@ export async function getMediaDetail(
       runtime: e.runtime,
       streamUrl: e.streamUrl,
       filePath: e.filePath,
+      subtitles: serializeSubtitles(e.subtitles),
       ...(p
         ? {
             progressPercent:
@@ -365,6 +393,7 @@ export async function getMediaDetail(
       runtime: next.runtime,
       streamUrl: next.streamUrl,
       filePath: next.filePath,
+      subtitles: serializeSubtitles(next.subtitles),
     };
   }
 
@@ -396,6 +425,9 @@ export async function getMediaDetail(
     releaseDate: media.releaseDate?.toISOString() ?? null,
     streamUrl: media.streamUrl,
     filePath: media.filePath,
+    subtitles: serializeSubtitles(media.subtitles),
+    sectionId: media.sectionId,
+    category: media.category,
     seasons,
     episodes,
     nextEpisode,
@@ -405,14 +437,16 @@ export async function getMediaDetail(
 export async function browseMedia(params: {
   type?: MediaType;
   genre?: string;
+  category?: string;
   q?: string;
   sort?: string;
   page?: number;
   pageSize?: number;
 }) {
-  const { type, genre, q, sort = "popular", page = 1, pageSize = 24 } = params;
+  const { type, genre, category, q, sort = "popular", page = 1, pageSize = 24 } = params;
   const where: Prisma.MediaWhereInput = {};
   if (type) where.type = type;
+  if (category) where.category = category;
   if (q) where.title = { contains: q };
   if (genre) where.genres = { some: { genre: { name: genre } } };
 
@@ -527,4 +561,82 @@ export async function toggleMyList(mediaId: string) {
   }
   await db.collectionItem.create({ data: { collectionId: col.id, mediaId } });
   return { ok: true, inMyList: true };
+}
+
+// ── Library sections ──────────────────────────────────────────────
+
+export async function getSections(): Promise<LibrarySectionInfo[]> {
+  const sections = await db.librarySection.findMany({
+    orderBy: [{ type: "asc" }, { category: "asc" }, { name: "asc" }],
+    include: { _count: { select: { media: true } } },
+  });
+  return sections.map((s) => ({
+    id: s.id,
+    name: s.name,
+    type: s.type as MediaType,
+    category: s.category,
+    mediaDir: s.mediaDir,
+    tmdbKey: s.tmdbKey,
+    autoMatch: s.autoMatch,
+    lastScan: s.lastScan?.toISOString() ?? null,
+    scanCount: s.scanCount,
+    mediaCount: s._count.media,
+  }));
+}
+
+export async function createSection(input: {
+  name: string;
+  type: MediaType;
+  category?: string;
+  mediaDir: string;
+  tmdbKey?: string;
+  autoMatch?: boolean;
+}): Promise<LibrarySectionInfo> {
+  const s = await db.librarySection.create({
+    data: {
+      name: input.name,
+      type: input.type,
+      category: input.category ?? "default",
+      mediaDir: input.mediaDir,
+      tmdbKey: input.tmdbKey,
+      autoMatch: input.autoMatch ?? true,
+    },
+  });
+  return {
+    id: s.id,
+    name: s.name,
+    type: s.type as MediaType,
+    category: s.category,
+    mediaDir: s.mediaDir,
+    tmdbKey: s.tmdbKey,
+    autoMatch: s.autoMatch,
+    lastScan: s.lastScan?.toISOString() ?? null,
+    scanCount: s.scanCount,
+    mediaCount: 0,
+  };
+}
+
+export async function updateSection(
+  id: string,
+  input: Partial<{
+    name: string;
+    mediaDir: string;
+    tmdbKey: string;
+    autoMatch: boolean;
+  }>
+) {
+  const s = await db.librarySection.update({ where: { id }, data: input });
+  return { ok: true, id: s.id };
+}
+
+export async function deleteSection(id: string) {
+  // Detach media (set sectionId null, keep category for display continuity) then delete section
+  await db.media.updateMany({ where: { sectionId: id }, data: { sectionId: null } });
+  await db.librarySection.delete({ where: { id } });
+  return { ok: true };
+}
+
+/** Get a single subtitle record (for the serving endpoint). */
+export async function getSubtitle(id: string) {
+  return db.subtitle.findUnique({ where: { id } });
 }

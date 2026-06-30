@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────
+#  Lumina — Portainer Stack / docker-compose
+#  Personal media streaming frontend
+# ─────────────────────────────────────────────────────────────────────
+#
+#  BUILD (run once on your host, or after pulling updates):
+#    docker build -t lumina:latest .
+#
+#  Then deploy this stack in Portainer, OR run directly:
+#    docker compose up -d
+#
+#  The SQLite database is written to a HOST-MOUNTED directory (./data),
+#  not a Docker named volume — so it persists on your host filesystem.
+#  Point each media section at a different host folder.
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  lumina:
+    # Use the image you built with `docker build -t lumina:latest .`
+    image: lumina:latest
+    # Alternatively, uncomment build: to let Portainer/Compose build it:
+    # build: .
+
+    container_name: lumina
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      # SQLite database — stored on the host via the ./data bind mount below
+      DATABASE_URL: "file:/data/lumina.db"
+      # Optional: set a TMDB API key globally (get one free at themoviedb.org/settings/api)
+      # Individual library sections can also have their own keys.
+      TMDB_API_KEY: ""
+      # Next.js
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    volumes:
+      # ── Database (host-mounted, NOT a Docker volume) ──
+      # The SQLite file lives here on your host. Back this up.
+      - ./data:/data
+
+      # ── Media sections (each section scans its own directory) ──
+      # Mount a different host folder for each library section.
+      # These paths match the default sections created by the seed:
+      #   Movies            → /media/movies
+      #   Movies (Anime)    → /media/movies-anime
+      #   TV Shows          → /media/tv
+      #   TV Shows (Anime)  → /media/tv-anime
+      #
+      # Change the left side to point at your actual media on the host:
+      - /mnt/media/movies:/media/movies
+      - /mnt/media/movies-anime:/media/movies-anime
+      - /mnt/media/tv:/media/tv
+      - /mnt/media/tv-anime:/media/tv-anime
+
+      # You can also add custom sections in the Library tab and mount them here.
+      # e.g.  - /mnt/media/documentaries:/media/docs

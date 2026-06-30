@@ -40,6 +40,11 @@ model Media {
   featured      Boolean  @default(false)
   trending      Boolean  @default(false)
   popularity    Float    @default(0)
+  /// Which library section this belongs to (denormalised category for fast unified queries)
+  sectionId     String?
+  section       LibrarySection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  /// "default" | "anime" | custom — denormalised from section so home/browse stay unified by type
+  category      String   @default("default")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -47,11 +52,14 @@ model Media {
   episodes    Episode[]
   progress    WatchProgress[]
   collections CollectionItem[]
+  subtitles   Subtitle[]
 
   @@index([type])
   @@index([year])
   @@index([featured])
   @@index([trending])
+  @@index([sectionId])
+  @@index([category])
 }
 
 model Episode {
@@ -69,6 +77,7 @@ model Episode {
   runtime       Int?
   createdAt     DateTime @default(now())
   progress      WatchProgress[]
+  subtitles     Subtitle[]
 
   @@unique([mediaId, seasonNumber, episodeNumber])
   @@index([mediaId, seasonNumber])
@@ -124,7 +133,55 @@ model CollectionItem {
   @@unique([collectionId, mediaId])
 }
 
-/// Library scanner configuration
+/// A library scan section — each has its own media directory + type + category.
+/// e.g. "TV Shows" (type=TV, category=default), "TV Shows (Anime)" (type=TV, category=anime),
+///      "Movies" (type=MOVIE, category=default), "Movies (Anime)" (type=MOVIE, category=anime)
+/// Display (home/browse) is always unified by `type`; sections are only for scanning + mounting.
+model LibrarySection {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  /// "MOVIE" | "TV"
+  type       String
+  /// "default" | "anime" | custom label used to group but NOT to split display
+  category   String   @default("default")
+  mediaDir   String
+  tmdbKey    String?
+  autoMatch  Boolean  @default(true)
+  lastScan   DateTime?
+  scanCount  Int      @default(0)
+  createdAt  DateTime @default(now())
+  media      Media[]
+
+  @@index([type])
+  @@index([category])
+}
+
+/// A subtitle track for a movie or episode.
+/// Served as WebVTT (SRT is auto-converted by the /api/subtitles/:id endpoint).
+model Subtitle {
+  id         String   @id @default(cuid())
+  mediaId    String
+  episodeId  String?
+  media      Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  episode    Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  /// ISO 639-1 language code, e.g. "en", "ja", "es"
+  language   String   @default("en")
+  /// Human label, e.g. "English", "Japanese (with subs)"
+  label      String
+  /// Local path to subtitle file (.srt, .vtt, .ass, .ssa, .sub)
+  filePath   String?
+  /// Direct URL (used for demo / remote subs)
+  streamUrl  String?
+  /// Format hint derived from extension: "vtt" | "srt" | "ass" | "ssa" | "sub"
+  format     String   @default("srt")
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([mediaId])
+  @@index([episodeId])
+}
+
+/// Global library configuration (TMDB key default, etc.)
 model LibraryConfig {
   id        String    @id @default("default")
   mediaDir  String    @default("/media")
