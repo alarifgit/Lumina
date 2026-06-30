@@ -1,0 +1,134 @@
+// Lumina — personal media streaming frontend
+// Prisma schema (SQLite)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A movie or a TV show (top-level item)
+model Media {
+  id            String   @id @default(cuid())
+  type          String // "MOVIE" | "TV"
+  title         String
+  sortTitle     String?
+  /// Movie: path to the video file. TV: path to the show root folder.
+  filePath      String?
+  /// Optional remote URL used when no local file is available (demo / fallback)
+  streamUrl     String?
+  tmdbId        Int?     @unique
+  imdbId        String?
+  overview      String?
+  tagline       String?
+  /// Full URL to poster image
+  posterUrl     String?
+  /// Full URL to backdrop image
+  backdropUrl   String?
+  releaseDate   DateTime?
+  year          Int?
+  /// Runtime in minutes (movie runtime or average episode runtime)
+  runtime       Int?
+  /// 0–10 rating (TMDB vote average)
+  rating        Float?
+  voteCount     Int?
+  status        String?
+  certification String?
+  featured      Boolean  @default(false)
+  trending      Boolean  @default(false)
+  popularity    Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  genres      MediaGenre[]
+  episodes    Episode[]
+  progress    WatchProgress[]
+  collections CollectionItem[]
+
+  @@index([type])
+  @@index([year])
+  @@index([featured])
+  @@index([trending])
+}
+
+model Episode {
+  id            String   @id @default(cuid())
+  mediaId       String
+  media         Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  seasonNumber  Int
+  episodeNumber Int
+  title         String
+  filePath      String?
+  streamUrl     String?
+  overview      String?
+  stillUrl      String?
+  airDate       DateTime?
+  runtime       Int?
+  createdAt     DateTime @default(now())
+  progress      WatchProgress[]
+
+  @@unique([mediaId, seasonNumber, episodeNumber])
+  @@index([mediaId, seasonNumber])
+}
+
+model Genre {
+  id    Int    @id
+  name  String @unique
+  media MediaGenre[]
+}
+
+model MediaGenre {
+  mediaId String
+  genreId Int
+  media   Media @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  genre   Genre @relation(fields: [genreId], references: [id])
+
+  @@id([mediaId, genreId])
+}
+
+/// Per-user watch progress (single user assumed for personal library)
+model WatchProgress {
+  id         String   @id @default(cuid())
+  mediaId    String
+  episodeId  String?
+  media      Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  episode    Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  position   Float    @default(0) // seconds played
+  duration   Float    @default(0) // seconds total
+  completed  Boolean  @default(false)
+  updatedAt  DateTime @updatedAt
+
+  @@index([mediaId, episodeId])
+}
+
+/// A user-curated list (e.g. "My List")
+model Collection {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique @default("my-list")
+  createdAt DateTime @default(now())
+  items     CollectionItem[]
+}
+
+model CollectionItem {
+  id           String   @id @default(cuid())
+  collectionId String
+  mediaId      String
+  addedAt      DateTime @default(now())
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  media        Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, mediaId])
+}
+
+/// Library scanner configuration
+model LibraryConfig {
+  id        String    @id @default("default")
+  mediaDir  String    @default("/media")
+  tmdbKey   String?
+  lastScan  DateTime?
+  scanCount Int       @default(0)
+}
