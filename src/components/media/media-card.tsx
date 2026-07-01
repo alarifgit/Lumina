@@ -20,6 +20,12 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
   const toggle = useToggleMyList();
   const pct = progressPercent(media);
   const showImg = !!media.posterUrl && !imgError;
+  // "New" badge for items added within the last 14 days
+  const isNew = (() => {
+    if (!media.createdAt) return false;
+    const age = Date.now() - new Date(media.createdAt).getTime();
+    return age < 14 * 86400000;
+  })();
 
   return (
     <div
@@ -87,6 +93,11 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
         <div className="absolute left-1.5 top-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white/80 backdrop-blur">
           {media.type === "TV" ? "TV" : "Film"}
         </div>
+        {isNew && (
+          <div className="absolute left-1.5 top-7 rounded bg-primary px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-primary-foreground backdrop-blur">
+            New
+          </div>
+        )}
         {media.rating != null && (
           <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur">
             <Star className="h-2.5 w-2.5 fill-primary text-primary" />

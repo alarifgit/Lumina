@@ -15,6 +15,7 @@ import {
   Loader2,
   Settings,
   Captions,
+  X,
 } from "lucide-react";
 import { useMediaStore } from "@/store/media-store";
 import { useMediaDetail } from "@/lib/queries";
@@ -73,6 +74,8 @@ function PlayerSession({
   const [buffering, setBuffering] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [ended, setEnded] = useState(false);
+  const [audioError, setAudioError] = useState(false);
+  const [audioHintDismissed, setAudioHintDismissed] = useState(false);
 
   const d = detail.data;
 
@@ -237,6 +240,35 @@ function PlayerSession({
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
+  // Detect missing/unplayable audio. After the video starts playing, if the
+  // browser exposes audioTracks but none are enabled/working, or if a media
+  // error fires specifically on the audio decoder, we surface a hint.
+  // (Most common cause: AC3/DTS/TrueHD audio codecs that browsers can't decode.)
+  useEffect(() => {
+    if (!playing || audioError) return;
+    const v = videoRef.current;
+    if (!v) return;
+    // Use HTMLMediaElement.error for hard decode failures
+    const onErr = () => {
+      if (v.error && v.error.code === MediaError.MEDIA_ERR_DECODE) {
+        setAudioError(true);
+      }
+    };
+    v.addEventListener("error", onErr);
+    // Some browsers expose audioTracks — if all are disabled, flag it
+    const checkAudio = () => {
+      const at = (v as HTMLVideoElement & { audioTracks?: { length: number; enabled: boolean }[] }).audioTracks;
+      if (at && at.length > 0 && !at.some((t) => t.enabled)) {
+        setAudioError(true);
+      }
+    };
+    const t = setTimeout(checkAudio, 1500);
+    return () => {
+      v.removeEventListener("error", onErr);
+      clearTimeout(t);
+    };
+  }, [playing, audioError]);
+
   const onLoadedMetadata = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -347,6 +379,12 @@ function PlayerSession({
             saveProgress(true);
             if (nextUp) playNext();
           }}
+          onError={(e) => {
+            const v = e.currentTarget;
+            if (v.error && v.error.code === MediaError.MEDIA_ERR_DECODE) {
+              setAudioError(true);
+            }
+          }}
         >
           {subtitles.map((s) => (
             <track
@@ -363,6 +401,32 @@ function PlayerSession({
       {buffering && source && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <Loader2 className="h-12 w-12 animate-spin text-white/80" />
+        </div>
+      )}
+
+      {/* Audio decode hint — shown when the browser can't decode the audio track.
+          Most common cause: AC3/DTS/TrueHD audio codecs in downloaded movies. */}
+      {audioError && !audioHintDismissed && (
+        <div className="absolute inset-x-0 top-20 z-20 mx-auto max-w-md px-4">
+          <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-black/90 p-3 text-sm text-white shadow-xl backdrop-blur">
+            <VolumeX className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+            <div className="flex-1">
+              <p className="font-semibold text-amber-300">No audio detected</p>
+              <p className="mt-0.5 text-xs text-white/70">
+                This file&apos;s audio codec (often AC3/DTS/TrueHD from Blu-ray rips)
+                can&apos;t be decoded by the browser. Re-encode the audio to AAC using
+                <code className="mx-1 rounded bg-white/10 px-1 py-0.5 text-[10px]">ffmpeg -i in.mkv -c:v copy -c:a aac -b:a 192k out.mp4</code>
+                to restore sound.
+              </p>
+            </div>
+            <button
+              onClick={() => setAudioHintDismissed(true)}
+              className="shrink-0 rounded-full p-1 text-white/60 hover:bg-white/10 hover:text-white"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
 

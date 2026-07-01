@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   FolderSearch,
   Film,
@@ -30,6 +30,7 @@ import {
   useUpdateSection,
   useDeleteSection,
   useScanSection,
+  useSaveTmdbKey,
 } from "@/lib/queries";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
@@ -58,6 +59,7 @@ export function LibraryView() {
   const scanAll = useScan();
   const metaSearch = useMetadataSearch();
   const applyMeta = useApplyMetadata();
+  const saveTmdbKey = useSaveTmdbKey();
   const list = useBrowse({ page: 1, pageSize: 100 });
   const { toast } = useToast();
 
@@ -73,6 +75,28 @@ export function LibraryView() {
   const [newType, setNewType] = useState<MediaType>("MOVIE");
   const [newCategory, setNewCategory] = useState("default");
   const [newDir, setNewDir] = useState("");
+
+  // Load the saved TMDB key from the database once stats arrive.
+  // Only populate when the user hasn't typed anything yet (avoids clobbering edits).
+  useEffect(() => {
+    if (stats?.tmdbKey && !globalTmdbKey) {
+      setGlobalTmdbKey(stats.tmdbKey);
+    }
+  }, [stats?.tmdbKey]);
+
+  const onSaveTmdbKey = async () => {
+    try {
+      await saveTmdbKey.mutateAsync(globalTmdbKey);
+      toast({
+        title: "TMDB key saved",
+        description: globalTmdbKey
+          ? "This key will be used for all scans and metadata fetches."
+          : "TMDB key cleared. Scans will run without metadata matching.",
+      });
+    } catch (e) {
+      toast({ title: "Couldn't save key", description: (e as Error).message, variant: "destructive" });
+    }
+  };
 
   const onScanAll = async () => {
     setAllResult(null);
@@ -261,14 +285,33 @@ export function LibraryView() {
         <div className="mt-5 border-t border-border/60 pt-5">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-foreground/50">TMDB API key (applies to all scans)</label>
-              <Input
-                type="password"
-                value={globalTmdbKey}
-                onChange={(e) => setGlobalTmdbKey(e.target.value)}
-                placeholder="Get one free at themoviedb.org/settings/api"
-                className="font-mono text-sm"
-              />
+              <label className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-foreground/50">
+                <span>TMDB API key (saved for all scans)</span>
+                {stats?.tmdbKey && (
+                  <span className="inline-flex items-center gap-1 normal-case tracking-normal text-primary">
+                    <CheckCircle2 className="h-3 w-3" /> Saved
+                  </span>
+                )}
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={globalTmdbKey}
+                  onChange={(e) => setGlobalTmdbKey(e.target.value)}
+                  placeholder="Get one free at themoviedb.org/settings/api"
+                  className="font-mono text-sm"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onSaveTmdbKey}
+                  disabled={saveTmdbKey.isPending}
+                  className="shrink-0"
+                >
+                  {saveTmdbKey.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                  Save
+                </Button>
+              </div>
             </div>
             <div className="flex items-end gap-3">
               <label className="flex items-center gap-2 text-sm text-foreground/70">

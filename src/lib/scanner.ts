@@ -55,7 +55,10 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
   try {
     entries = await fs.readdir(mediaDir);
   } catch (e) {
-    errors.push(`Cannot read media directory "${mediaDir}": ${(e as Error).message}`);
+    const msg = (e as NodeJS.ErrnoException).code === "ENOENT"
+      ? `Directory does not exist: "${mediaDir}" — check that you mounted your media folder at this path (docker-compose volume mapping).`
+      : `Cannot read media directory "${mediaDir}": ${(e as Error).message}`;
+    errors.push(msg);
     await db.librarySection.update({
       where: { id: section.id },
       data: { lastScan: new Date(), scanCount: { increment: 1 }, mediaDir },

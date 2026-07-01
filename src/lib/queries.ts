@@ -181,6 +181,15 @@ export function useScan() {
   });
 }
 
+export function useSaveTmdbKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tmdbKey: string) =>
+      fetchJson<{ ok: boolean }>("/api/library/config", post({ tmdbKey })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["stats"] }),
+  });
+}
+
 export function useMetadataSearch() {
   return useMutation({
     mutationFn: (body: { title: string; type: "MOVIE" | "TV"; year?: number }) =>

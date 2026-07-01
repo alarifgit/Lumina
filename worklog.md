@@ -199,3 +199,17 @@ Work Log:
 
 Stage Summary:
 - User rebuilds: `docker build -t lumina:latest .` then redeploy. On a fresh /data volume, `prisma db push` will now succeed and create all tables before the server starts.
+
+---
+Task ID: 8
+Agent: orchestrator (main)
+Task: Audio diagnosis + Recently Added home rows + TMDB key persistence + scan warnings clarity.
+
+Work Log:
+- **Audio diagnosis**: Added `audioError` + `audioHintDismissed` state to video player. Added `onError` handler on `<video>` that flags `MEDIA_ERR_DECODE`. Added a useEffect that checks `audioTracks` for disabled tracks after playback starts. Renders a dismissible amber banner explaining the likely cause (AC3/DTS/TrueHD codec) with an ffmpeg re-encode command. (Note: real audio transcoding via ffmpeg is a future feature; this surfaces the problem clearly.)
+- **Recently Added rows**: Added `getRecentlyAddedEpisodes(limit)` (newest episodes, deduped by show, with episode S/Ep context) and `getRecentlyAddedMovies(limit)` to media-queries. Wired both into `getHomeData` as the first two rows after Continue Watching: "Recently Added Episodes" + "Recently Added Movies". Added `createdAt` to MediaSummary type + `toSummary`. Added a "NEW" badge to MediaCard for items added within 14 days.
+- **TMDB key persistence**: Added `saveTmdbKey(key)` to media-queries (upserts LibraryConfig.tmdbKey). Added `tmdbKey` to LibraryStats response. New API route POST `/api/library/config`. New `useSaveTmdbKey` hook. Updated Library view: useEffect loads saved key from stats into the input, a "Save" button persists it, a "Saved" indicator appears when a key is stored. Verified key survives page reload.
+- **Scan warnings clarity**: Scanner now distinguishes ENOENT (directory doesn't exist) with a helpful message about checking docker-compose volume mappings, vs other read errors.
+
+Stage Summary:
+- Browser-verified: Home shows Continue Watching → Recently Added Episodes → Recently Added Movies → Trending → ...; New badges appear on recently-added cards; TMDB key Save button persists the key to DB (survives reload, "Saved" indicator shows); audio decode errors surface a dismissible hint banner with ffmpeg fix. Lint clean, no runtime errors.

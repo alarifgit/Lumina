@@ -90,6 +90,7 @@ export function toSummary(
     trending: m.trending,
     popularity: m.popularity,
     inMyList,
+    createdAt: m.createdAt?.toISOString() ?? null,
     ...(progress
       ? {
           progressPercent: percent,
@@ -216,6 +217,58 @@ export async function getByGenre(
   return attachSummaryData(items);
 }
 
+/**
+ * Recently added MOVIES — newest by creation time.
+ * Each item carries its own createdAt so the row reflects when it was scanned in.
+ */
+export async function getRecentlyAddedMovies(limit = 20): Promise<MediaSummary[]> {
+  const items = await db.media.findMany({
+    where: { type: "MOVIE" },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: mediaInclude,
+  });
+  return attachSummaryData(items);
+}
+
+/**
+ * Recently added EPISODES — newest episodes by creation time, collapsed to
+ * their parent show so we don't show the same show 5 times. Each returned
+ * summary carries the latest episode's id/season/episode for "resume" context.
+ */
+export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary[]> {
+  // Fetch the newest episodes, grouped by show
+  const episodes = await db.episode.findMany({
+    orderBy: { createdAt: "desc" },
+    take: limit * 5, // over-fetch to dedupe by show
+    include: { media: { include: mediaInclude } },
+  });
+  const seen = new Set<string>();
+  const picked: typeof episodes = [];
+  for (const ep of episodes) {
+    if (!seen.has(ep.mediaId)) {
+      seen.add(ep.mediaId);
+      picked.push(ep);
+    }
+    if (picked.length >= limit) break;
+  }
+  if (picked.length === 0) return [];
+  const col = await getMyListCollection();
+  const myListItems = await db.collectionItem.findMany({
+    where: { collectionId: col.id, mediaId: { in: picked.map((e) => e.mediaId) } },
+  });
+  const myListSet = new Set(myListItems.map((i) => i.mediaId));
+  return picked.map((ep) =>
+    toSummary(ep.media, myListSet.has(ep.mediaId), {
+      position: 0,
+      duration: 0,
+      episodeId: ep.id,
+      episode: { seasonNumber: ep.seasonNumber, episodeNumber: ep.episodeNumber },
+      updatedAt: ep.createdAt,
+    })
+  );
+}
+
 export async function getTopGenres(limit = 5): Promise<string[]> {
   const grouped = await db.mediaGenre.groupBy({
     by: ["genreId"],
@@ -272,10 +325,12 @@ export async function getContinueWatching(
 }
 
 export async function getHomeData(): Promise<HomeData> {
-  const [featured, continueWatching, trending, popularMovies, popularTV, topRated, newReleases, topGenres] =
+  const [featured, continueWatching, recentlyAddedEpisodes, recentlyAddedMovies, trending, popularMovies, popularTV, topRated, newReleases, topGenres] =
     await Promise.all([
       getFeatured(6),
       getContinueWatching(12),
+      getRecentlyAddedEpisodes(20),
+      getRecentlyAddedMovies(20),
       getTrending(20),
       getPopularMovies(20),
       getPopularTV(20),
@@ -285,6 +340,8 @@ export async function getHomeData(): Promise<HomeData> {
     ]);
 
   const rows: ContentRow[] = [
+    { key: "recently-added-episodes", title: "Recently Added Episodes", items: recentlyAddedEpisodes },
+    { key: "recently-added-movies", title: "Recently Added Movies", items: recentlyAddedMovies },
     { key: "trending", title: "Trending Now", items: trending },
     { key: "popular-movies", title: "Popular Movies", items: popularMovies },
     { key: "popular-tv", title: "Popular Series", items: popularTV },
@@ -524,7 +581,18 @@ export async function getStats(): Promise<LibraryStats> {
     lastScan: config?.lastScan?.toISOString() ?? null,
     scanCount: config?.scanCount ?? 0,
     mediaDir: config?.mediaDir ?? "/media",
+    tmdbKey: config?.tmdbKey ?? null,
   };
+}
+
+/** Persist the global TMDB API key to LibraryConfig (used by scans + metadata fetches). */
+export async function saveTmdbKey(key: string): Promise<{ ok: true }> {
+  await db.libraryConfig.upsert({
+    where: { id: "default" },
+    update: { tmdbKey: key || null },
+    create: { id: "default", tmdbKey: key || null },
+  });
+  return { ok: true };
 }
 
 export async function saveProgress(payload: {

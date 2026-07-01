@@ -26,6 +26,7 @@ export interface MediaSummary {
   trending: boolean;
   popularity: number;
   inMyList: boolean;
+  createdAt?: string | null;
   // Continue-watching context
   progressPercent?: number;
   progressPosition?: number;
@@ -118,6 +119,7 @@ export interface LibraryStats {
   lastScan: string | null;
   scanCount: number;
   mediaDir: string;
+  tmdbKey: string | null;
 }
 
 export interface ScanResult {
