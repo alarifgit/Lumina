@@ -59,6 +59,24 @@ export function useMediaDetail(id: string | null, season?: number) {
   });
 }
 
+export interface CodecInfo {
+  videoCodec: string | null;
+  audioCodec: string | null;
+  container: string | null;
+  browserCompatible: boolean;
+  reason: string | null;
+}
+
+/** Probe a media file's codecs (via ffprobe) to decide if transcoding is needed. */
+export function useProbe(kind: "media" | "episode", id: string | null, enabled: boolean) {
+  return useQuery<CodecInfo>({
+    queryKey: ["probe", kind, id],
+    queryFn: () => fetchJson<CodecInfo>(`/api/${kind === "media" ? "media" : "episodes"}/${id}/probe`),
+    enabled: !!id && enabled,
+    staleTime: Infinity, // codec info doesn't change
+  });
+}
+
 export interface BrowseParams {
   type?: MediaType;
   genre?: string | null;

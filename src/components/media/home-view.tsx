@@ -42,7 +42,10 @@ export function HomeView({ onOpen, onPlay }: Props) {
 
   return (
     <div className="pb-10">
-      <HeroCarousel items={data.featured} onOpen={onOpen} onPlay={onPlay} />
+      {/* Hero pulls up under the transparent nav for a full-bleed cinematic feel */}
+      <div className="-mt-16">
+        <HeroCarousel items={data.featured} onOpen={onOpen} onPlay={onPlay} />
+      </div>
       <div className="mt-6 space-y-5">
         {data.continueWatching.length > 0 && (
           <section className="py-2">

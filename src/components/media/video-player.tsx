@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useMediaStore } from "@/store/media-store";
-import { useMediaDetail } from "@/lib/queries";
+import { useMediaDetail, useProbe } from "@/lib/queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatTimecode } from "@/lib/media-utils";
 import type { Episode } from "@/lib/types";
@@ -104,11 +104,30 @@ function PlayerSession({
   // Subtitles for the currently-playing item (episode subs for TV, media subs for movies)
   const subtitles = currentEpisode?.subtitles ?? d?.subtitles ?? [];
 
-  const source = d
-    ? currentEpisode
+  // Transcoding state.
+  // `transcodeOverride` is null (auto), or a user's explicit choice (true/false).
+  // The effective `transcode` value is: override if set, else auto-detected from probe.
+  const [transcodeOverride, setTranscodeOverride] = useState<boolean | null>(null);
+  const probeTargetId = currentEpisode?.id ?? d?.id ?? null;
+  const probeKind: "media" | "episode" = currentEpisode ? "episode" : "media";
+  const probe = useProbe(probeKind, probeTargetId, !!probeTargetId);
+
+  // Effective transcoding decision: user override wins, else auto from ffprobe
+  const transcode = transcodeOverride ?? (!probe.data?.browserCompatible && !!probe.data);
+
+  const setTranscode = (v: boolean) => setTranscodeOverride(v);
+
+  // Build the source URL. When transcoding, append ?transcode=1&t=<resumePos>
+  // so ffmpeg starts at the resume position (seeking a live transcode isn't possible).
+  const source = useMemo(() => {
+    if (!d) return null;
+    const base = currentEpisode
       ? (currentEpisode.streamUrl ?? `/api/episodes/${currentEpisode.id}/stream`)
-      : (d.streamUrl ?? `/api/media/${d.id}/stream`)
-    : null;
+      : (d.streamUrl ?? `/api/media/${d.id}/stream`);
+    if (!transcode || currentEpisode?.streamUrl || d.streamUrl) return base;
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}transcode=1${resumeAt > 1 ? `&t=${Math.floor(resumeAt)}` : ""}`;
+  }, [d, currentEpisode, transcode, resumeAt]);
 
   const nextUp = useMemo(() => {
     if (!d || d.type !== "TV" || !currentEpisode) return null;
@@ -242,16 +261,23 @@ function PlayerSession({
 
   // Detect missing/unplayable audio. After the video starts playing, if the
   // browser exposes audioTracks but none are enabled/working, or if a media
-  // error fires specifically on the audio decoder, we surface a hint.
-  // (Most common cause: AC3/DTS/TrueHD audio codecs that browsers can't decode.)
+  // error fires specifically on the audio decoder, we auto-switch to the
+  // transcoded stream (ffmpeg re-encodes audio to AAC) and show a hint.
   useEffect(() => {
     if (!playing || audioError) return;
     const v = videoRef.current;
     if (!v) return;
+    const triggerFallback = () => {
+      setAudioError(true);
+      // Auto-enable transcoding (unless this is a remote/demo stream we can't transcode)
+      if (!d?.streamUrl && !(currentEpisode?.streamUrl)) {
+        setTranscode(true);
+      }
+    };
     // Use HTMLMediaElement.error for hard decode failures
     const onErr = () => {
       if (v.error && v.error.code === MediaError.MEDIA_ERR_DECODE) {
-        setAudioError(true);
+        triggerFallback();
       }
     };
     v.addEventListener("error", onErr);
@@ -259,7 +285,7 @@ function PlayerSession({
     const checkAudio = () => {
       const at = (v as HTMLVideoElement & { audioTracks?: { length: number; enabled: boolean }[] }).audioTracks;
       if (at && at.length > 0 && !at.some((t) => t.enabled)) {
-        setAudioError(true);
+        triggerFallback();
       }
     };
     const t = setTimeout(checkAudio, 1500);
@@ -267,7 +293,7 @@ function PlayerSession({
       v.removeEventListener("error", onErr);
       clearTimeout(t);
     };
-  }, [playing, audioError]);
+  }, [playing, audioError, d?.streamUrl, currentEpisode?.streamUrl]);
 
   const onLoadedMetadata = () => {
     const v = videoRef.current;
@@ -405,18 +431,19 @@ function PlayerSession({
       )}
 
       {/* Audio decode hint — shown when the browser can't decode the audio track.
-          Most common cause: AC3/DTS/TrueHD audio codecs in downloaded movies. */}
+          Auto-switches to the transcoded stream (ffmpeg → AAC) so playback continues with sound. */}
       {audioError && !audioHintDismissed && (
         <div className="absolute inset-x-0 top-20 z-20 mx-auto max-w-md px-4">
           <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-black/90 p-3 text-sm text-white shadow-xl backdrop-blur">
             <VolumeX className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
             <div className="flex-1">
-              <p className="font-semibold text-amber-300">No audio detected</p>
+              <p className="font-semibold text-amber-300">Switched to compatibility mode</p>
               <p className="mt-0.5 text-xs text-white/70">
-                This file&apos;s audio codec (often AC3/DTS/TrueHD from Blu-ray rips)
-                can&apos;t be decoded by the browser. Re-encode the audio to AAC using
-                <code className="mx-1 rounded bg-white/10 px-1 py-0.5 text-[10px]">ffmpeg -i in.mkv -c:v copy -c:a aac -b:a 192k out.mp4</code>
-                to restore sound.
+                This file&apos;s audio codec (AC3/DTS/TrueHD) can&apos;t be decoded by the browser,
+                so Lumina is now transcoding it to AAC via ffmpeg. Seeking is limited while transcoding.
+                {!d?.streamUrl && !currentEpisode?.streamUrl && (
+                  <> You can toggle back to direct mode in the settings menu.</>
+                )}
               </p>
             </div>
             <button
@@ -457,7 +484,14 @@ function PlayerSession({
           <ChevronLeft className="h-6 w-6" />
         </button>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-white sm:text-base">{titleText}</div>
+          <div className="flex items-center gap-2">
+            <div className="truncate text-sm font-semibold text-white sm:text-base">{titleText}</div>
+            {transcode && (
+              <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300">
+                Compat
+              </span>
+            )}
+          </div>
           {subText && <div className="truncate text-xs text-white/60">{subText}</div>}
         </div>
       </div>
@@ -556,7 +590,10 @@ function PlayerSession({
                 <Settings className="h-5 w-5" />
               </CtrlButton>
               {rateOpen && (
-                <div className="absolute bottom-12 right-0 w-28 rounded-lg border border-white/15 bg-black/90 p-1 backdrop-blur">
+                <div className="absolute bottom-12 right-0 w-44 rounded-lg border border-white/15 bg-black/90 p-1 backdrop-blur">
+                  <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
+                    Playback speed
+                  </div>
                   {RATES.map((r) => (
                     <button
                       key={r}
@@ -569,6 +606,30 @@ function PlayerSession({
                       {r === 1 ? "Normal" : `${r}x`}
                     </button>
                   ))}
+                  {/* Compatibility mode toggle (only for local files) */}
+                  {!d?.streamUrl && !currentEpisode?.streamUrl && (
+                    <>
+                      <div className="my-1 border-t border-white/10" />
+                      <button
+                        onClick={() => {
+                          setTranscode((t) => !t);
+                          setRateOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center justify-between rounded px-3 py-1.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
+                          transcode && "bg-white/10 font-semibold text-white"
+                        )}
+                      >
+                        <span>Compatibility</span>
+                        <span className={cn("text-xs", transcode ? "text-primary" : "text-white/40")}>
+                          {transcode ? "On" : "Off"}
+                        </span>
+                      </button>
+                      <p className="px-2 py-1 text-[10px] leading-tight text-white/40">
+                        Transcodes audio to AAC (fixes AC3/DTS). Seeking is limited.
+                      </p>
+                    </>
+                  )}
                 </div>
               )}
             </div>

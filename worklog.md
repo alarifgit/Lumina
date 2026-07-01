@@ -213,3 +213,19 @@ Work Log:
 
 Stage Summary:
 - Browser-verified: Home shows Continue Watching → Recently Added Episodes → Recently Added Movies → Trending → ...; New badges appear on recently-added cards; TMDB key Save button persists the key to DB (survives reload, "Saved" indicator shows); audio decode errors surface a dismissible hint banner with ffmpeg fix. Lint clean, no runtime errors.
+
+---
+Task ID: 9
+Agent: orchestrator (main)
+Task: Hero carousel edge alignment + bundle ffmpeg for native codec decoding/transcoding.
+
+Work Log:
+- **Hero carousel redesign**: Rewrote HeroCarousel with consistent `px-4 sm:px-6 lg:px-8` padding matching ContentRow. Content now vertically centered in a flex column (justify-end), aligned to the same horizontal padding as rows. Added left/right slide arrows (desktop). Slide indicators aligned to the right edge with the same padding. Top scrim added for nav legibility. Home view now pulls hero up under the transparent nav (`-mt-16`) for full-bleed cinematic feel. Verified: hero H1, Continue Watching H2, and row H2s all align at exactly 32px left.
+- **Dockerfile**: Added `ffmpeg` to the apt-get install in the runner stage — Lumina now bundles ffmpeg/ffprobe so it can decode any codec (AC3, DTS, TrueHD, HEVC, etc.) without you pre-encoding your library.
+- **`src/lib/transcoder.ts`**: `probeCodecs(filePath)` runs ffprobe to detect video/audio codecs + browser compatibility. `spawnTranscode(filePath, codecs, opts)` spawns ffmpeg: copies H.264/HEVC video (fast), transcodes incompatible video to H.264, always transcodes audio to AAC, outputs fragmented MP4 (streamable) to stdout. Supports `-ss` start time for resume.
+- **Stream routes**: `/api/media/[id]/stream?transcode=1` and `/api/episodes/[id]/stream?transcode=1` — when transcode=1, runs ffmpeg and pipes output. Added `/api/media/[id]/probe` + `/api/episodes/[id]/probe` returning CodecInfo.
+- **`src/lib/queries.ts`**: Added `useProbe(kind, id, enabled)` hook + `CodecInfo` type.
+- **Video player**: Added `transcodeOverride` state (null=auto, true/false=user choice). Effective `transcode` = override ?? auto-from-probe. Source URL appends `?transcode=1&t=<resumePos>` when transcoding. Audio decode error now auto-enables transcoding (falls back to ffmpeg AAC). Added "Compatibility" toggle in the settings menu (speed menu) for local files. "COMPAT" badge shown next to title when transcoding. Updated audio hint banner to say "Switched to compatibility mode" (transcoding is now automatic, no manual ffmpeg needed).
+
+Stage Summary:
+- Browser-verified: hero text aligns with row titles (32px); slide arrows + indicators work; no errors. Probe endpoint returns codec info. Transcode fallback wired (auto on probe-incompatible or audio decode error). Lint clean. Docker image now includes ffmpeg for native codec support.

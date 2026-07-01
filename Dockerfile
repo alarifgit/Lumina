@@ -34,9 +34,12 @@ ENV DATABASE_URL=file:/data/lumina.db
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Prisma's query engine needs openssl + ca-certificates on slim images
+# Prisma's query engine needs openssl + ca-certificates on slim images.
+# ffmpeg is bundled so Lumina can decode/transcode any media codec (AC3, DTS,
+# TrueHD, HEVC, etc.) to browser-friendly formats on the fly — no need for
+# you to pre-encode your library.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Next.js standalone server (includes its own minimal node_modules)
