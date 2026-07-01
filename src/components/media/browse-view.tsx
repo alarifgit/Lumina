@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBrowseInfinite, useGenres } from "@/lib/queries";
+import { useMediaStore } from "@/store/media-store";
 import { MediaCard } from "./media-card";
 import { GridSkeleton } from "./skeletons";
 import {
@@ -29,9 +30,17 @@ const SORTS = [
 ];
 
 export function BrowseView({ type, title, onOpen, onPlay }: Props) {
-  const [genre, setGenre] = useState<string | null>(null);
+  // Sync local genre with the global store (set when picking from the nav dropdown)
+  const storeGenre = useMediaStore((s) => s.genreFilter);
+  const [genre, setGenre] = useState<string | null>(storeGenre);
   const [sort, setSort] = useState("popular");
   const { data: genres } = useGenres();
+
+  // When the store genre changes (from nav dropdown), update local state
+  useEffect(() => {
+    setGenre(storeGenre);
+  }, [storeGenre]);
+
   const query = useBrowseInfinite({ type, genre, sort, pageSize: 24 });
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
@@ -42,7 +51,9 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
     <div className="px-4 pb-10 pt-20 sm:px-6 lg:px-8">
       <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">{title}</h1>
+          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+            {genre ? genre : title}
+          </h1>
           <p className="mt-1 text-sm text-foreground/50">
             {total} {total === 1 ? "title" : "titles"}
           </p>
@@ -81,7 +92,7 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
       ) : query.error ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <AlertCircle className="mb-3 h-10 w-10 text-foreground/40" />
-          <p className="text-sm text-foreground/70">Couldn’t load titles.</p>
+          <p className="text-sm text-foreground/70">Couldn't load titles.</p>
         </div>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">

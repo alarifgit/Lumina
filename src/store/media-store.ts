@@ -8,7 +8,8 @@ export type RouteKey =
   | "tv"
   | "search"
   | "mylist"
-  | "library";
+  | "library"
+  | "category";
 
 interface MediaState {
   // client-side routing (only `/` is a real route)
@@ -45,7 +46,7 @@ export const useMediaStore = create<MediaState>((set) => ({
         : { route, genreFilter: null, searchQuery: route === "search" ? s.searchQuery : "" }
     ),
   setSearch: (query) => set({ searchQuery: query, route: query.trim() ? "search" : "home" }),
-  setGenreFilter: (genre) => set({ genreFilter: genre }),
+  setGenreFilter: (genre) => set({ genreFilter: genre, route: "category" }),
   openDetail: (mediaId) => set({ selectedMediaId: mediaId }),
   closeDetail: () => set({ selectedMediaId: null }),
   openWatch: (mediaId, episodeId = null, startAt = 0) =>

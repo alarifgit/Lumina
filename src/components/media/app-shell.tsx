@@ -37,6 +37,9 @@ export function AppShell() {
           <BrowseView type="TV" title="TV Shows" onOpen={openDetail} onPlay={handlePlay} />
         )}
         {route === "search" && <SearchView onOpen={openDetail} onPlay={handlePlay} />}
+        {route === "category" && (
+          <BrowseView title="Categories" onOpen={openDetail} onPlay={handlePlay} />
+        )}
         {route === "mylist" && <MyListView onOpen={openDetail} onPlay={handlePlay} />}
         {route === "library" && <LibraryView />}
       </main>

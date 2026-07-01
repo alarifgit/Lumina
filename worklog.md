@@ -245,3 +245,17 @@ Work Log:
 
 Stage Summary:
 - 4 bugs fixed (1 user-reported + 3 found in review). ContentRow alignment verified in browser. ffmpeg cleanup prevents CPU waste. Range parsing is now spec-compliant.
+
+---
+Task ID: 11
+Agent: orchestrator (main)
+Task: Card hover redesign + filesystem auto-watch (Plex-style) + Categories nav dropdown + new logo.
+
+Work Log:
+- **Card hover redesign**: Rewrote MediaCard using Framer Motion. On hover: scale 1.12 (spring physics, stiffness 350/damping 28), translate-y -8px, golden ring + glow shadow (`box-shadow: 0 20px 50px... + 0 0 0 2px primary + 0 0 30px primary glow`), info panel slides up with play/add/info buttons, genres shown. Verified: matrix(1.12,0,0,1.12,0,-8) + shadow applied.
+- **Filesystem auto-watch (Plex-style)**: Installed `chokidar`. Created `src/lib/watcher.ts` — `startMediaWatcher()` watches every LibrarySection's mediaDir with `awaitWriteFinish` (3s stability), ignores non-video files, debounces rescans (5s — handles batch copies), calls `scanSection()` on new files. Created `src/instrumentation.ts` (Next.js instrumentation — runs once on server boot, starts watcher after 3s delay). Verified: all 4 sections watched on server restart ("[Lumina Watcher] Watching Movies → /media/movies" etc.).
+- **Categories dropdown**: Added "category" route to store (`setGenreFilter` now sets route to "category"). Updated BrowseView to sync genre from store + show genre name as title. Added Categories dropdown to TopNav using DropdownMenu component — lists "All Movies", "All TV Shows", + all genres. Mobile nav gets a genre chip cloud. Verified: clicking "Action" navigates to browse view filtered by Action (7 titles, title="Action").
+- **New logo**: Redesigned SVG LogoMark — 8 play-button-triangle rays radiating outward (alternating long/short), golden sun core with radial gradient, dark play triangle at center. Wordmark uses gold gradient text fill (`#FFFBEB → #FCD34D → #F59E0B`). Also generated an AI image logo mark (`public/brand/logo-mark.png`) as alternate asset. Verified: 8 rays + gradient wordmark rendering.
+
+Stage Summary:
+- All 4 features browser-verified. Card hover: spring scale 1.12 + glow. Categories dropdown: genre filtering works. Filesystem watcher: auto-detects new media on all 4 sections. Logo: bright sun + play-button rays + gradient wordmark. Lint clean, no runtime errors.

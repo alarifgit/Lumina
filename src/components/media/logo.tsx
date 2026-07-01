@@ -2,8 +2,13 @@
 
 import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
+import { Play } from "lucide-react";
 
-/** Luminous aperture mark — the Lumina brand icon (pure SVG, themeable). */
+/**
+ * Lumina brand mark — a radiant sun whose rays are play-button triangles,
+ * with a glowing play symbol at its core. Combines "sun/light" (Lumina) with
+ * "media playback" (streaming) in a single iconic silhouette.
+ */
 export function LogoMark({ className }: { className?: string }) {
   return (
     <svg
@@ -14,35 +19,55 @@ export function LogoMark({ className }: { className?: string }) {
       aria-hidden="true"
     >
       <defs>
-        <radialGradient id="lumina-gold" cx="50%" cy="50%" r="55%">
-          <stop offset="0%" stopColor="#FFF1D0" />
-          <stop offset="45%" stopColor="#F5B642" />
+        <radialGradient id="lumina-sun" cx="50%" cy="50%" r="55%">
+          <stop offset="0%" stopColor="#FFF7E0" />
+          <stop offset="35%" stopColor="#FCD34D" />
+          <stop offset="70%" stopColor="#F59E0B" />
           <stop offset="100%" stopColor="#B45309" />
         </radialGradient>
-        <radialGradient id="lumina-core" cx="50%" cy="50%" r="50%">
+        <radialGradient id="lumina-glow" cx="50%" cy="50%" r="50%">
           <stop offset="0%" stopColor="#FFFBEB" />
-          <stop offset="100%" stopColor="#FDE68A" />
+          <stop offset="100%" stopColor="#FDE68A" stopOpacity="0.8" />
         </radialGradient>
+        <linearGradient id="lumina-ray" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#FCD34D" />
+          <stop offset="100%" stopColor="#F59E0B" />
+        </linearGradient>
       </defs>
-      {Array.from({ length: 12 }).map((_, i) => {
-        const a = i * 30;
+
+      {/* Play-button-triangle rays (8 triangles radiating outward) */}
+      {Array.from({ length: 8 }).map((_, i) => {
+        const angle = i * 45;
+        const isLong = i % 2 === 0;
         return (
-          <rect
+          <polygon
             key={i}
-            x="22.5"
-            y="1.5"
-            width="3"
-            height="10"
-            rx="1.5"
-            fill="url(#lumina-gold)"
-            transform={`rotate(${a} 24 24)`}
-            opacity={i % 2 === 0 ? 0.95 : 0.7}
+            points="22,2 26,2 24,14"
+            fill="url(#lumina-ray)"
+            transform={`rotate(${angle} 24 24)`}
+            opacity={isLong ? 1 : 0.75}
           />
         );
       })}
-      <circle cx="24" cy="24" r="10" fill="url(#lumina-gold)" />
-      <circle cx="24" cy="24" r="10" fill="none" stroke="#FDE68A" strokeOpacity="0.4" strokeWidth="0.75" />
-      <circle cx="24" cy="24" r="4" fill="url(#lumina-core)" />
+
+      {/* Sun core circle */}
+      <circle cx="24" cy="24" r="13" fill="url(#lumina-sun)" />
+      <circle
+        cx="24"
+        cy="24"
+        r="13"
+        fill="none"
+        stroke="#FDE68A"
+        strokeOpacity="0.3"
+        strokeWidth="0.5"
+      />
+
+      {/* Play triangle at the center (the "light" of Lumina = playback) */}
+      <path
+        d="M21 19 L31 24 L21 29 Z"
+        fill="#1A0F00"
+        opacity="0.85"
+      />
     </svg>
   );
 }
@@ -62,14 +87,20 @@ export function Logo({
     size === "sm" ? "text-base" : size === "lg" ? "text-2xl" : "text-lg";
   return (
     <div className={cn("flex items-center gap-2 select-none", className)}>
-      <LogoMark className={cn(dim, "drop-shadow-[0_0_8px_rgba(245,182,66,0.45)]")} />
+      <LogoMark className={cn(dim, "drop-shadow-[0_0_10px_rgba(245,158,11,0.5)]")} />
       {showWord && (
         <span
           className={cn(
-            "font-semibold tracking-tight",
+            "font-bold tracking-tight",
             word
           )}
-          style={{ letterSpacing: "-0.02em" }}
+          style={{
+            letterSpacing: "-0.02em",
+            background: "linear-gradient(135deg, #FFFBEB 0%, #FCD34D 50%, #F59E0B 100%)",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            backgroundClip: "text",
+          }}
         >
           Lumina
         </span>

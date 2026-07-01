@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Star, Play, Plus, Check } from "lucide-react";
+import { motion } from "framer-motion";
+import { Star, Play, Plus, Check, ChevronDown, Info } from "lucide-react";
 import type { MediaSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ProceduralPoster } from "./procedural-poster";
@@ -17,10 +18,10 @@ interface Props {
 
 export function MediaCard({ media, onOpen, onPlay, className }: Props) {
   const [imgError, setImgError] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const toggle = useToggleMyList();
   const pct = progressPercent(media);
   const showImg = !!media.posterUrl && !imgError;
-  // "New" badge for items added within the last 14 days
   const isNew = (() => {
     if (!media.createdAt) return false;
     const age = Date.now() - new Date(media.createdAt).getTime();
@@ -29,7 +30,9 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
 
   return (
     <div
-      className={cn("group relative shrink-0 cursor-pointer", className)}
+      className={cn("relative shrink-0 cursor-pointer", className)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={() => onOpen(media.id)}
       role="button"
       tabIndex={0}
@@ -41,13 +44,26 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
       }}
       aria-label={`${media.title}${media.year ? ` (${media.year})` : ""}`}
     >
-      <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10 transition-all duration-300 group-hover:-translate-y-1 group-hover:ring-primary/60 group-hover:shadow-2xl group-hover:shadow-primary/10">
+      {/* Base poster card */}
+      <motion.div
+        animate={{
+          scale: hovered ? 1.12 : 1,
+          y: hovered ? -8 : 0,
+        }}
+        transition={{ type: "spring", stiffness: 350, damping: 28, mass: 0.6 }}
+        className="relative z-10 aspect-[2/3] overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10"
+        style={{
+          boxShadow: hovered
+            ? "0 20px 50px -10px rgba(0,0,0,0.7), 0 0 0 2px var(--primary), 0 0 30px -5px rgba(245,182,66,0.3)"
+            : undefined,
+        }}
+      >
         {showImg ? (
           <img
             src={media.posterUrl!}
             alt={media.title}
             loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="h-full w-full object-cover"
             onError={() => setImgError(true)}
           />
         ) : (
@@ -55,9 +71,15 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
         )}
 
         {/* hover gradient + info */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-        <div className="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
-          <div className="mb-1.5 flex items-center gap-2">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-transparent opacity-0 transition-opacity duration-300" style={{ opacity: hovered ? 1 : 0 }} />
+        <div
+          className="absolute inset-x-0 bottom-0 p-3 transition-all duration-300"
+          style={{
+            opacity: hovered ? 1 : 0,
+            transform: hovered ? "translateY(0)" : "translateY(8px)",
+          }}
+        >
+          <div className="mb-2 flex items-center gap-2">
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -73,19 +95,33 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
                 e.stopPropagation();
                 toggle.mutate(media.id);
               }}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-black/40 text-white backdrop-blur transition-colors hover:border-white hover:bg-black/60"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-black/50 text-white backdrop-blur transition-colors hover:border-white hover:bg-black/70"
               aria-label={media.inMyList ? "Remove from My List" : "Add to My List"}
             >
               {media.inMyList ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen(media.id);
+              }}
+              className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-black/50 text-white backdrop-blur transition-colors hover:border-white hover:bg-black/70"
+              aria-label="More info"
+            >
+              <ChevronDown className="h-4 w-4" />
             </button>
           </div>
           <h3 className="line-clamp-2 text-sm font-semibold leading-tight text-white">
             {media.title}
           </h3>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-white/70">
-            {media.year && <span>{media.year}</span>}
+            {media.year && <span className="font-medium">{media.year}</span>}
             {media.runtime && <span>{formatRuntime(media.runtime)}</span>}
-            {media.genres[0] && <span className="truncate">{media.genres[0]}</span>}
+            {media.genres.slice(0, 2).map((g) => (
+              <span key={g} className="truncate text-white/50">
+                {g}
+              </span>
+            ))}
           </div>
         </div>
 
@@ -111,11 +147,7 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
             <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
           </div>
         )}
-      </div>
-
-      <h3 className="mt-1.5 truncate px-0.5 text-xs font-medium text-foreground/70 sm:hidden">
-        {media.title}
-      </h3>
+      </motion.div>
     </div>
   );
 }
