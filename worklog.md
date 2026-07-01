@@ -184,3 +184,18 @@ Work Log:
 Stage Summary:
 - Browser-verified: 4 sections render with per-section Scan buttons; per-section scan returns result inline; home/browse show anime + regular unified (Attack on Titan, Death Note, Akira appear alongside regular titles); subtitle CC button appears in player, menu shows Off/English, toggling changes track mode showing↔disabled; video plays with subtitles on by default. Lint clean, no runtime errors.
 - Docker: build with `docker build -t lumina .`, deploy via Portainer stack. DB on host-mounted `./data`, media on host-mounted paths. Entrypoint auto-creates schema on first start.
+
+---
+Task ID: 7
+Agent: orchestrator (main)
+Task: Fix Docker prisma CLI "Cannot find package 'effect'" error on container startup.
+
+Work Log:
+- Diagnosed: Dockerfile only copied `node_modules/prisma`, `node_modules/@prisma`, `node_modules/.prisma` into the runner — missing transitive deps like `effect` (required by `@prisma/config`). The Prisma CLI failed to run `db push` on startup.
+- Root cause compounded: `oven/bun:1` runner image ran the Prisma CLI under Bun (the `node` command delegated to Bun), whose module resolution couldn't find the missing `effect` package.
+- Fix 1: Switched runner stage from `oven/bun:1` to `node:20-slim` — the Prisma CLI is designed for Node.js, and the Next.js standalone server runs perfectly on Node 20. Added `openssl` + `ca-certificates` install (Prisma query engine needs openssl on slim images).
+- Fix 2: Copy the FULL `node_modules` from the builder instead of cherry-picking packages. This guarantees ALL transitive dependencies (effect, etc.) are present. The full node_modules overlays the standalone's minimal node_modules (superset).
+- Updated `docker-entrypoint.sh`: clearer error message with manual fix command, still non-blocking (server starts even if db push fails, for existing DBs).
+
+Stage Summary:
+- User rebuilds: `docker build -t lumina:latest .` then redeploy. On a fresh /data volume, `prisma db push` will now succeed and create all tables before the server starts.
