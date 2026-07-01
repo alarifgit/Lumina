@@ -30,7 +30,8 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
 
   return (
     <div
-      className={cn("relative shrink-0 cursor-pointer", className)}
+      className={cn("relative shrink-0 cursor-pointer transition-none", className)}
+      style={{ zIndex: hovered ? 30 : 1 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={() => onOpen(media.id)}
@@ -54,7 +55,7 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
         className="relative z-10 aspect-[2/3] overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10"
         style={{
           boxShadow: hovered
-            ? "0 20px 50px -10px rgba(0,0,0,0.7), 0 0 0 2px var(--primary), 0 0 30px -5px rgba(245,182,66,0.3)"
+            ? "0 25px 60px -5px rgba(0,0,0,0.8), 0 0 0 3px var(--primary), 0 0 50px 12px rgba(245,158,11,0.45), 0 0 80px 20px rgba(245,158,11,0.2)"
             : undefined,
         }}
       >

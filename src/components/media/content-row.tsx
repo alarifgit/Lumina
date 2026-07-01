@@ -59,7 +59,7 @@ export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
   if (!items?.length) return null;
 
   return (
-    <section className="group/row relative py-2">
+    <section className="group/row relative py-4">
       <div className="mb-2 px-4 sm:px-6 lg:px-8">
         <h2
           className={cn(
@@ -74,7 +74,7 @@ export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
         {canL && (
           <button
             onClick={() => scrollBy(-1)}
-            className="absolute left-0 top-0 z-20 hidden h-[calc(100%-0.5rem)] w-10 items-center justify-center bg-gradient-to-r from-background via-background/80 to-transparent text-foreground opacity-0 transition-opacity group-hover/row:opacity-100 md:flex lg:w-14"
+            className="absolute left-0 top-4 z-20 hidden h-[calc(100%-2rem)] w-10 items-center justify-center bg-gradient-to-r from-background via-background/80 to-transparent text-foreground opacity-0 transition-opacity group-hover/row:opacity-100 md:flex lg:w-14"
             aria-label="Scroll left"
           >
             <ChevronLeft className="h-7 w-7" />
@@ -82,7 +82,7 @@ export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
         )}
         <div
           ref={ref}
-          className="no-scrollbar flex gap-3 overflow-x-auto scroll-smooth px-4 pb-2 sm:gap-4 sm:px-6 lg:px-8"
+          className="no-scrollbar flex gap-3 overflow-x-auto overflow-y-visible scroll-smooth px-4 pb-6 pt-4 sm:gap-4 sm:px-6 lg:px-8"
         >
           {items.map((m) => (
             <div
@@ -96,7 +96,7 @@ export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
         {canR && (
           <button
             onClick={() => scrollBy(1)}
-            className="absolute right-0 top-0 z-20 hidden h-[calc(100%-0.5rem)] w-10 items-center justify-center bg-gradient-to-l from-background via-background/80 to-transparent text-foreground opacity-0 transition-opacity group-hover/row:opacity-100 md:flex lg:w-14"
+            className="absolute right-0 top-4 z-20 hidden h-[calc(100%-2rem)] w-10 items-center justify-center bg-gradient-to-l from-background via-background/80 to-transparent text-foreground opacity-0 transition-opacity group-hover/row:opacity-100 md:flex lg:w-14"
             aria-label="Scroll right"
           >
             <ChevronRight className="h-7 w-7" />

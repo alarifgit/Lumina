@@ -259,3 +259,16 @@ Work Log:
 
 Stage Summary:
 - All 4 features browser-verified. Card hover: spring scale 1.12 + glow. Categories dropdown: genre filtering works. Filesystem watcher: auto-detects new media on all 4 sections. Logo: bright sun + play-button rays + gradient wordmark. Lint clean, no runtime errors.
+
+---
+Task ID: 12
+Agent: orchestrator (main)
+Task: Logo mockups (icon integrated into wordmark) + fix card glow to wrap fully + reduce Prisma log verbosity.
+
+Work Log:
+- **Card glow fix**: Root cause was twofold: (1) scroll container `overflow-x-auto` implicitly sets `overflow-y: auto` (CSS spec) which clipped the glow vertically; (2) the shadow had negative spread (`-5px`) making it weak/partial. Fixed by: adding `overflow-y-visible` + `py-4 pt-4 pb-6` to scroll container (room for glow); stronger shadow with POSITIVE spread so it wraps fully: `0 25px 60px -5px depth, 0 0 0 3px primary ring, 0 0 50px 12px amber glow, 0 0 80px 20px amber halo`. Added `z-index: 30` to hovered card so it sits above siblings. Verified: full glow wraps the scaled card.
+- **Logo mockups**: Created 6 SVG mockups where the sun/play icon is integrated INTO the wordmark (like famous brand logos): 1) Sunrise L (L = sun over horizon), 2) Eclipse (sun behind wordmark, play triangle cut into L), 3) Play-i (the i is a sun with play-triangle stem), 4) Aperture (sun/aperture replaces the L), 5) Sunset (sun glows behind full wordmark, i-dot is play triangle), 6) Beam (light beams + sun disc integrated with L). Built a LogoReview modal (floating "Review Logos" button) showing all 6 on dark + light backgrounds. User can review and pick.
+- **Prisma log fix**: Changed `log: ['query']` to `log: ['warn', 'error']` in dev — the query logging was flooding the process and causing server hangs under load.
+
+Stage Summary:
+- Card glow now wraps fully around the card (positive-spread shadow + visible overflow + z-index boost). 6 logo mockups available for review via floating "Review Logos" button. Lint clean, server responsive (197ms API).

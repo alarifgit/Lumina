@@ -10,6 +10,7 @@ import { MyListView } from "./my-list-view";
 import { LibraryView } from "./library-view";
 import { DetailOverlay } from "./detail-overlay";
 import { VideoPlayer } from "./video-player";
+import { LogoReview } from "./logo-review";
 import { useEffect } from "react";
 
 export function AppShell() {
@@ -46,6 +47,7 @@ export function AppShell() {
       <Footer />
       <DetailOverlay onPlay={handlePlay} />
       <VideoPlayer />
+      <LogoReview />
     </div>
   );
 }
