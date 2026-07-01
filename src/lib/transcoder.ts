@@ -1,6 +1,4 @@
 import { spawn } from "child_process";
-import { promises as fs } from "fs";
-import path from "path";
 
 export interface CodecInfo {
   videoCodec: string | null;
@@ -134,4 +132,29 @@ export function spawnTranscode(
   );
 
   return spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "inherit"] });
+}
+
+/**
+ * Register cleanup so an ffmpeg process is killed when the client disconnects.
+ * Without this, seeking or closing the player leaves orphaned ffmpeg processes
+ * burning CPU until they finish processing the entire file.
+ *
+ * Returns the ChildProcess for convenience (pipable to the HTTP response).
+ */
+export function registerTranscodeCleanup(
+  proc: ReturnType<typeof spawn>,
+  signal: AbortSignal
+) {
+  const kill = () => {
+    try {
+      proc.kill("SIGTERM");
+      // Force-kill after 2s if it hasn't exited
+      setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch {}
+      }, 2000);
+    } catch {}
+  };
+  signal.addEventListener("abort", kill, { once: true });
+  proc.on("exit", () => signal.removeEventListener("abort", kill));
+  return proc;
 }

@@ -17,23 +17,37 @@ interface Props {
 export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [canL, setCanL] = useState(false);
-  const [canR, setCanR] = useState(true);
+  const [canR, setCanR] = useState(false);
+  const rafRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
 
   const update = () => {
     const el = ref.current;
     if (!el) return;
-    setCanL(el.scrollLeft > 10);
-    setCanR(el.scrollLeft < el.scrollWidth - el.clientWidth - 10);
+    const left = el.scrollLeft;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    setCanL(left > 10);
+    setCanR(left < maxScroll - 10);
+  };
+
+  // Debounced scroll handler — only run update once per animation frame
+  // instead of on every scroll tick (which fires hundreds of times per scroll).
+  const onScroll = () => {
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      update();
+    });
   };
 
   useEffect(() => {
     update();
     const el = ref.current;
-    if (el) el.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update);
+    if (el) el.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
     return () => {
-      el?.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
+      el?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
   }, [items]);
 
@@ -69,12 +83,10 @@ export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
         <div
           ref={ref}
           className="no-scrollbar flex gap-3 overflow-x-auto scroll-smooth px-4 pb-2 sm:gap-4 sm:px-6 lg:px-8"
-          style={{ scrollSnapType: "x proximity" }}
         >
           {items.map((m) => (
             <div
               key={m.id}
-              style={{ scrollSnapAlign: "start" }}
               className="w-[130px] shrink-0 sm:w-[160px] md:w-[175px] lg:w-[190px]"
             >
               <MediaCard media={m} onOpen={onOpen} onPlay={onPlay} />

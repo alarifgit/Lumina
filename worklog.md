@@ -229,3 +229,19 @@ Work Log:
 
 Stage Summary:
 - Browser-verified: hero text aligns with row titles (32px); slide arrows + indicators work; no errors. Probe endpoint returns codec info. Transcode fallback wired (auto on probe-incompatible or audio decode error). Lint clean. Docker image now includes ffmpeg for native codec support.
+
+---
+Task ID: 10
+Agent: orchestrator (main)
+Task: Code review — scroll-snap misalignment + ffmpeg process leak + range parsing + minor fixes.
+
+Work Log:
+- **[CRITICAL] ContentRow scroll-snap misalignment**: `scrollSnapType: "x proximity"` + `scrollSnapAlign: "start"` on children inside a padded scroll container caused the browser to snap to a non-zero scrollLeft on load/layout changes. Removed scroll-snap entirely. Also debounced the scroll handler with requestAnimationFrame (was running setState on every scroll tick). Fixed `canR` initial state to `false` (was `true`, causing a brief arrow flash on short rows). Verified: all 12 rows now start at scrollLeft=0, first card at exactly 32px.
+- **[CRITICAL] ffmpeg process leak**: When the client disconnects (seek, close player, switch episode), the ffmpeg process spawned for transcoding was never killed — it kept running until it finished the entire file. Added `registerTranscodeCleanup(proc, signal)` to transcoder.ts that listens to `req.signal` abort and sends SIGTERM (with SIGKILL fallback after 2s). Wired into both stream routes.
+- **[CRITICAL] Range request parsing**: streamer.ts didn't handle suffix-range syntax (`bytes=-100` = last 100 bytes), didn't clamp start/end to valid bounds, and didn't return 416 for malformed ranges. Rewrote `parseRange()` to handle all three syntaxes (explicit, open-ended, suffix) with proper clamping + 416 response.
+- **[MEDIUM] Path leakage**: streamer.ts 404 error responses included `path: filePath`. Removed from all error responses.
+- **[MEDIUM] Unused imports**: Removed `fs`/`path` from transcoder.ts (neither was used).
+- Verified: lint clean, no runtime errors, all rows aligned at 32px.
+
+Stage Summary:
+- 4 bugs fixed (1 user-reported + 3 found in review). ContentRow alignment verified in browser. ffmpeg cleanup prevents CPU waste. Range parsing is now spec-compliant.

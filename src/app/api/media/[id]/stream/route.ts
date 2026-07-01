@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { streamFile } from "@/lib/streamer";
-import { probeCodecs, spawnTranscode } from "@/lib/transcoder";
+import { probeCodecs, spawnTranscode, registerTranscodeCleanup } from "@/lib/transcoder";
 import { Readable } from "stream";
 
 export const dynamic = "force-dynamic";
@@ -25,8 +25,9 @@ export async function GET(
   if (transcode) {
     const codecs = await probeCodecs(media.filePath);
     const proc = spawnTranscode(media.filePath, codecs, { startTime });
+    // Kill ffmpeg when the client disconnects (seeking, closing player, etc.)
+    registerTranscodeCleanup(proc, req.signal);
     const webStream = Readable.toWeb(proc.stdout) as ReadableStream;
-    // If ffmpeg dies early, the stream ends — the player will show an error.
     return new Response(webStream, {
       status: 200,
       headers: {
