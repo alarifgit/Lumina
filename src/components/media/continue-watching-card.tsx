@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { Play } from "lucide-react";
 import type { MediaSummary } from "@/lib/types";
 import { ProceduralPoster } from "./procedural-poster";
@@ -13,6 +14,7 @@ interface Props {
 
 export function ContinueWatchingCard({ media, onPlay }: Props) {
   const [imgError, setImgError] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const pct = progressPercent(media);
   const showImg = !!media.backdropUrl && !imgError;
   const epLabel =
@@ -24,7 +26,10 @@ export function ContinueWatchingCard({ media, onPlay }: Props) {
 
   return (
     <div
-      className="group relative w-[260px] shrink-0 cursor-pointer sm:w-[320px]"
+      className="relative w-[260px] shrink-0 cursor-pointer sm:w-[320px]"
+      style={{ zIndex: hovered ? 30 : 1 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={() => onPlay(media.id, media.progressEpisodeId ?? null, media.progressPosition ?? 0)}
       role="button"
       tabIndex={0}
@@ -36,13 +41,25 @@ export function ContinueWatchingCard({ media, onPlay }: Props) {
       }}
       aria-label={`Resume ${media.title}`}
     >
-      <div className="relative aspect-video overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10 transition-all duration-300 group-hover:ring-primary/60 group-hover:shadow-xl group-hover:shadow-primary/10">
+      <motion.div
+        animate={{
+          scale: hovered ? 1.08 : 1,
+          y: hovered ? -6 : 0,
+        }}
+        transition={{ type: "spring", stiffness: 250, damping: 30, mass: 0.6 }}
+        className="relative aspect-video overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10"
+        style={{
+          boxShadow: hovered
+            ? "0 25px 60px -5px rgba(0,0,0,0.8), 0 0 0 3px var(--primary), 0 0 50px 12px rgba(245,158,11,0.45), 0 0 80px 20px rgba(245,158,11,0.2)"
+            : undefined,
+        }}
+      >
         {showImg ? (
           <img
             src={media.backdropUrl!}
             alt={media.title}
             loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="h-full w-full object-cover"
             onError={() => setImgError(true)}
           />
         ) : (
@@ -54,7 +71,10 @@ export function ContinueWatchingCard({ media, onPlay }: Props) {
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+        <div
+          className="absolute inset-0 flex items-center justify-center transition-opacity duration-300"
+          style={{ opacity: hovered ? 1 : 0 }}
+        >
           <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-white/95 text-black shadow-lg">
             <Play className="ml-0.5 h-5 w-5 fill-current" />
           </span>
@@ -72,7 +92,7 @@ export function ContinueWatchingCard({ media, onPlay }: Props) {
             <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
           </div>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

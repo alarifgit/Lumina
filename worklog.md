@@ -272,3 +272,17 @@ Work Log:
 
 Stage Summary:
 - Card glow now wraps fully around the card (positive-spread shadow + visible overflow + z-index boost). 6 logo mockups available for review via floating "Review Logos" button. Lint clean, server responsive (197ms API).
+
+---
+Task ID: 13
+Agent: orchestrator (main)
+Task: Fix glow on Continue Watching cards + dial back spring + new AI logo mockups from famous-brand reference.
+
+Work Log:
+- **Continue Watching glow fix**: ContinueWatchingCard was using old CSS hover (no spring, no glow, clipped by overflow). Rewrote with Framer Motion matching MediaCard: spring scale 1.08, y -6, full glow shadow (ring + amber glow + halo), z-index 30 on hover. Also fixed its container in home-view: added `overflow-y-visible` + `py-4 pt-4 pb-6` so glow isn't clipped.
+- **Spring dialed back**: Both MediaCard and ContinueWatchingCard now use stiffness 250 (was 350), damping 30 (was 28), scale 1.08 (was 1.12), y -6 (was -8). Gentler, less bouncy.
+- **AI logo mockups**: User provided famous-brand-logos grid as reference (Apple, Netflix, McDonald's, etc. — minimalist, iconic). Generated 4 AI logo variations using image-generation skill: v1) Sun behind wordmark (play-button rays glowing through text), v2) Sun as the letter O (icon IS a letter), v3) Sunrise behind L (Paramount/Netflix feel), v4) Standalone icon mark (golden sun + 8 play-triangle rays + play center). Updated LogoReview to show PNG images instead of SVG mockups. All 4 visible in review modal.
+- **Prisma log fix** (from prior task): confirmed server responsive at ~200ms.
+
+Stage Summary:
+- Both card types (MediaCard + ContinueWatchingCard) now have identical dialed-back spring (1.08/-6) + full glow wrapping. 4 AI logo mockups available for review via "Review Logos" button. Lint clean, no errors.

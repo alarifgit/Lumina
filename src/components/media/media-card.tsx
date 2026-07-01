@@ -48,10 +48,10 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
       {/* Base poster card */}
       <motion.div
         animate={{
-          scale: hovered ? 1.12 : 1,
-          y: hovered ? -8 : 0,
+          scale: hovered ? 1.08 : 1,
+          y: hovered ? -6 : 0,
         }}
-        transition={{ type: "spring", stiffness: 350, damping: 28, mass: 0.6 }}
+        transition={{ type: "spring", stiffness: 250, damping: 30, mass: 0.6 }}
         className="relative z-10 aspect-[2/3] overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10"
         style={{
           boxShadow: hovered
