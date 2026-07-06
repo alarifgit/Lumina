@@ -1,77 +1,15 @@
 "use client";
 
+import Image from "next/image";
 import { cn } from "@/lib/utils";
-import { useTheme } from "next-themes";
-import { Play } from "lucide-react";
 
-/**
- * Lumina brand mark — a radiant sun whose rays are play-button triangles,
- * with a glowing play symbol at its core. Combines "sun/light" (Lumina) with
- * "media playback" (streaming) in a single iconic silhouette.
- */
-export function LogoMark({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 48 48"
-      className={className}
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <defs>
-        <radialGradient id="lumina-sun" cx="50%" cy="50%" r="55%">
-          <stop offset="0%" stopColor="#FFF7E0" />
-          <stop offset="35%" stopColor="#FCD34D" />
-          <stop offset="70%" stopColor="#F59E0B" />
-          <stop offset="100%" stopColor="#B45309" />
-        </radialGradient>
-        <radialGradient id="lumina-glow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#FFFBEB" />
-          <stop offset="100%" stopColor="#FDE68A" stopOpacity="0.8" />
-        </radialGradient>
-        <linearGradient id="lumina-ray" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#FCD34D" />
-          <stop offset="100%" stopColor="#F59E0B" />
-        </linearGradient>
-      </defs>
+const BRAND_ROOT = "/brand/lumina/codex-logo-pack/lumina_codex_logo_pack";
+const WORDMARK_GOLD = `${BRAND_ROOT}/transparent/lumina-primary-wordmark-gold-transparent.png`;
+const WORDMARK_COMPACT = `${BRAND_ROOT}/transparent/lumina-wordmark-white-transparent.png`;
+const EMBLEM_MINIMAL = `${BRAND_ROOT}/transparent/lumina-small-icon-gold-transparent-512.png`;
+const EMBLEM_RADIANT = `${BRAND_ROOT}/transparent/lumina-emblem-gold-transparent-512.png`;
 
-      {/* Play-button-triangle rays (8 triangles radiating outward) */}
-      {Array.from({ length: 8 }).map((_, i) => {
-        const angle = i * 45;
-        const isLong = i % 2 === 0;
-        return (
-          <polygon
-            key={i}
-            points="22,2 26,2 24,14"
-            fill="url(#lumina-ray)"
-            transform={`rotate(${angle} 24 24)`}
-            opacity={isLong ? 1 : 0.75}
-          />
-        );
-      })}
-
-      {/* Sun core circle */}
-      <circle cx="24" cy="24" r="13" fill="url(#lumina-sun)" />
-      <circle
-        cx="24"
-        cy="24"
-        r="13"
-        fill="none"
-        stroke="#FDE68A"
-        strokeOpacity="0.3"
-        strokeWidth="0.5"
-      />
-
-      {/* Play triangle at the center (the "light" of Lumina = playback) */}
-      <path
-        d="M21 19 L31 24 L21 29 Z"
-        fill="#1A0F00"
-        opacity="0.85"
-      />
-    </svg>
-  );
-}
-
+/** Compact brand mark used in the navbar. */
 export function Logo({
   className,
   showWord = true,
@@ -81,48 +19,81 @@ export function Logo({
   showWord?: boolean;
   size?: "sm" | "md" | "lg";
 }) {
-  const dim =
-    size === "sm" ? "h-6 w-6" : size === "lg" ? "h-10 w-10" : "h-7 w-7";
-  const word =
-    size === "sm" ? "text-base" : size === "lg" ? "text-2xl" : "text-lg";
+  const emblemPx = size === "sm" ? 30 : size === "lg" ? 54 : 40;
+
+  if (showWord) {
+    const width = size === "sm" ? 118 : size === "lg" ? 176 : 148;
+    const height = size === "sm" ? 36 : size === "lg" ? 54 : 44;
+    return (
+      <img
+        src={size === "sm" ? WORDMARK_COMPACT : WORDMARK_GOLD}
+        alt="Lumina"
+        width={width}
+        height={height}
+        className={cn(
+          "select-none object-contain object-left drop-shadow-[0_0_18px_rgba(238,209,132,0.18)]",
+          className
+        )}
+        style={{ width, height: "auto" }}
+      />
+    );
+  }
+
   return (
-    <div className={cn("flex items-center gap-2 select-none", className)}>
-      <LogoMark className={cn(dim, "drop-shadow-[0_0_10px_rgba(245,158,11,0.5)]")} />
-      {showWord && (
-        <span
-          className={cn(
-            "font-bold tracking-tight",
-            word
-          )}
-          style={{
-            letterSpacing: "-0.02em",
-            background: "linear-gradient(135deg, #FFFBEB 0%, #FCD34D 50%, #F59E0B 100%)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            backgroundClip: "text",
-          }}
-        >
-          Lumina
-        </span>
+    <Image
+      src={EMBLEM_MINIMAL}
+      alt="Lumina"
+      width={emblemPx}
+      height={emblemPx}
+      className={cn(
+        "select-none object-contain drop-shadow-[0_0_14px_rgba(245,182,42,0.28)]",
+        className
       )}
-    </div>
+      priority
+    />
   );
 }
 
-export function ThemeToggle({ className }: { className?: string }) {
-  const { theme, setTheme } = useTheme();
-  const isDark = theme === "dark";
+/** Full wordmark — for brand-led areas (footer, empty states, about). */
+export function LogoLockup({
+  className,
+  width = 220,
+}: {
+  className?: string;
+  width?: number;
+}) {
   return (
-    <button
-      type="button"
-      aria-label="Toggle theme"
-      onClick={() => setTheme(isDark ? "light" : "dark")}
+    <img
+      src={WORDMARK_GOLD}
+      alt="Lumina"
+      width={width}
+      height={Math.round(width * 0.3)}
+      className={cn("object-contain drop-shadow-[0_0_24px_rgba(238,209,132,0.2)]", className)}
+      style={{ width, height: "auto" }}
+    />
+  );
+}
+
+export function LogoEmblem({
+  className,
+  detailed = false,
+  size = 96,
+}: {
+  className?: string;
+  detailed?: boolean;
+  size?: number;
+}) {
+  return (
+    <Image
+      src={detailed ? EMBLEM_RADIANT : EMBLEM_MINIMAL}
+      alt="Lumina emblem"
+      width={size}
+      height={size}
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-full text-foreground/80 transition-colors hover:bg-foreground/10 hover:text-foreground",
+        "object-contain drop-shadow-[0_0_18px_rgba(245,182,42,0.2)]",
         className
       )}
-    >
-      <span className="text-base">{isDark ? "☀" : "☾"}</span>
-    </button>
+      priority
+    />
   );
 }

@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 
 export interface CodecInfo {
   videoCodec: string | null;
@@ -15,6 +15,110 @@ const BROWSER_VIDEO_CODECS = new Set(["h264", "vp8", "vp9", "av1", "h265", "hevc
 // Safari supports HEVC; Chromium/Firefox support is inconsistent. We allow it but
 // it may still fail on some browsers — the player auto-falls back to transcode.
 const BROWSER_AUDIO_CODECS = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
+const DEFAULT_VAAPI_DEVICE = "/dev/dri/renderD128";
+const VALID_ENCODERS = new Set(["auto", "libx264", "h264_vaapi"]);
+
+export interface TranscodeStatus {
+  transcodeAvailable: boolean;
+  transcodeHardware: boolean;
+  transcodeEncoder: string;
+  transcodeEncoderKey: string;
+  transcodeReason: string | null;
+}
+
+function configuredEncoder() {
+  const raw = process.env.LUMINA_TRANSCODE_ENCODER?.trim().toLowerCase();
+  if (!raw) return "auto";
+  if (raw === "vaapi") return "h264_vaapi";
+  return VALID_ENCODERS.has(raw) ? raw : "auto";
+}
+
+function configuredVaapiDevice() {
+  return process.env.LUMINA_VAAPI_DEVICE?.trim() || DEFAULT_VAAPI_DEVICE;
+}
+
+function ffmpegSupportsEncoder(encoder: string) {
+  const result = spawnSync("ffmpeg", ["-hide_banner", "-encoders"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) return false;
+  return `${result.stdout}\n${result.stderr}`.includes(encoder);
+}
+
+function ffmpegAvailable() {
+  const result = spawnSync("ffmpeg", ["-version"], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return !result.error && result.status === 0;
+}
+
+function deviceAvailable(device: string) {
+  const result = spawnSync("test", ["-e", device], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return !result.error && result.status === 0;
+}
+
+export function getTranscodeStatus(): TranscodeStatus {
+  if (!ffmpegAvailable()) {
+    return {
+      transcodeAvailable: false,
+      transcodeHardware: false,
+      transcodeEncoder: "ffmpeg unavailable",
+      transcodeEncoderKey: "none",
+      transcodeReason: "ffmpeg is not available in this runtime.",
+    };
+  }
+
+  const requestedEncoder = configuredEncoder();
+  if (requestedEncoder === "libx264") {
+    return {
+      transcodeAvailable: true,
+      transcodeHardware: false,
+      transcodeEncoder: "CPU transcoding via libx264",
+      transcodeEncoderKey: "libx264",
+      transcodeReason: null,
+    };
+  }
+
+  const device = configuredVaapiDevice();
+  if (!deviceAvailable(device)) {
+    return {
+      transcodeAvailable: true,
+      transcodeHardware: false,
+      transcodeEncoder: "CPU transcoding via libx264",
+      transcodeEncoderKey: "libx264",
+      transcodeReason:
+        requestedEncoder === "h264_vaapi"
+          ? `VAAPI was requested, but ${device} is not available. Falling back to CPU transcoding.`
+          : null,
+    };
+  }
+
+  if (!ffmpegSupportsEncoder("h264_vaapi")) {
+    return {
+      transcodeAvailable: true,
+      transcodeHardware: false,
+      transcodeEncoder: "CPU transcoding via libx264",
+      transcodeEncoderKey: "libx264",
+      transcodeReason:
+        requestedEncoder === "h264_vaapi"
+          ? "VAAPI was requested, but this ffmpeg build does not expose h264_vaapi. Falling back to CPU transcoding."
+          : null,
+    };
+  }
+
+  return {
+    transcodeAvailable: true,
+    transcodeHardware: true,
+    transcodeEncoder: `VAAPI hardware transcoding via ${device}`,
+    transcodeEncoderKey: "h264_vaapi",
+    transcodeReason: null,
+  };
+}
 
 /** Detect a file's video/audio codecs using ffprobe. Returns nulls on failure. */
 export async function probeCodecs(filePath: string): Promise<CodecInfo> {
@@ -90,6 +194,7 @@ export function spawnTranscode(
   codecs: CodecInfo,
   opts: TranscodeOptions = {}
 ) {
+  const encoder = getTranscodeStatus().transcodeEncoderKey;
   const args: string[] = [
     "-hide_banner",
     "-loglevel", "error",
@@ -97,12 +202,26 @@ export function spawnTranscode(
   if (opts.startTime && opts.startTime > 1) {
     args.push("-ss", String(Math.floor(opts.startTime)));
   }
+
+  const v = codecs.videoCodec;
+  const copyVideo = !!v && (v === "h264" || v === "hevc" || v === "h265");
+  if (!copyVideo && encoder === "h264_vaapi") {
+    args.push("-vaapi_device", configuredVaapiDevice());
+  }
+
   args.push("-i", filePath);
 
   // Video: copy if H.264/HEVC (broadly compatible), else transcode to H.264
-  const v = codecs.videoCodec;
-  if (v && (v === "h264" || v === "hevc" || v === "h265")) {
+  if (copyVideo) {
     args.push("-c:v", "copy");
+  } else if (encoder === "h264_vaapi") {
+    args.push(
+      "-vf", "format=nv12,hwupload",
+      "-c:v", "h264_vaapi",
+      "-qp", "23",
+      "-maxrate", "8M",
+      "-bufsize", "16M",
+    );
   } else {
     args.push(
       "-c:v", "libx264",

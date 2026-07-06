@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useBrowseInfinite, useGenres } from "@/lib/queries";
 import { useMediaStore } from "@/store/media-store";
 import { MediaCard } from "./media-card";
@@ -12,8 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, AlertCircle } from "lucide-react";
-import type { MediaType } from "@/lib/types";
+import { Loader2, AlertCircle, Play, Plus, SlidersHorizontal } from "lucide-react";
+import type { MediaSummary, MediaType } from "@/lib/types";
+import { formatRuntime } from "@/lib/media-utils";
+import { cn } from "@/lib/utils";
 
 interface Props {
   type?: MediaType;
@@ -36,27 +38,55 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
   const [sort, setSort] = useState("popular");
   const { data: genres } = useGenres();
 
-  // When the store genre changes (from nav dropdown), update local state
-  useEffect(() => {
-    setGenre(storeGenre);
-  }, [storeGenre]);
-
   const query = useBrowseInfinite({ type, genre, sort, pageSize: 24 });
 
-  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
-  const total = query.data?.pages[0]?.total ?? 0;
+  const pages = (query.data?.pages ?? []) as {
+    items: MediaSummary[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }[];
+  const items = pages.flatMap((p) => p.items);
+  const total = pages[0]?.total ?? 0;
   const hasMore = !!query.hasNextPage;
+  const featured = items[0] ?? null;
 
   return (
-    <div className="px-4 pb-10 pt-20 sm:px-6 lg:px-8">
-      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8">
+      {featured ? (
+        <BrowseFeature
+          item={featured}
+          title={genre ? genre : title}
+          total={total}
+          onOpen={onOpen}
+          onPlay={onPlay}
+        />
+      ) : (
+        <div className="mb-5">
+          <p className="label-eyebrow mb-2 text-primary/90">Browse</p>
+          <h1 className="lumina-title text-4xl font-bold sm:text-5xl">
             {genre ? genre : title}
           </h1>
           <p className="mt-1 text-sm text-foreground/50">
             {total} {total === 1 ? "title" : "titles"}
           </p>
+        </div>
+      )}
+
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+          <FilterChip active={!genre} onClick={() => setGenre(null)}>
+            All {type === "TV" ? "Shows" : type === "MOVIE" ? "Movies" : "Titles"}
+          </FilterChip>
+          <FilterChip active={sort === "year"} onClick={() => setSort("year")}>
+            New releases
+          </FilterChip>
+          <FilterChip active={sort === "rating"} onClick={() => setSort("rating")}>
+            Critically acclaimed
+          </FilterChip>
+          <FilterChip active={sort === "popular"} onClick={() => setSort("popular")}>
+            Most popular
+          </FilterChip>
         </div>
         <div className="flex items-center gap-2">
           <Select value={genre ?? "all"} onValueChange={(v) => setGenre(v === "all" ? null : v)}>
@@ -100,9 +130,9 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          <div className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 sm:gap-x-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
             {items.map((m) => (
-              <MediaCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} className="w-full" />
+              <MediaCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} variant="grid" className="w-full" />
             ))}
           </div>
           {hasMore && (
@@ -110,7 +140,7 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
               <button
                 onClick={() => query.fetchNextPage()}
                 disabled={query.isFetchingNextPage}
-                className="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-foreground/5 px-6 py-2.5 text-sm font-semibold transition-colors hover:bg-foreground/10 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--line-soft)] bg-white/[0.04] px-6 py-2.5 text-sm font-semibold transition-colors hover:bg-white/10 disabled:opacity-50"
               >
                 {query.isFetchingNextPage ? (
                   <>
@@ -125,5 +155,108 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
         </>
       )}
     </div>
+  );
+}
+
+function BrowseFeature({
+  item,
+  title,
+  total,
+  onOpen,
+  onPlay,
+}: {
+  item: MediaSummary;
+  title: string;
+  total: number;
+  onOpen: (id: string) => void;
+  onPlay: (mediaId: string, episodeId: string | null, startAt: number) => void;
+}) {
+  const backdrop = item.backdropUrl || item.posterUrl || "/brand/hero-1.png";
+  return (
+    <section
+      data-lumina-frame="true"
+      className="lumina-panel film-grain relative mb-5 min-h-[330px] overflow-hidden rounded-xl"
+    >
+      <img
+        src={backdrop}
+        alt=""
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.92)_0%,rgba(0,0,0,0.62)_42%,rgba(0,0,0,0.08)_74%,rgba(0,0,0,0.46)_100%),linear-gradient(180deg,rgba(0,0,0,0.05)_0%,rgba(0,0,0,0.72)_100%)]" />
+      <div className="relative flex min-h-[310px] flex-col justify-end p-5 sm:p-7">
+        <div className="max-w-2xl">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-primary-foreground">
+              Featured
+            </span>
+            <span className="rounded-md bg-black/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/70 ring-1 ring-white/10">
+              {total.toLocaleString()} {total === 1 ? "title" : "titles"}
+            </span>
+          </div>
+          <p className="label-eyebrow mb-2 text-primary/90">{title}</p>
+          <h1 className="lumina-title text-shadow-lg text-5xl font-bold leading-[0.95] sm:text-6xl lg:text-7xl">
+            {item.title}
+          </h1>
+          {item.overview && (
+            <p className="mt-3 line-clamp-3 max-w-xl text-sm leading-6 text-foreground/72">
+              {item.overview}
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-foreground/74 tabular-nums">
+            {item.year && <span>{item.year}</span>}
+            {item.runtime && <span>{formatRuntime(item.runtime)}</span>}
+            {item.certification && (
+              <span className="rounded border border-white/25 px-1.5 py-0 text-[11px] font-semibold">
+                {item.certification}
+              </span>
+            )}
+            {item.genres.slice(0, 3).map((g) => (
+              <span key={g}>{g}</span>
+            ))}
+          </div>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => onPlay(item.id, item.progressEpisodeId ?? null, item.progressPosition ?? 0)}
+              className="lumina-button-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-transform hover:scale-[1.03]"
+            >
+              <Play className="h-4 w-4 fill-current" />
+              {item.progressPercent ? "Resume" : "Play"}
+            </button>
+            <button
+              onClick={() => onOpen(item.id)}
+              className="lumina-button-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-colors hover:bg-white/[0.12]"
+            >
+              <Plus className="h-4 w-4" />
+              More info
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FilterChip({
+  children,
+  active,
+  onClick,
+}: {
+  children: React.ReactNode;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-9 shrink-0 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition-colors",
+        active
+          ? "border-primary/55 bg-primary/12 text-primary shadow-[0_0_18px_rgba(245,182,42,0.12)]"
+          : "border-[var(--line-soft)] bg-white/[0.035] text-foreground/72 hover:bg-white/[0.08] hover:text-foreground"
+      )}
+    >
+      <SlidersHorizontal className="h-3.5 w-3.5" />
+      {children}
+    </button>
   );
 }

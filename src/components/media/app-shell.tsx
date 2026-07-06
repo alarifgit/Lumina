@@ -8,9 +8,9 @@ import { BrowseView } from "./browse-view";
 import { SearchView } from "./search-view";
 import { MyListView } from "./my-list-view";
 import { LibraryView } from "./library-view";
+import { CategoryView } from "./category-view";
 import { DetailOverlay } from "./detail-overlay";
 import { VideoPlayer } from "./video-player";
-import { LogoReview } from "./logo-review";
 import { useEffect } from "react";
 
 export function AppShell() {
@@ -27,7 +27,7 @@ export function AppShell() {
   }, [route]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="relative flex min-h-screen flex-col bg-background text-foreground">
       <TopNav />
       <main className="flex-1">
         {route === "home" && <HomeView onOpen={openDetail} onPlay={handlePlay} />}
@@ -38,16 +38,14 @@ export function AppShell() {
           <BrowseView type="TV" title="TV Shows" onOpen={openDetail} onPlay={handlePlay} />
         )}
         {route === "search" && <SearchView onOpen={openDetail} onPlay={handlePlay} />}
-        {route === "category" && (
-          <BrowseView title="Categories" onOpen={openDetail} onPlay={handlePlay} />
-        )}
+        {route === "category" && <CategoryView onOpen={openDetail} onPlay={handlePlay} />}
         {route === "mylist" && <MyListView onOpen={openDetail} onPlay={handlePlay} />}
         {route === "library" && <LibraryView />}
+        {route === "settings" && <LibraryView mode="settings" />}
       </main>
       <Footer />
       <DetailOverlay onPlay={handlePlay} />
       <VideoPlayer />
-      <LogoReview />
     </div>
   );
 }

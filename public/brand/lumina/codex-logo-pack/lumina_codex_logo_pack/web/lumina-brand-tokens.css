@@ -1,0 +1,11 @@
+:root {
+  --lumina-midnight: #0A0F1A;
+  --lumina-deep-navy: #121A2A;
+  --lumina-obsidian: #050607;
+  --lumina-cinematic-slate: #1D2330;
+  --lumina-brushed-gold: #C89D3C;
+  --lumina-champagne-gold: #E8D7A6;
+  --lumina-porcelain: #F6F3EC;
+  --lumina-muted-text: #A7A190;
+  --lumina-gold-glow: 0 0 24px rgba(200, 157, 60, .32), 0 0 56px rgba(232, 215, 166, .14);
+}

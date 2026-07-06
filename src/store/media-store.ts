@@ -9,6 +9,7 @@ export type RouteKey =
   | "search"
   | "mylist"
   | "library"
+  | "settings"
   | "category";
 
 interface MediaState {

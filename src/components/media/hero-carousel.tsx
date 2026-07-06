@@ -61,15 +61,21 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
 
   if (!items.length) return null;
   const item = items[index % items.length];
+  const deck = items.slice(0, Math.min(items.length, 4));
   const go = (dir: number) =>
     setIndex((i) => (i + dir + items.length) % items.length);
 
   return (
-    <div
-      className="relative h-[60vh] min-h-[420px] w-full overflow-hidden"
+    <section
+      className="lumina-page px-4 pt-20 sm:px-6 lg:px-8"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       aria-roledescription="carousel"
+    >
+    <div
+      data-lumina-frame="true"
+      className="lumina-panel film-grain relative w-full overflow-hidden rounded-xl"
+      style={{ minHeight: "clamp(420px, 44vw, 610px)" }}
     >
       <AnimatePresence mode="sync">
         <motion.div
@@ -84,23 +90,38 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
         </motion.div>
       </AnimatePresence>
 
-      {/* Cinematic scrims — bottom (heaviest) + left + top fade for nav legibility */}
-      <div className="absolute inset-0 bg-gradient-to-t from-background via-background/30 to-background/60" />
-      <div className="absolute inset-0 bg-gradient-to-r from-background/80 via-background/10 to-transparent" />
+      {/* Cinematic scrims (design.md §6): left + bottom black gradients + faint warm gold overlay */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "linear-gradient(90deg, rgba(3,4,5,0.96) 0%, rgba(8,17,29,0.78) 36%, rgba(8,17,29,0.22) 72%, rgba(3,4,5,0.58) 100%), linear-gradient(180deg, rgba(3,4,5,0.08) 0%, rgba(3,4,5,0.78) 100%)",
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at 18% 80%, rgba(245,182,42,0.10), transparent 40%)",
+        }}
+      />
 
       {/* Content — aligned to the same horizontal padding as the content rows below */}
       <div className="absolute inset-0 flex">
-        <div className="flex w-full flex-col justify-end px-4 pb-8 sm:px-6 sm:pb-10 lg:px-8 lg:pb-12">
-          <div className="max-w-2xl">
+        <div className="grid w-full grid-cols-1 gap-6 px-6 pb-7 pt-24 sm:px-9 sm:pb-9 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-11 lg:pb-11">
+          <div className="flex max-w-2xl flex-col justify-end">
             <div className="mb-3 flex items-center gap-2">
-              <span className="rounded bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-primary">
+              <span
+                className="rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.14em] shadow-[0_0_18px_rgba(245,182,42,0.28)]"
+                style={{ background: "var(--lumina-gold)", color: "#160d04" }}
+              >
                 Featured
               </span>
-              <span className="rounded bg-foreground/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-foreground/70">
+              <span className="rounded-md bg-black/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/70 ring-1 ring-white/10">
                 {item.type === "TV" ? "Series" : "Film"}
               </span>
             </div>
-            <h1 className="text-shadow-lg text-3xl font-black leading-[0.95] tracking-tight sm:text-5xl lg:text-6xl">
+            <h1 className="lumina-title text-shadow-lg text-4xl font-semibold leading-[0.98] sm:text-6xl lg:text-7xl">
               {item.title}
             </h1>
             {item.tagline && (
@@ -108,17 +129,17 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
                 {item.tagline}
               </p>
             )}
-            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-foreground/80">
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-foreground/85 tabular-nums">
               {item.year && <span className="font-medium">{item.year}</span>}
               {item.rating != null && (
                 <span className="inline-flex items-center gap-1">
-                  <Star className="h-3.5 w-3.5 fill-primary text-primary" />
-                  {item.rating.toFixed(1)}
+                  <Star className="h-3.5 w-3.5 fill-[var(--lumina-gold)] text-[var(--lumina-gold)]" />
+                  <span className="font-semibold">{item.rating.toFixed(1)}</span>
                 </span>
               )}
               {item.runtime && <span>{formatRuntime(item.runtime)}</span>}
               {item.certification && (
-                <span className="rounded border border-foreground/30 px-1.5 py-0 text-[11px] font-semibold text-foreground/70">
+                <span className="rounded border border-white/25 px-1.5 py-0 text-[11px] font-semibold text-foreground/75">
                   {item.certification}
                 </span>
               )}
@@ -133,19 +154,19 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
                 {item.overview}
               </p>
             )}
-            <div className="mt-5 flex flex-wrap items-center gap-3">
+            <div className="mt-6 flex flex-wrap items-center gap-3">
               <button
                 onClick={() =>
                   onPlay(item.id, item.progressEpisodeId ?? null, item.progressPosition ?? 0)
                 }
-                className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-transform hover:scale-105"
+                className="lumina-button-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-transform hover:scale-[1.04]"
               >
                 <Play className="h-5 w-5 fill-current" />
                 {item.progressPercent ? "Resume" : "Play"}
               </button>
               <button
                 onClick={() => onOpen(item.id)}
-                className="inline-flex items-center gap-2 rounded-lg border border-foreground/20 bg-foreground/10 px-6 py-2.5 text-sm font-bold text-foreground backdrop-blur transition-colors hover:bg-foreground/20"
+                className="lumina-button-secondary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-colors hover:bg-white/12"
               >
                 <Info className="h-5 w-5" />
                 More Info
@@ -153,14 +174,64 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
               <button
                 onClick={() => toggle.mutate(item.id)}
                 className={cn(
-                  "inline-flex h-10 w-10 items-center justify-center rounded-full border border-foreground/20 bg-foreground/10 backdrop-blur transition-colors hover:bg-foreground/20",
-                  item.inMyList && "border-primary/50 text-primary"
+                  "inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/8 backdrop-blur transition-colors hover:bg-white/20",
+                  item.inMyList && "border-[var(--lumina-gold)]/60 text-[var(--lumina-gold)]"
                 )}
                 aria-label={item.inMyList ? "Remove from My List" : "Add to My List"}
               >
                 {item.inMyList ? <Check className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
               </button>
             </div>
+          </div>
+          <div className="hidden flex-col justify-end gap-2 lg:flex">
+            <div className="mb-1 flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground/48">
+              <span>On deck</span>
+              <span>{index + 1}/{items.length}</span>
+            </div>
+            {deck.map((candidate, i) => {
+              const active = items[index % items.length]?.id === candidate.id;
+              return (
+                <button
+                  key={candidate.id}
+                  onClick={() => setIndex(i)}
+                  className={cn(
+                  "group grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-lg border p-2 text-left transition-all",
+                    active
+                      ? "border-primary/45 bg-primary/10 text-foreground shadow-[0_0_24px_rgba(215,168,77,0.12)]"
+                      : "border-white/10 bg-black/36 text-foreground/72 hover:border-white/18 hover:bg-black/52 hover:text-foreground"
+                  )}
+                >
+                  <div className="aspect-video overflow-hidden rounded-md bg-black/40">
+                    {candidate.backdropUrl || candidate.posterUrl ? (
+                      <img
+                        src={candidate.backdropUrl || candidate.posterUrl || ""}
+                        alt=""
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <ProceduralPoster
+                        title={candidate.title}
+                        genres={candidate.genres}
+                        variant="backdrop"
+                        className="h-full w-full"
+                      />
+                    )}
+                  </div>
+                  <div className="min-w-0 self-center">
+                    <div className="line-clamp-1 text-sm font-semibold">{candidate.title}</div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-foreground/48 tabular-nums">
+                      {candidate.year && <span>{candidate.year}</span>}
+                      {candidate.rating != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Star className="h-3 w-3 fill-primary text-primary" />
+                          {candidate.rating.toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -192,7 +263,9 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
                 aria-label={`Go to slide ${i + 1}`}
                 className={cn(
                   "h-1.5 rounded-full transition-all",
-                  i === index ? "w-6 bg-primary" : "w-1.5 bg-foreground/40 hover:bg-foreground/70"
+                  i === index
+                    ? "w-6 bg-[var(--lumina-gold)] shadow-[0_0_10px_rgba(245,182,42,0.6)]"
+                    : "w-1.5 bg-white/35 hover:bg-white/60"
                 )}
               />
             ))}
@@ -200,5 +273,6 @@ export function HeroCarousel({ items, onOpen, onPlay }: Props) {
         </>
       )}
     </div>
+    </section>
   );
 }

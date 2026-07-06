@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { getTranscodeStatus } from "@/lib/transcoder";
 import { Prisma } from "@prisma/client";
 import type {
   MediaSummary,
@@ -558,6 +559,20 @@ export async function getAllGenres(): Promise<string[]> {
   return genres.map((g) => g.name);
 }
 
+async function getLibraryConfigForStats() {
+  try {
+    return await db.libraryConfig.findUnique({ where: { id: "default" } });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2022"
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function getStats(): Promise<LibraryStats> {
   const [mediaCount, movieCount, tvCount, episodeCount, genreCount, config, movieRuntime, epRuntime] =
     await Promise.all([
@@ -566,7 +581,7 @@ export async function getStats(): Promise<LibraryStats> {
       db.media.count({ where: { type: "TV" } }),
       db.episode.count(),
       db.genre.count(),
-      db.libraryConfig.findUnique({ where: { id: "default" } }),
+      getLibraryConfigForStats(),
       db.media.aggregate({ where: { type: "MOVIE" }, _sum: { runtime: true } }),
       db.episode.aggregate({ _sum: { runtime: true } }),
     ]);
@@ -582,6 +597,7 @@ export async function getStats(): Promise<LibraryStats> {
     scanCount: config?.scanCount ?? 0,
     mediaDir: config?.mediaDir ?? "/media",
     tmdbKey: config?.tmdbKey ?? null,
+    ...getTranscodeStatus(),
   };
 }
 

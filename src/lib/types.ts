@@ -120,6 +120,11 @@ export interface LibraryStats {
   scanCount: number;
   mediaDir: string;
   tmdbKey: string | null;
+  transcodeAvailable?: boolean;
+  transcodeHardware?: boolean;
+  transcodeEncoder?: string;
+  transcodeEncoderKey?: string;
+  transcodeReason?: string | null;
 }
 
 export interface ScanResult {

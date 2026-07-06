@@ -1,38 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  FolderSearch,
-  Film,
-  Tv,
+  AlertTriangle,
+  CheckCircle2,
   Clapperboard,
   Clock,
+  Cpu,
   Database,
-  RefreshCw,
-  Sparkles,
-  Loader2,
-  CheckCircle2,
-  AlertTriangle,
-  ScanLine,
-  Plus,
-  Trash2,
+  Film,
   Folder,
+  FolderSearch,
   HardDrive,
+  KeyRound,
+  Loader2,
+  LockKeyhole,
+  Network,
+  Plus,
+  RefreshCw,
+  ScanLine,
+  Server,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  Tv,
+  Users,
+  WandSparkles,
 } from "lucide-react";
 import {
-  useStats,
-  useScan,
-  useBrowse,
-  useMetadataSearch,
   useApplyMetadata,
-  useSections,
+  useBrowse,
   useCreateSection,
-  useUpdateSection,
   useDeleteSection,
-  useScanSection,
+  useMetadataSearch,
   useSaveTmdbKey,
+  useScan,
+  useScanSection,
+  useSections,
+  useStats,
+  useUpdateSection,
 } from "@/lib/queries";
 import { useToast } from "@/hooks/use-toast";
+import { useMediaStore } from "@/store/media-store";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -45,11 +54,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { ScanResult, LibrarySectionInfo, MediaType } from "@/lib/types";
+import type { LibrarySectionInfo, MediaType, ScanResult } from "@/lib/types";
 import { formatRuntime } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
 
-export function LibraryView() {
+const SETTINGS_NAV = [
+  { label: "Library Paths", icon: FolderSearch },
+  { label: "Media Sources", icon: Database },
+  { label: "Watch Folders", icon: ScanLine },
+  { label: "Network Shares", icon: Network },
+  { label: "Permissions", icon: ShieldCheck },
+  { label: "Users & Access", icon: Users },
+  { label: "Metadata Providers", icon: WandSparkles },
+  { label: "Scanning & Indexing", icon: RefreshCw },
+  { label: "Playback & Transcoding", icon: Cpu },
+  { label: "Storage Health", icon: HardDrive },
+];
+
+export function LibraryView({ mode = "library" }: { mode?: "library" | "settings" }) {
+  const isSettings = mode === "settings";
   const { data: stats, isLoading: statsLoading } = useStats();
   const { data: sections, isLoading: sectionsLoading } = useSections();
   const createSection = useCreateSection();
@@ -60,29 +83,31 @@ export function LibraryView() {
   const metaSearch = useMetadataSearch();
   const applyMeta = useApplyMetadata();
   const saveTmdbKey = useSaveTmdbKey();
-  const list = useBrowse({ page: 1, pageSize: 100 });
   const { toast } = useToast();
+  const sectionFilter = useMediaStore((s) => s.librarySectionFilter);
+  const setLibrarySectionFilter = useMediaStore((s) => s.setLibrarySectionFilter);
 
   const [globalTmdbKey, setGlobalTmdbKey] = useState("");
   const [globalAutoMatch, setGlobalAutoMatch] = useState(true);
   const [allResult, setAllResult] = useState<ScanResult | null>(null);
   const [sectionResults, setSectionResults] = useState<Record<string, ScanResult>>({});
   const [fetchingId, setFetchingId] = useState<string | null>(null);
-
-  // Add-section form state
+  const [inventoryType, setInventoryType] = useState<MediaType | "ALL">("MOVIE");
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<MediaType>("MOVIE");
   const [newCategory, setNewCategory] = useState("default");
   const [newDir, setNewDir] = useState("");
 
-  // Load the saved TMDB key from the database once stats arrive.
-  // Only populate when the user hasn't typed anything yet (avoids clobbering edits).
-  useEffect(() => {
-    if (stats?.tmdbKey && !globalTmdbKey) {
-      setGlobalTmdbKey(stats.tmdbKey);
-    }
-  }, [stats?.tmdbKey]);
+  const effectiveType = sectionFilter ? sectionFilter.type : inventoryType;
+  const list = useBrowse({
+    type: effectiveType === "ALL" ? undefined : effectiveType,
+    sectionId: sectionFilter?.id,
+    page: 1,
+    pageSize: 100,
+    sort: "title",
+    enabled: !isSettings,
+  });
 
   const onSaveTmdbKey = async () => {
     try {
@@ -116,7 +141,10 @@ export function LibraryView() {
   };
 
   const onScanSection = async (s: LibrarySectionInfo) => {
-    setSectionResults((p) => ({ ...p, [s.id]: { ...p[s.id], scanned: 0, added: 0, updated: 0, skipped: 0, errors: [], durationMs: 0, sectionId: s.id, sectionName: s.name } }));
+    setSectionResults((p) => ({
+      ...p,
+      [s.id]: { scanned: 0, added: 0, updated: 0, skipped: 0, errors: [], durationMs: 0, sectionId: s.id, sectionName: s.name },
+    }));
     try {
       const res = await scanSection.mutateAsync({
         sectionId: s.id,
@@ -184,239 +212,610 @@ export function LibraryView() {
   };
 
   const items = list.data?.items ?? [];
+  const totalItems = list.data?.total ?? 0;
+  const inventoryLabel =
+    effectiveType === "MOVIE" ? "movies" : effectiveType === "TV" ? "TV shows" : "titles";
 
   return (
-    <div className="px-4 pb-10 pt-20 sm:px-6 lg:px-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-black tracking-tight sm:text-3xl">Library</h1>
-        <p className="mt-1 text-sm text-foreground/50">
-          Scan media in separate sections (TV, TV-Anime, Movies, Movies-Anime) with different mount points.
-          Display stays unified — movies and anime movies appear together, same for TV.
-        </p>
-      </div>
+    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8">
+      <PageHero isSettings={isSettings} stats={stats} />
 
-      {/* stats */}
-      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard icon={Database} label="Titles" value={statsLoading ? "—" : String(stats?.mediaCount ?? 0)} />
-        <StatCard icon={Film} label="Movies" value={statsLoading ? "—" : String(stats?.movieCount ?? 0)} />
-        <StatCard icon={Tv} label="TV Shows" value={statsLoading ? "—" : String(stats?.tvCount ?? 0)} />
-        <StatCard icon={Clapperboard} label="Episodes" value={statsLoading ? "—" : String(stats?.episodeCount ?? 0)} />
-        <StatCard icon={Clock} label="Runtime" value={statsLoading ? "—" : `${(stats?.totalRuntimeHours ?? 0).toLocaleString()}h`} />
-        <StatCard icon={ScanLine} label="Scans" value={statsLoading ? "—" : String(stats?.scanCount ?? 0)} />
-      </div>
+      {!isSettings && (
+        <>
+          <StatsGrid stats={stats} loading={statsLoading} />
+          <LibrarySectionOverview
+            sections={sections}
+            loading={sectionsLoading}
+            onManage={(s) => setLibrarySectionFilter({ id: s.id, name: s.name, type: s.type })}
+          />
+          <InventoryTable
+            items={items}
+            totalItems={totalItems}
+            inventoryLabel={inventoryLabel}
+            isLoading={list.isLoading}
+            sectionFilter={sectionFilter}
+            inventoryType={inventoryType}
+            setInventoryType={setInventoryType}
+            clearSection={() => setLibrarySectionFilter(null)}
+            onFetchMetadata={onFetchMetadata}
+            fetchingId={fetchingId}
+          />
+        </>
+      )}
 
-      {/* Sections */}
-      <Card className="mb-8 p-5 sm:p-6">
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <FolderSearch className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold">Library Sections</h2>
+      {isSettings && (
+        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <SettingsSidebar />
+          <div className="min-w-0 space-y-5">
+            <SettingsStatusStrip stats={stats} loading={statsLoading} />
+            <TranscodingPanel stats={stats} loading={statsLoading} />
+            <SettingsQuickPanels />
+            <LibraryPathsPanel
+              sections={sections}
+              loading={sectionsLoading}
+              showAdd={showAdd}
+              setShowAdd={setShowAdd}
+              newName={newName}
+              setNewName={setNewName}
+              newType={newType}
+              setNewType={setNewType}
+              newCategory={newCategory}
+              setNewCategory={setNewCategory}
+              newDir={newDir}
+              setNewDir={setNewDir}
+              createPending={createSection.isPending}
+              onAddSection={onAddSection}
+              onScanSection={onScanSection}
+              onManage={(s) => setLibrarySectionFilter({ id: s.id, name: s.name, type: s.type })}
+              onDelete={onDeleteSection}
+              onUpdate={(id, mediaDir) => updateSection.mutate({ id, mediaDir })}
+              scanPending={scanSection.isPending}
+              scanningId={scanSection.variables?.sectionId ?? null}
+              results={sectionResults}
+            />
+            <ScanningPanel
+              tmdbKey={globalTmdbKey}
+              setTmdbKey={setGlobalTmdbKey}
+              autoMatch={globalAutoMatch}
+              setAutoMatch={setGlobalAutoMatch}
+              saved={!!stats?.tmdbKey}
+              savePending={saveTmdbKey.isPending}
+              scanPending={scanAll.isPending}
+              onSave={onSaveTmdbKey}
+              onScanAll={onScanAll}
+              result={allResult}
+            />
           </div>
-          <Button variant="outline" size="sm" onClick={() => setShowAdd((v) => !v)}>
-            <Plus className="mr-1.5 h-4 w-4" /> Add Section
-          </Button>
         </div>
-
-        {showAdd && (
-          <div className="mb-5 rounded-lg border border-border/60 bg-foreground/5 p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-foreground/50">Name</label>
-                <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. TV Shows (Anime)" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-foreground/50">Type</label>
-                <Select value={newType} onValueChange={(v) => setNewType(v as MediaType)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="MOVIE">Movies</SelectItem>
-                    <SelectItem value="TV">TV Shows</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-foreground/50">Category</label>
-                <Select value={newCategory} onValueChange={setNewCategory}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Default</SelectItem>
-                    <SelectItem value="anime">Anime</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-foreground/50">Media directory</label>
-                <Input value={newDir} onChange={(e) => setNewDir(e.target.value)} placeholder="/media/tv-anime" className="font-mono text-sm" />
-              </div>
-            </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setShowAdd(false)}>Cancel</Button>
-              <Button size="sm" onClick={onAddSection} disabled={createSection.isPending}>
-                {createSection.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
-                Create
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {sectionsLoading ? (
-          <div className="py-8 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>
-        ) : sections && sections.length > 0 ? (
-          <div className="space-y-3">
-            {sections.map((s) => (
-              <SectionCard
-                key={s.id}
-                section={s}
-                scanning={scanSection.isPending && scanSection.variables?.sectionId === s.id}
-                result={sectionResults[s.id]}
-                onScan={() => onScanSection(s)}
-                onDelete={() => onDeleteSection(s)}
-                onUpdate={(mediaDir) => updateSection.mutate({ id: s.id, mediaDir })}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="py-8 text-center text-sm text-foreground/50">
-            No sections yet. Click “Add Section” to create your first scan root.
-          </div>
-        )}
-
-        {/* global scan + TMDB key */}
-        <div className="mt-5 border-t border-border/60 pt-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-foreground/50">
-                <span>TMDB API key (saved for all scans)</span>
-                {stats?.tmdbKey && (
-                  <span className="inline-flex items-center gap-1 normal-case tracking-normal text-primary">
-                    <CheckCircle2 className="h-3 w-3" /> Saved
-                  </span>
-                )}
-              </label>
-              <div className="flex gap-2">
-                <Input
-                  type="password"
-                  value={globalTmdbKey}
-                  onChange={(e) => setGlobalTmdbKey(e.target.value)}
-                  placeholder="Get one free at themoviedb.org/settings/api"
-                  className="font-mono text-sm"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={onSaveTmdbKey}
-                  disabled={saveTmdbKey.isPending}
-                  className="shrink-0"
-                >
-                  {saveTmdbKey.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                  Save
-                </Button>
-              </div>
-            </div>
-            <div className="flex items-end gap-3">
-              <label className="flex items-center gap-2 text-sm text-foreground/70">
-                <Checkbox checked={globalAutoMatch} onCheckedChange={(v) => setGlobalAutoMatch(!!v)} />
-                Auto-match metadata
-              </label>
-              <Button onClick={onScanAll} disabled={scanAll.isPending} className="ml-auto">
-                {scanAll.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Scanning…</> : <><RefreshCw className="mr-2 h-4 w-4" /> Scan All Sections</>}
-              </Button>
-            </div>
-          </div>
-
-          {allResult && (
-            <div className="mt-4 rounded-lg border border-border/60 bg-foreground/5 p-4 text-sm">
-              <div className="mb-2 flex items-center gap-2 font-semibold">
-                <CheckCircle2 className="h-4 w-4 text-primary" />
-                Scan finished in {(allResult.durationMs / 1000).toFixed(1)}s
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <ResultStat label="Scanned" value={allResult.scanned} />
-                <ResultStat label="Added" value={allResult.added} />
-                <ResultStat label="Updated" value={allResult.updated} />
-                <ResultStat label="Skipped" value={allResult.skipped} />
-              </div>
-              {allResult.errors.length > 0 && (
-                <div className="mt-3">
-                  <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-amber-500">
-                    <AlertTriangle className="h-3.5 w-3.5" /> {allResult.errors.length} note(s)
-                  </div>
-                  <ul className="thin-scrollbar max-h-28 overflow-y-auto space-y-1 text-xs text-foreground/60">
-                    {allResult.errors.slice(0, 20).map((e, i) => (
-                      <li key={i} className="font-mono">{e}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* media table */}
-      <Card className="overflow-hidden p-0">
-        <div className="flex items-center justify-between border-b border-border/60 p-5">
-          <h2 className="text-lg font-semibold">All Media</h2>
-          <Badge variant="secondary">{items.length} shown</Badge>
-        </div>
-        <div className="thin-scrollbar overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border/60 text-left text-xs uppercase tracking-wide text-foreground/50">
-              <tr>
-                <th className="px-5 py-3 font-semibold">Title</th>
-                <th className="px-3 py-3 font-semibold">Type</th>
-                <th className="px-3 py-3 font-semibold">Year</th>
-                <th className="px-3 py-3 font-semibold">Rating</th>
-                <th className="px-3 py-3 font-semibold">Runtime</th>
-                <th className="px-3 py-3 font-semibold">Metadata</th>
-                <th className="px-5 py-3 text-right font-semibold">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.isLoading ? (
-                <tr><td colSpan={7} className="px-5 py-10 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></td></tr>
-              ) : items.length === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-10 text-center text-foreground/50">No media yet — scan a section above.</td></tr>
-              ) : (
-                items.map((m) => {
-                  const hasMeta = !!m.overview || !!m.rating;
-                  return (
-                    <tr key={m.id} className="border-b border-border/40 last:border-0 hover:bg-foreground/5">
-                      <td className="px-5 py-3 font-medium">{m.title}</td>
-                      <td className="px-3 py-3 text-foreground/70">{m.type === "TV" ? "TV" : "Movie"}</td>
-                      <td className="px-3 py-3 text-foreground/70">{m.year ?? "—"}</td>
-                      <td className="px-3 py-3 text-foreground/70">{m.rating?.toFixed(1) ?? "—"}</td>
-                      <td className="px-3 py-3 text-foreground/70">{m.runtime ? formatRuntime(m.runtime) : "—"}</td>
-                      <td className="px-3 py-3">
-                        {hasMeta ? (
-                          <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3 text-primary" /> Enriched</Badge>
-                        ) : (
-                          <Badge variant="outline" className="gap-1 text-foreground/50"><AlertTriangle className="h-3 w-3" /> Stub</Badge>
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <Button size="sm" variant="outline" disabled={fetchingId === m.id} onClick={() => onFetchMetadata(m.id, m.title, m.type)}>
-                          {fetchingId === m.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1.5 h-3.5 w-3.5" />}
-                          Fetch
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      )}
     </div>
   );
 }
 
-function SectionCard({
+function PageHero({ isSettings, stats }: { isSettings: boolean; stats?: { mediaCount?: number } }) {
+  return (
+    <section className="lumina-panel film-grain relative mb-7 overflow-hidden rounded-xl p-5 sm:p-8">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_84%_0%,rgba(238,209,132,0.14),transparent_27%),radial-gradient(circle_at_16%_100%,rgba(12,26,45,0.82),transparent_42%)]" />
+      <div className="relative max-w-3xl">
+        <p className="label-eyebrow mb-2 text-primary/90">
+          {isSettings ? "Server control room" : "Media inventory"}
+        </p>
+        <h1 className="lumina-title text-5xl font-semibold leading-none sm:text-7xl">
+          {isSettings ? "Settings" : "Library"}
+        </h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-foreground/68 sm:text-base">
+          {isSettings
+            ? "Configure paths, sources, watch folders, network shares, permissions, metadata, scanning, playback, and storage health."
+            : `${(stats?.mediaCount ?? 0).toLocaleString()} scanned titles, organized for discovery and metadata care without exposing raw admin controls.`}
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function StatsGrid({ stats, loading }: { stats?: any; loading: boolean }) {
+  return (
+    <div className="mb-7 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <StatCard icon={Database} label="Titles" value={loading ? "-" : String(stats?.mediaCount ?? 0)} />
+      <StatCard icon={Film} label="Movies" value={loading ? "-" : String(stats?.movieCount ?? 0)} />
+      <StatCard icon={Tv} label="TV Shows" value={loading ? "-" : String(stats?.tvCount ?? 0)} />
+      <StatCard icon={Clapperboard} label="Episodes" value={loading ? "-" : String(stats?.episodeCount ?? 0)} />
+      <StatCard icon={Clock} label="Runtime" value={loading ? "-" : `${(stats?.totalRuntimeHours ?? 0).toLocaleString()}h`} />
+      <StatCard icon={ScanLine} label="Scans" value={loading ? "-" : String(stats?.scanCount ?? 0)} />
+    </div>
+  );
+}
+
+function SettingsSidebar() {
+  return (
+    <aside className="lumina-panel sticky top-20 h-fit rounded-xl p-3">
+      <div className="px-2 pb-3 pt-1">
+        <p className="label-eyebrow text-primary/90">Configuration</p>
+      </div>
+      <nav className="space-y-1" aria-label="Settings sections">
+        {SETTINGS_NAV.map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <a
+              key={item.label}
+              href={`#${item.label.toLowerCase().replaceAll(" ", "-").replace("&", "and")}`}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors",
+                index === 0
+                  ? "bg-primary/12 text-primary ring-1 ring-primary/25"
+                  : "text-foreground/64 hover:bg-white/[0.055] hover:text-foreground"
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              {item.label}
+            </a>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
+
+function SettingsStatusStrip({ stats, loading }: { stats?: any; loading: boolean }) {
+  return (
+    <div className="lumina-panel rounded-xl px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-foreground/58">
+        <span className="inline-flex items-center gap-2 font-semibold text-foreground">
+          <Server className="h-4 w-4 text-primary" />
+          Lumina Media Server v0.2.0
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
+          Services running
+        </span>
+        <span>{loading ? "Checking encoder" : stats?.transcodeEncoderKey ?? "libx264"}</span>
+        <span>CPU 18%</span>
+        <span>RAM 42%</span>
+        <span>Network idle</span>
+      </div>
+    </div>
+  );
+}
+
+function TranscodingPanel({ stats, loading }: { stats?: any; loading: boolean }) {
+  return (
+    <Card id="playback-and-transcoding" className="p-5 sm:p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+            <Cpu className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="lumina-title text-2xl font-semibold">Playback & transcoding</h2>
+              <Badge variant={stats?.transcodeHardware ? "default" : "secondary"}>
+                {loading
+                  ? "Checking"
+                  : !stats?.transcodeAvailable
+                    ? "Unavailable"
+                    : stats?.transcodeHardware
+                      ? "Hardware active"
+                      : "CPU fallback"}
+              </Badge>
+            </div>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-foreground/58">
+              {loading
+                ? "Checking ffmpeg encoder support."
+                : !stats?.transcodeAvailable
+                  ? "Lumina cannot transcode yet because ffmpeg is not available. Direct-play files can still stream normally."
+                  : stats?.transcodeHardware
+                    ? `Lumina is using ${stats.transcodeEncoder} for H.264 transcodes.`
+                    : `Lumina is using ${stats?.transcodeEncoder ?? "CPU transcoding"}. Direct play remains preferred when the browser can handle the file.`}
+            </p>
+            {!loading && stats?.transcodeReason && (
+              <p className="mt-2 max-w-3xl rounded-lg border border-amber-500/18 bg-amber-500/8 px-3 py-2 text-xs leading-5 text-amber-200/78">
+                {stats.transcodeReason}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="rounded-lg border border-border/60 bg-background/45 px-4 py-3 text-sm">
+          <div className="text-xs uppercase tracking-[0.12em] text-foreground/42">Active encoder</div>
+          <div className="mt-1 font-mono text-foreground/86">
+            {loading ? "detecting" : stats?.transcodeEncoderKey ?? "libx264"}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function SettingsQuickPanels() {
+  const panels = [
+    { id: "media-sources", title: "Media Sources", body: "Local folders, NAS paths, read-only imports, file extension rules.", icon: Database },
+    { id: "watch-folders", title: "Watch Folders", body: "Scan on file change, delay imports, ignore partial downloads.", icon: ScanLine },
+    { id: "network-shares", title: "Network Shares", body: "SMB/NFS host, mount path, credential reference, connection status.", icon: Network },
+    { id: "permissions", title: "Permissions", body: "Library access, ratings restrictions, downloads, remote viewing.", icon: LockKeyhole },
+    { id: "users-and-access", title: "Users & Access", body: "Roles, invitations, guest expiry, device sessions.", icon: Users },
+    { id: "metadata-providers", title: "Metadata Providers", body: "Provider priority, artwork preferences, language, region.", icon: KeyRound },
+    { id: "storage-health", title: "Storage Health", body: "Drive usage, cache size, warning thresholds, cleanup notes.", icon: HardDrive },
+  ];
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {panels.map((panel) => {
+        const Icon = panel.icon;
+        return (
+          <section key={panel.id} id={panel.id} className="lumina-panel rounded-xl p-4">
+            <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary/12 text-primary">
+              <Icon className="h-4 w-4" />
+            </div>
+            <h3 className="font-semibold text-foreground">{panel.title}</h3>
+            <p className="mt-1 text-xs leading-5 text-foreground/52">{panel.body}</p>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function LibraryPathsPanel({
+  sections,
+  loading,
+  showAdd,
+  setShowAdd,
+  newName,
+  setNewName,
+  newType,
+  setNewType,
+  newCategory,
+  setNewCategory,
+  newDir,
+  setNewDir,
+  createPending,
+  onAddSection,
+  onScanSection,
+  onManage,
+  onDelete,
+  onUpdate,
+  scanPending,
+  scanningId,
+  results,
+}: {
+  sections?: LibrarySectionInfo[];
+  loading: boolean;
+  showAdd: boolean;
+  setShowAdd: (show: boolean) => void;
+  newName: string;
+  setNewName: (value: string) => void;
+  newType: MediaType;
+  setNewType: (value: MediaType) => void;
+  newCategory: string;
+  setNewCategory: (value: string) => void;
+  newDir: string;
+  setNewDir: (value: string) => void;
+  createPending: boolean;
+  onAddSection: () => void;
+  onScanSection: (section: LibrarySectionInfo) => void;
+  onManage: (section: LibrarySectionInfo) => void;
+  onDelete: (section: LibrarySectionInfo) => void;
+  onUpdate: (id: string, mediaDir: string) => void;
+  scanPending: boolean;
+  scanningId: string | null;
+  results: Record<string, ScanResult>;
+}) {
+  return (
+    <Card id="library-paths" className="overflow-hidden p-0">
+      <div className="flex flex-col gap-3 border-b border-border/60 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="label-eyebrow mb-1 text-primary/90">Library Paths</p>
+          <h2 className="lumina-title text-3xl font-semibold">Media access roots</h2>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setShowAdd(!showAdd)}>
+            <Plus className="h-4 w-4" /> Add Library
+          </Button>
+        </div>
+      </div>
+
+      {showAdd && (
+        <div className="border-b border-border/60 bg-white/[0.035] p-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Name">
+              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Movies" />
+            </Field>
+            <Field label="Type">
+              <Select value={newType} onValueChange={(v) => setNewType(v as MediaType)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="MOVIE">Movies</SelectItem>
+                  <SelectItem value="TV">TV Shows</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Source group">
+              <Select value={newCategory} onValueChange={setNewCategory}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default</SelectItem>
+                  <SelectItem value="anime">Anime</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Path">
+              <Input value={newDir} onChange={(e) => setNewDir(e.target.value)} placeholder="/mnt/Media/Movies" className="font-mono text-sm" />
+            </Field>
+          </div>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={onAddSection} disabled={createPending}>
+              {createPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              Create
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="thin-scrollbar overflow-x-auto">
+        <table className="w-full min-w-[780px] text-sm">
+          <thead className="border-b border-border/60 text-left text-xs uppercase tracking-[0.12em] text-foreground/48">
+            <tr>
+              <th className="px-5 py-3 font-semibold">Name</th>
+              <th className="px-3 py-3 font-semibold">Type</th>
+              <th className="px-3 py-3 font-semibold">Path</th>
+              <th className="px-3 py-3 font-semibold">Status</th>
+              <th className="px-3 py-3 font-semibold">Items</th>
+              <th className="px-5 py-3 text-right font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={6} className="px-5 py-10 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></td></tr>
+            ) : sections?.length ? (
+              sections.map((section) => (
+                <LibraryPathRow
+                  key={section.id}
+                  section={section}
+                  scanning={scanPending && scanningId === section.id}
+                  result={results[section.id]}
+                  onScan={() => onScanSection(section)}
+                  onManage={() => onManage(section)}
+                  onDelete={() => onDelete(section)}
+                  onUpdate={(mediaDir) => onUpdate(section.id, mediaDir)}
+                />
+              ))
+            ) : (
+              <tr><td colSpan={6} className="px-5 py-10 text-center text-foreground/50">No library paths yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function ScanningPanel({
+  tmdbKey,
+  setTmdbKey,
+  autoMatch,
+  setAutoMatch,
+  saved,
+  savePending,
+  scanPending,
+  onSave,
+  onScanAll,
+  result,
+}: {
+  tmdbKey: string;
+  setTmdbKey: (value: string) => void;
+  autoMatch: boolean;
+  setAutoMatch: (value: boolean) => void;
+  saved: boolean;
+  savePending: boolean;
+  scanPending: boolean;
+  onSave: () => void;
+  onScanAll: () => void;
+  result: ScanResult | null;
+}) {
+  return (
+    <Card id="scanning-and-indexing" className="p-5 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="label-eyebrow mb-1 text-primary/90">Scanning & Indexing</p>
+          <h2 className="lumina-title text-3xl font-semibold">Library Settings</h2>
+          <p className="mt-1 text-sm text-foreground/56">Metadata matching, scheduled scans, and full-library indexing controls.</p>
+        </div>
+        <Button onClick={onScanAll} disabled={scanPending}>
+          {scanPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Scan All Libraries
+        </Button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_280px]">
+        <Field label="TMDB API key">
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={tmdbKey}
+              onChange={(e) => setTmdbKey(e.target.value)}
+              placeholder="Get one free at themoviedb.org/settings/api"
+              className="font-mono text-sm"
+            />
+            <Button variant="outline" onClick={onSave} disabled={savePending}>
+              {savePending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save
+            </Button>
+          </div>
+          {saved && (
+            <span className="mt-2 inline-flex items-center gap-1 text-xs text-primary">
+              <CheckCircle2 className="h-3 w-3" /> Saved for all scans
+            </span>
+          )}
+        </Field>
+        <label className="flex items-center gap-3 rounded-xl border border-border/60 bg-white/[0.035] p-4 text-sm text-foreground/72">
+          <Checkbox checked={autoMatch} onCheckedChange={(v) => setAutoMatch(!!v)} />
+          Auto-match metadata during scans
+        </label>
+      </div>
+      {result && (
+        <div className="mt-4 rounded-xl border border-border/60 bg-background/45 p-4 text-sm">
+          <div className="mb-2 flex items-center gap-2 font-semibold">
+            <CheckCircle2 className="h-4 w-4 text-primary" />
+            Scan finished in {(result.durationMs / 1000).toFixed(1)}s
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <ResultStat label="Scanned" value={result.scanned} />
+            <ResultStat label="Added" value={result.added} />
+            <ResultStat label="Updated" value={result.updated} />
+            <ResultStat label="Skipped" value={result.skipped} />
+          </div>
+          {result.errors.length > 0 && (
+            <p className="mt-3 text-xs text-amber-200/78">{result.errors.length} scan note(s) recorded.</p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function LibrarySectionOverview({
+  sections,
+  loading,
+  onManage,
+}: {
+  sections?: LibrarySectionInfo[];
+  loading: boolean;
+  onManage: (section: LibrarySectionInfo) => void;
+}) {
+  return (
+    <section className="mb-7">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="lumina-title text-2xl font-semibold sm:text-3xl">Library sections</h2>
+      </div>
+      {loading ? (
+        <div className="lumina-panel rounded-xl p-8 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>
+      ) : sections?.length ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {sections.map((s) => (
+            <button key={s.id} onClick={() => onManage(s)} className="lumina-panel rounded-xl p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/12 text-primary">
+                  {s.type === "TV" ? <Tv className="h-5 w-5" /> : <Film className="h-5 w-5" />}
+                </div>
+                <Badge variant="secondary">{s.category === "anime" ? "Anime" : s.type === "TV" ? "TV" : "Movies"}</Badge>
+              </div>
+              <div className="text-lg font-semibold">{s.name}</div>
+              <div className="mt-1 text-sm text-foreground/54">{s.mediaCount.toLocaleString()} titles</div>
+              <div className="mt-3 text-xs text-foreground/42">{s.lastScan ? `Last scan ${new Date(s.lastScan).toLocaleDateString()}` : "Not scanned yet"}</div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="lumina-panel rounded-xl p-8 text-center text-sm text-foreground/54">Add library paths in Settings to begin building this overview.</div>
+      )}
+    </section>
+  );
+}
+
+function InventoryTable({
+  items,
+  totalItems,
+  inventoryLabel,
+  isLoading,
+  sectionFilter,
+  inventoryType,
+  setInventoryType,
+  clearSection,
+  onFetchMetadata,
+  fetchingId,
+}: {
+  items: any[];
+  totalItems: number;
+  inventoryLabel: string;
+  isLoading: boolean;
+  sectionFilter: { id: string; name: string; type: MediaType } | null;
+  inventoryType: MediaType | "ALL";
+  setInventoryType: (value: MediaType | "ALL") => void;
+  clearSection: () => void;
+  onFetchMetadata: (mediaId: string, title: string, type: "MOVIE" | "TV") => void;
+  fetchingId: string | null;
+}) {
+  return (
+    <Card className="overflow-hidden p-0">
+      <div className="flex flex-col gap-4 border-b border-border/60 p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="lumina-title text-2xl font-semibold">Media inventory</h2>
+          <p className="mt-1 text-sm text-foreground/50">
+            {sectionFilter
+              ? `${sectionFilter.name}: ${totalItems.toLocaleString()} ${inventoryLabel} found. Showing ${items.length.toLocaleString()}.`
+              : `${totalItems.toLocaleString()} ${inventoryLabel} found. Showing ${items.length.toLocaleString()}.`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {sectionFilter && <Button variant="outline" onClick={clearSection}>All Library</Button>}
+          {!sectionFilter && (["MOVIE", "TV", "ALL"] as const).map((type) => (
+            <Button
+              key={type}
+              variant={inventoryType === type ? "default" : "outline"}
+              onClick={() => setInventoryType(type)}
+            >
+              {type === "MOVIE" ? "Movies" : type === "TV" ? "TV Shows" : "All"}
+            </Button>
+          ))}
+          <Badge variant="secondary">{items.length} shown</Badge>
+        </div>
+      </div>
+      <div className="thin-scrollbar max-h-[68vh] overflow-auto">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead className="border-b border-border/60 text-left text-xs uppercase tracking-[0.12em] text-foreground/50">
+            <tr>
+              <th className="px-5 py-3 font-semibold">Title</th>
+              <th className="px-3 py-3 font-semibold">Type</th>
+              <th className="px-3 py-3 font-semibold">Year</th>
+              <th className="px-3 py-3 font-semibold">Rating</th>
+              <th className="px-3 py-3 font-semibold">Runtime</th>
+              <th className="px-3 py-3 font-semibold">Metadata</th>
+              <th className="px-5 py-3 text-right font-semibold">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading ? (
+              <tr><td colSpan={7} className="px-5 py-10 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></td></tr>
+            ) : items.length === 0 ? (
+              <tr><td colSpan={7} className="px-5 py-10 text-center text-foreground/50">No media yet. Add and scan folders from Settings.</td></tr>
+            ) : (
+              items.map((m) => {
+                const hasMeta = !!m.overview || !!m.rating;
+                return (
+                  <tr key={m.id} className="border-b border-border/40 last:border-0 hover:bg-foreground/5">
+                    <td className="px-5 py-3 font-medium">{m.title}</td>
+                    <td className="px-3 py-3 text-foreground/70">{m.type === "TV" ? "TV" : "Movie"}</td>
+                    <td className="px-3 py-3 text-foreground/70">{m.year ?? "-"}</td>
+                    <td className="px-3 py-3 text-foreground/70">{m.rating?.toFixed(1) ?? "-"}</td>
+                    <td className="px-3 py-3 text-foreground/70">{m.runtime ? formatRuntime(m.runtime) : "-"}</td>
+                    <td className="px-3 py-3">
+                      {hasMeta ? (
+                        <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3 text-primary" /> Enriched</Badge>
+                      ) : (
+                        <Badge variant="outline" className="gap-1 text-foreground/50"><AlertTriangle className="h-3 w-3" /> Stub</Badge>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <Button variant="outline" disabled={fetchingId === m.id} onClick={() => onFetchMetadata(m.id, m.title, m.type)}>
+                        {fetchingId === m.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        Fetch
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function LibraryPathRow({
   section,
   scanning,
   result,
   onScan,
+  onManage,
   onDelete,
   onUpdate,
 }: {
@@ -424,90 +823,72 @@ function SectionCard({
   scanning: boolean;
   result?: ScanResult;
   onScan: () => void;
+  onManage: () => void;
   onDelete: () => void;
   onUpdate: (mediaDir: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [dir, setDir] = useState(section.mediaDir);
-
   const saveDir = () => {
     if (dir !== section.mediaDir) onUpdate(dir);
     setEditing(false);
   };
 
   return (
-    <div className="rounded-lg border border-border/60 bg-foreground/3 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Folder className="h-4 w-4 text-primary" />
-            <h3 className="font-semibold">{section.name}</h3>
-            <Badge variant="secondary" className="text-[10px]">
-              {section.type === "TV" ? "TV" : "Movies"}
-            </Badge>
-            {section.category === "anime" && (
-              <Badge className="bg-primary/15 text-[10px] text-primary">Anime</Badge>
-            )}
+    <tr className="border-b border-border/40 last:border-0 align-top hover:bg-foreground/5">
+      <td className="px-5 py-3 font-semibold">{section.name}</td>
+      <td className="px-3 py-3"><Badge variant="secondary">{section.type === "TV" ? "TV Shows" : "Movies"}</Badge></td>
+      <td className="px-3 py-3">
+        {editing ? (
+          <div className="flex min-w-80 gap-2">
+            <Input value={dir} onChange={(e) => setDir(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveDir()} className="h-8 font-mono text-xs" />
+            <Button variant="outline" onClick={saveDir}>Save</Button>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground/50">
-            <span className="inline-flex items-center gap-1">
-              <HardDrive className="h-3 w-3" />
-              {editing ? (
-                <span className="flex items-center gap-1">
-                  <Input
-                    value={dir}
-                    onChange={(e) => setDir(e.target.value)}
-                    className="h-6 w-48 font-mono text-xs"
-                    onKeyDown={(e) => e.key === "Enter" && saveDir()}
-                  />
-                  <Button size="sm" variant="ghost" className="h-6 px-2" onClick={saveDir}>Save</Button>
-                </span>
-              ) : (
-                <button
-                  onClick={() => { setDir(section.mediaDir); setEditing(true); }}
-                  className="font-mono hover:text-foreground"
-                  title="Click to edit"
-                >
-                  {section.mediaDir}
-                </button>
-              )}
-            </span>
-            <span>{section.mediaCount} titles</span>
-            <span>{section.scanCount} scans</span>
-            {section.lastScan && <span>Last: {new Date(section.lastScan).toLocaleString()}</span>}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={onScan} disabled={scanning}>
-            {scanning ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Scanning…</> : <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Scan</>}
+        ) : (
+          <button onClick={() => { setDir(section.mediaDir); setEditing(true); }} className="max-w-[360px] truncate font-mono text-xs text-foreground/62 hover:text-foreground" title="Click to edit">
+            {section.mediaDir}
+          </button>
+        )}
+      </td>
+      <td className="px-3 py-3">
+        <span className="inline-flex items-center gap-1.5 text-xs text-[var(--success)]">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Active
+        </span>
+        {result && <div className="mt-1 text-[11px] text-foreground/46">{result.added} added · {result.updated} updated</div>}
+      </td>
+      <td className="px-3 py-3 text-foreground/70 tabular-nums">{section.mediaCount.toLocaleString()}</td>
+      <td className="px-5 py-3">
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onManage}>Manage</Button>
+          <Button onClick={onScan} disabled={scanning}>
+            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Scan
           </Button>
-          <Button size="sm" variant="ghost" onClick={onDelete} className="text-foreground/50 hover:text-destructive">
+          <Button variant="ghost" onClick={onDelete} className="text-foreground/50 hover:text-destructive">
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
-      </div>
-      {result && (
-        <div className="mt-3 rounded-md bg-background/50 p-2 text-xs">
-          <div className="flex items-center gap-2 font-medium text-foreground/70">
-            <CheckCircle2 className="h-3 w-3 text-primary" />
-            {(result.durationMs / 1000).toFixed(1)}s · {result.scanned} scanned · {result.added} added · {result.updated} updated
-          </div>
-          {result.errors.length > 0 && (
-            <div className="mt-1 text-amber-500/80">{result.errors.length} note(s)</div>
-          )}
-        </div>
-      )}
-    </div>
+      </td>
+    </tr>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-foreground/50">{label}</span>
+      {children}
+    </label>
   );
 }
 
 function StatCard({ icon: Icon, label, value }: { icon: typeof Film; label: string; value: string }) {
   return (
     <Card className="p-4">
-      <div className="mb-2 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+      <div className="mb-2 inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary/15 text-primary">
         <Icon className="h-5 w-5" />
       </div>
-      <div className="text-2xl font-black tracking-tight">{value}</div>
+      <div className="text-2xl font-black tabular-nums">{value}</div>
       <div className="text-xs text-foreground/50">{label}</div>
     </Card>
   );
@@ -515,8 +896,8 @@ function StatCard({ icon: Icon, label, value }: { icon: typeof Film; label: stri
 
 function ResultStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-md bg-background/50 p-2">
-      <div className="text-lg font-bold">{value}</div>
+    <div className="rounded-lg bg-background/50 p-2">
+      <div className="text-lg font-bold tabular-nums">{value}</div>
       <div className="text-xs text-foreground/50">{label}</div>
     </div>
   );

@@ -1,23 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Lumina — Your Personal Cinema",
+  title: "Lumina",
   description:
-    "A premium streaming front-end for your personal movie & TV library. Browse, search, and play your media with rich metadata.",
+    "A premium, self-hosted cinema for your personal movie & TV library. Browse, search, and play your media with rich metadata.",
   keywords: [
     "Lumina",
     "media server",
@@ -30,12 +19,24 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Lumina" }],
   icons: {
-    icon: "/brand/logo-mark.png",
-    apple: "/brand/logo-mark.png",
+    icon: [
+      {
+        url: "/brand/lumina/codex-logo-pack/lumina_codex_logo_pack/favicons/favicon-32x32.png",
+        sizes: "32x32",
+        type: "image/png",
+      },
+      {
+        url: "/brand/lumina/codex-logo-pack/lumina_codex_logo_pack/favicons/favicon-16x16.png",
+        sizes: "16x16",
+        type: "image/png",
+      },
+    ],
+    shortcut: "/brand/lumina/codex-logo-pack/lumina_codex_logo_pack/favicons/favicon-32x32.png",
+    apple: "/brand/lumina/codex-logo-pack/lumina_codex_logo_pack/favicons/apple-touch-icon.png",
   },
   openGraph: {
-    title: "Lumina — Your Personal Cinema",
-    description: "A premium streaming front-end for your personal media library.",
+    title: "Lumina",
+    description: "A premium, self-hosted cinema for your personal media library.",
     siteName: "Lumina",
     type: "website",
   },
@@ -48,9 +49,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className="dark">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
-      >
+      <body className="antialiased">
         <Providers>{children}</Providers>
         <Toaster />
       </body>

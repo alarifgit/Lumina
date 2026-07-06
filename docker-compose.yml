@@ -28,13 +28,16 @@ services:
       - "3000:3000"
 
     environment:
-      # SQLite database — stored on the host via the ./data bind mount below
-      DATABASE_URL: "file:/data/lumina.db"
       # Optional: set a TMDB API key globally (get one free at themoviedb.org/settings/api)
       # Individual library sections can also have their own keys.
       TMDB_API_KEY: ""
       # Next.js
       NEXT_TELEMETRY_DISABLED: "1"
+
+    # Optional: expose Intel/Synology VAAPI hardware transcoding.
+    # Lumina auto-detects /dev/dri/renderD128 and falls back to CPU if unavailable.
+    devices:
+      - /dev/dri:/dev/dri
 
     volumes:
       # ── Database (host-mounted, NOT a Docker volume) ──

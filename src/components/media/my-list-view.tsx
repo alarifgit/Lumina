@@ -1,10 +1,11 @@
 "use client";
 
-import { Bookmark, Plus } from "lucide-react";
+import { Bookmark } from "lucide-react";
 import { useMyList } from "@/lib/queries";
 import { MediaCard } from "./media-card";
 import { GridSkeleton } from "./skeletons";
 import { useMediaStore } from "@/store/media-store";
+import { LogoEmblem } from "./logo";
 
 interface Props {
   onOpen: (id: string) => void;
@@ -17,37 +18,39 @@ export function MyListView({ onOpen, onPlay }: Props) {
   const items = data?.items ?? [];
 
   return (
-    <div className="px-4 pb-10 pt-20 sm:px-6 lg:px-8">
-      <div className="mb-5">
-        <h1 className="text-2xl font-black tracking-tight sm:text-3xl">My List</h1>
-        <p className="mt-1 text-sm text-foreground/50">
-          {items.length} saved {items.length === 1 ? "title" : "titles"}
-        </p>
+    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8">
+      <div className="lumina-panel film-grain relative mb-7 overflow-hidden rounded-xl p-5 sm:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_0%,rgba(238,209,132,0.14),transparent_26%),radial-gradient(circle_at_16%_100%,rgba(12,26,45,0.78),transparent_38%)]" />
+        <div className="relative">
+          <p className="label-eyebrow mb-2 text-primary/90">Personal shelf</p>
+          <h1 className="lumina-title text-5xl font-semibold leading-none sm:text-7xl">My List</h1>
+          <p className="mt-3 text-sm text-foreground/56">
+            {items.length} saved {items.length === 1 ? "title" : "titles"} ready when the room goes dark.
+          </p>
+        </div>
       </div>
 
       {isLoading ? (
         <GridSkeleton />
       ) : items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-foreground/5">
-            <Bookmark className="h-8 w-8 text-foreground/40" />
-          </div>
-          <h3 className="text-lg font-semibold">Your list is empty</h3>
+        <div className="lumina-panel flex flex-col items-center justify-center rounded-xl px-6 py-24 text-center">
+          <LogoEmblem detailed size={96} className="mb-3 opacity-90" />
+          <h3 className="lumina-title text-3xl font-semibold">Your list is waiting for its first title.</h3>
           <p className="mt-1 max-w-sm text-sm text-foreground/60">
-            Add movies and shows to your list with the{" "}
-            <Plus className="inline h-3.5 w-3.5" /> button — they’ll show up here for quick access.
+            Add films and shows to build your private watchlist.
           </p>
           <button
             onClick={() => setRoute("home")}
-            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground transition-transform hover:scale-105"
+            className="lumina-button-primary mt-5 inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-transform hover:scale-105"
           >
+            <Bookmark className="h-4 w-4" />
             Browse library
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        <div className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 sm:gap-x-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
           {items.map((m) => (
-            <MediaCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} className="w-full" />
+            <MediaCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} variant="grid" className="w-full" />
           ))}
         </div>
       )}

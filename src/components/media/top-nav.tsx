@@ -10,11 +10,12 @@ import {
   Tv,
   Bookmark,
   Library,
+  Settings,
   ChevronDown,
   LayoutGrid,
 } from "lucide-react";
 import { useMediaStore, type RouteKey } from "@/store/media-store";
-import { Logo, ThemeToggle } from "./logo";
+import { Logo } from "./logo";
 import {
   Sheet,
   SheetContent,
@@ -37,6 +38,10 @@ const NAV: { key: RouteKey; label: string; icon: typeof HomeIcon }[] = [
   { key: "home", label: "Home", icon: HomeIcon },
   { key: "movies", label: "Movies", icon: Film },
   { key: "tv", label: "TV Shows", icon: Tv },
+  { key: "category", label: "Categories", icon: LayoutGrid },
+  { key: "mylist", label: "My List", icon: Bookmark },
+  { key: "library", label: "Library", icon: Library },
+  { key: "settings", label: "Settings", icon: Settings },
 ];
 
 export function TopNav() {
@@ -60,126 +65,98 @@ export function TopNav() {
   const isActive = (key: RouteKey) => route === key;
   const isCategoryActive = route === "category";
 
+  const navButtonClass = (active: boolean) =>
+    cn(
+      "group inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold transition-all",
+      active
+        ? "bg-primary/12 text-[var(--lumina-gold-bright)] shadow-[0_0_24px_rgba(238,209,132,0.14)] ring-1 ring-primary/35"
+        : "text-foreground/58 ring-1 ring-transparent hover:bg-white/[0.055] hover:text-foreground hover:ring-white/10"
+    );
+
   return (
     <header
       className={cn(
         "fixed inset-x-0 top-0 z-40 transition-all duration-300",
         scrolled
-          ? "border-b border-border/60 bg-background/85 backdrop-blur-xl"
-          : "bg-gradient-to-b from-background/80 to-transparent"
+          ? "border-b border-[var(--line-soft)] bg-[#03070c]/82 shadow-[0_22px_70px_rgba(0,0,0,0.32)] backdrop-blur-xl"
+          : "bg-gradient-to-b from-[#03070c]/82 to-[#03070c]/18 backdrop-blur-md"
       )}
     >
-      <nav className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-8" aria-label="Primary">
+      <nav className="flex min-h-16 items-center gap-3 px-4 py-2 sm:px-6 lg:px-8" aria-label="Primary">
         <button
           onClick={() => setRoute("home")}
           className="flex items-center transition-opacity hover:opacity-80"
           aria-label="Lumina home"
         >
-          <Logo />
+          <Logo size="lg" className="max-w-[46vw]" />
         </button>
 
         {/* desktop nav */}
-        <div className="ml-4 hidden items-center gap-1 md:flex">
-          {NAV.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setRoute(item.key)}
-              className={cn(
-                "relative rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                isActive(item.key)
-                  ? "text-foreground"
-                  : "text-foreground/60 hover:text-foreground"
-              )}
-            >
-              {item.label}
-              {isActive(item.key) && (
-                <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-primary" />
-              )}
-            </button>
-          ))}
-
-          {/* Categories dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+        <div className="ml-3 hidden items-center gap-1 rounded-full border border-[var(--line-soft)] bg-[#08111d]/62 p-1 shadow-[inset_0_1px_0_rgba(255,238,184,0.06)] md:flex">
+          {NAV.map((item) => {
+            const Icon = item.icon;
+            if (item.key === "category") {
+              return (
+                <div key={item.key} className="contents">
+                  <DropdownMenu onOpenChange={(open) => open && setRoute("category")}>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        onClick={() => setRoute("category")}
+                        className={navButtonClass(isCategoryActive)}
+                      >
+                        <Icon className="h-4 w-4" />
+                        Categories
+                        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="start"
+                      className="thin-scrollbar max-h-[70vh] w-56 overflow-y-auto"
+                    >
+                      <DropdownMenuLabel>Browse by genre</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => setRoute("movies")}
+                        className="cursor-pointer"
+                      >
+                        <Film className="mr-2 h-4 w-4" /> All Movies
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setRoute("tv")}
+                        className="cursor-pointer"
+                      >
+                        <Tv className="mr-2 h-4 w-4" /> All TV Shows
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      {(genres ?? []).map((g, i) => (
+                        <DropdownMenuItem
+                          key={`${g}-${i}`}
+                          onClick={() => setGenreFilter(g)}
+                          className={cn(
+                            "cursor-pointer justify-between",
+                            isCategoryActive && genreFilter === g && "bg-primary/10 text-primary"
+                          )}
+                        >
+                          {g}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              );
+            }
+            return (
               <button
-                className={cn(
-                  "relative inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isCategoryActive
-                    ? "text-foreground"
-                    : "text-foreground/60 hover:text-foreground"
-                )}
+                key={item.key}
+                onClick={() => setRoute(item.key)}
+                className={navButtonClass(isActive(item.key))}
+                aria-current={isActive(item.key) ? "page" : undefined}
               >
-                <LayoutGrid className="h-4 w-4" />
-                Categories
-                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-                {isCategoryActive && (
-                  <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-primary" />
-                )}
+                <Icon className="h-4 w-4" />
+                <span className="hidden xl:inline">{item.label}</span>
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              className="max-h-[70vh] w-56 overflow-y-auto thin-scrollbar"
-            >
-              <DropdownMenuLabel>Browse by genre</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => setRoute("movies")}
-                className="cursor-pointer"
-              >
-                <Film className="mr-2 h-4 w-4" /> All Movies
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setRoute("tv")}
-                className="cursor-pointer"
-              >
-                <Tv className="mr-2 h-4 w-4" /> All TV Shows
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {(genres ?? []).map((g) => (
-                <DropdownMenuItem
-                  key={g}
-                  onClick={() => setGenreFilter(g)}
-                  className={cn(
-                    "cursor-pointer justify-between",
-                    isCategoryActive && genreFilter === g && "bg-primary/10 text-primary"
-                  )}
-                >
-                  {g}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <button
-            onClick={() => setRoute("mylist")}
-            className={cn(
-              "relative rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              isActive("mylist")
-                ? "text-foreground"
-                : "text-foreground/60 hover:text-foreground"
-            )}
-          >
-            My List
-            {isActive("mylist") && (
-              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-primary" />
-            )}
-          </button>
-
-          <button
-            onClick={() => setRoute("library")}
-            className={cn(
-              "relative rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              isActive("library")
-                ? "text-foreground"
-                : "text-foreground/60 hover:text-foreground"
-            )}
-          >
-            Library
-            {isActive("library") && (
-              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-primary" />
-            )}
-          </button>
+            );
+          })}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
@@ -192,7 +169,7 @@ export function TopNav() {
               onFocus={() => searchQuery.trim() && setRoute("search")}
               placeholder="Search titles…"
               className={cn(
-                "h-9 rounded-full border border-border/60 bg-foreground/5 pl-9 pr-3 text-sm text-foreground placeholder:text-foreground/40 transition-all focus:border-primary/50 focus:bg-foreground/8 focus:outline-none focus:ring-1 focus:ring-primary/30",
+                "h-9 rounded-full border border-[var(--line-soft)] bg-[#0c1a2d]/58 pl-9 pr-3 text-sm text-foreground placeholder:text-foreground/40 transition-all focus:border-[var(--lumina-gold)]/50 focus:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-[rgba(238,209,132,0.18)]",
                 "w-40 focus:w-64"
               )}
               aria-label="Search"
@@ -206,13 +183,6 @@ export function TopNav() {
                 <X className="h-4 w-4" />
               </button>
             )}
-          </div>
-
-          <ThemeToggle />
-
-          {/* avatar */}
-          <div className="hidden h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-amber-700 text-sm font-bold text-primary-foreground sm:flex">
-            L
           </div>
 
           {/* mobile menu */}
@@ -229,7 +199,7 @@ export function TopNav() {
               <SheetHeader className="px-5 pt-5">
                 <SheetTitle asChild>
                   <div>
-                    <Logo />
+                    <Logo size="lg" />
                   </div>
                 </SheetTitle>
               </SheetHeader>
@@ -245,7 +215,7 @@ export function TopNav() {
                   />
                 </div>
                 <nav className="flex flex-col gap-1">
-                  {[...NAV, { key: "mylist" as const, label: "My List", icon: Bookmark }, { key: "library" as const, label: "Library", icon: Library }].map((item) => {
+                  {NAV.map((item) => {
                     const Icon = item.icon;
                     return (
                       <button
@@ -273,9 +243,9 @@ export function TopNav() {
                     Categories
                   </p>
                   <div className="flex flex-wrap gap-1.5 px-3">
-                    {(genres ?? []).slice(0, 16).map((g) => (
+                    {(genres ?? []).slice(0, 16).map((g, i) => (
                       <button
-                        key={g}
+                        key={`${g}-${i}`}
                         onClick={() => {
                           setGenreFilter(g);
                           setMobileOpen(false);
