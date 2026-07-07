@@ -19,7 +19,6 @@ server.log
 # Docker
 Dockerfile
 docker-compose.yml
-docker-entrypoint.sh
 .dockerignore
 
 # Verification screenshots (dev only)

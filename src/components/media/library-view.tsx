@@ -9,12 +9,9 @@ import {
   Cpu,
   Database,
   Film,
-  Folder,
   FolderSearch,
   HardDrive,
-  KeyRound,
   Loader2,
-  LockKeyhole,
   Network,
   Plus,
   RefreshCw,
@@ -33,11 +30,13 @@ import {
   useCreateSection,
   useDeleteSection,
   useMetadataSearch,
+  usePlexSync,
   useSaveTmdbKey,
   useScan,
   useScanSection,
   useSections,
   useStats,
+  useTestPlexConnection,
   useUpdateSection,
 } from "@/lib/queries";
 import { useToast } from "@/hooks/use-toast";
@@ -54,20 +53,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { LibrarySectionInfo, MediaType, ScanResult } from "@/lib/types";
+import type { LibrarySectionInfo, MediaType, PlexSyncDirection, PlexSyncResult, ScanResult } from "@/lib/types";
 import { formatRuntime } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV = [
-  { label: "Library Paths", icon: FolderSearch },
+  { label: "Library Paths", icon: FolderSearch, href: "#library-paths" },
+  { label: "Metadata Providers", icon: WandSparkles, href: "#metadata-providers" },
+  { label: "Scanning & Indexing", icon: RefreshCw, href: "#scanning-and-indexing" },
+  { label: "Plex Sync", icon: Server, href: "#plex-sync" },
+  { label: "Playback & Transcoding", icon: Cpu, href: "#playback-and-transcoding" },
   { label: "Media Sources", icon: Database },
   { label: "Watch Folders", icon: ScanLine },
   { label: "Network Shares", icon: Network },
   { label: "Permissions", icon: ShieldCheck },
   { label: "Users & Access", icon: Users },
-  { label: "Metadata Providers", icon: WandSparkles },
-  { label: "Scanning & Indexing", icon: RefreshCw },
-  { label: "Playback & Transcoding", icon: Cpu },
   { label: "Storage Health", icon: HardDrive },
 ];
 
@@ -83,6 +83,8 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const metaSearch = useMetadataSearch();
   const applyMeta = useApplyMetadata();
   const saveTmdbKey = useSaveTmdbKey();
+  const testPlex = useTestPlexConnection();
+  const plexSync = usePlexSync();
   const { toast } = useToast();
   const sectionFilter = useMediaStore((s) => s.librarySectionFilter);
   const setLibrarySectionFilter = useMediaStore((s) => s.setLibrarySectionFilter);
@@ -98,6 +100,10 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const [newType, setNewType] = useState<MediaType>("MOVIE");
   const [newCategory, setNewCategory] = useState("default");
   const [newDir, setNewDir] = useState("");
+  const [plexUrl, setPlexUrl] = useState("");
+  const [plexToken, setPlexToken] = useState("");
+  const [plexDirection, setPlexDirection] = useState<PlexSyncDirection>("pull");
+  const [plexResult, setPlexResult] = useState<PlexSyncResult | null>(null);
 
   const effectiveType = sectionFilter ? sectionFilter.type : inventoryType;
   const list = useBrowse({
@@ -211,6 +217,51 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     }
   };
 
+  const plexPayload = () => ({
+    url: plexUrl || undefined,
+    token: plexToken || undefined,
+    direction: plexDirection,
+  });
+
+  const onTestPlex = async () => {
+    try {
+      const result = await testPlex.mutateAsync({ url: plexUrl || undefined, token: plexToken || undefined });
+      setPlexResult(result);
+      toast({
+        title: "Plex connected",
+        description: `${result.serverName ?? "Plex"} · ${result.sections ?? 0} library section(s) found.`,
+      });
+    } catch (e) {
+      toast({ title: "Couldn't reach Plex", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
+  const onPreviewPlexSync = async () => {
+    try {
+      const result = await plexSync.mutateAsync({ ...plexPayload(), apply: false });
+      setPlexResult(result);
+      toast({
+        title: "Plex sync preview ready",
+        description: `${result.markedLuminaWatched} Lumina update(s) · ${result.markedPlexWatched} Plex update(s).`,
+      });
+    } catch (e) {
+      toast({ title: "Plex preview failed", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
+  const onApplyPlexSync = async () => {
+    try {
+      const result = await plexSync.mutateAsync({ ...plexPayload(), apply: true });
+      setPlexResult(result);
+      toast({
+        title: "Plex sync applied",
+        description: `${result.markedLuminaWatched} marked watched in Lumina · ${result.markedPlexWatched} marked watched in Plex.`,
+      });
+    } catch (e) {
+      toast({ title: "Plex sync failed", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
   const items = list.data?.items ?? [];
   const totalItems = list.data?.total ?? 0;
   const inventoryLabel =
@@ -247,9 +298,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
         <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
           <SettingsSidebar />
           <div className="min-w-0 space-y-5">
-            <SettingsStatusStrip stats={stats} loading={statsLoading} />
             <TranscodingPanel stats={stats} loading={statsLoading} />
-            <SettingsQuickPanels />
             <LibraryPathsPanel
               sections={sections}
               loading={sectionsLoading}
@@ -284,6 +333,19 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
               onSave={onSaveTmdbKey}
               onScanAll={onScanAll}
               result={allResult}
+            />
+            <PlexSyncPanel
+              plexUrl={plexUrl}
+              setPlexUrl={setPlexUrl}
+              plexToken={plexToken}
+              setPlexToken={setPlexToken}
+              direction={plexDirection}
+              setDirection={setPlexDirection}
+              result={plexResult}
+              busy={testPlex.isPending || plexSync.isPending}
+              onTest={onTestPlex}
+              onPreview={onPreviewPlexSync}
+              onApply={onApplyPlexSync}
             />
           </div>
         </div>
@@ -335,45 +397,37 @@ function SettingsSidebar() {
       <nav className="space-y-1" aria-label="Settings sections">
         {SETTINGS_NAV.map((item, index) => {
           const Icon = item.icon;
-          return (
-            <a
-              key={item.label}
-              href={`#${item.label.toLowerCase().replaceAll(" ", "-").replace("&", "and")}`}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors",
-                index === 0
-                  ? "bg-primary/12 text-primary ring-1 ring-primary/25"
-                  : "text-foreground/64 hover:bg-white/[0.055] hover:text-foreground"
-              )}
-            >
+          const className = cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors",
+            item.href
+              ? index === 0
+                ? "bg-primary/12 text-primary ring-1 ring-primary/25"
+                : "text-foreground/68 hover:bg-white/[0.055] hover:text-foreground"
+              : "cursor-not-allowed text-foreground/34"
+          );
+          const content = (
+            <>
               <Icon className="h-4 w-4" />
-              {item.label}
+              <span className="min-w-0 flex-1">{item.label}</span>
+              {!item.href && (
+                <span className="rounded border border-white/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-foreground/35">
+                  Later
+                </span>
+              )}
+            </>
+          );
+          return item.href ? (
+            <a key={item.label} href={item.href} className={className}>
+              {content}
             </a>
+          ) : (
+            <div key={item.label} className={className} aria-disabled="true">
+              {content}
+            </div>
           );
         })}
       </nav>
     </aside>
-  );
-}
-
-function SettingsStatusStrip({ stats, loading }: { stats?: any; loading: boolean }) {
-  return (
-    <div className="lumina-panel rounded-xl px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-foreground/58">
-        <span className="inline-flex items-center gap-2 font-semibold text-foreground">
-          <Server className="h-4 w-4 text-primary" />
-          Lumina Media Server v0.2.0
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
-          Services running
-        </span>
-        <span>{loading ? "Checking encoder" : stats?.transcodeEncoderKey ?? "libx264"}</span>
-        <span>CPU 18%</span>
-        <span>RAM 42%</span>
-        <span>Network idle</span>
-      </div>
-    </div>
   );
 }
 
@@ -422,34 +476,6 @@ function TranscodingPanel({ stats, loading }: { stats?: any; loading: boolean })
         </div>
       </div>
     </Card>
-  );
-}
-
-function SettingsQuickPanels() {
-  const panels = [
-    { id: "media-sources", title: "Media Sources", body: "Local folders, NAS paths, read-only imports, file extension rules.", icon: Database },
-    { id: "watch-folders", title: "Watch Folders", body: "Scan on file change, delay imports, ignore partial downloads.", icon: ScanLine },
-    { id: "network-shares", title: "Network Shares", body: "SMB/NFS host, mount path, credential reference, connection status.", icon: Network },
-    { id: "permissions", title: "Permissions", body: "Library access, ratings restrictions, downloads, remote viewing.", icon: LockKeyhole },
-    { id: "users-and-access", title: "Users & Access", body: "Roles, invitations, guest expiry, device sessions.", icon: Users },
-    { id: "metadata-providers", title: "Metadata Providers", body: "Provider priority, artwork preferences, language, region.", icon: KeyRound },
-    { id: "storage-health", title: "Storage Health", body: "Drive usage, cache size, warning thresholds, cleanup notes.", icon: HardDrive },
-  ];
-  return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {panels.map((panel) => {
-        const Icon = panel.icon;
-        return (
-          <section key={panel.id} id={panel.id} className="lumina-panel rounded-xl p-4">
-            <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary/12 text-primary">
-              <Icon className="h-4 w-4" />
-            </div>
-            <h3 className="font-semibold text-foreground">{panel.title}</h3>
-            <p className="mt-1 text-xs leading-5 text-foreground/52">{panel.body}</p>
-          </section>
-        );
-      })}
-    </div>
   );
 }
 
@@ -612,19 +638,22 @@ function ScanningPanel({
   result: ScanResult | null;
 }) {
   return (
-    <Card id="scanning-and-indexing" className="p-5 sm:p-6">
+    <Card id="metadata-providers" className="p-5 sm:p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="label-eyebrow mb-1 text-primary/90">Scanning & Indexing</p>
-          <h2 className="lumina-title text-3xl font-semibold">Library Settings</h2>
-          <p className="mt-1 text-sm text-foreground/56">Metadata matching, scheduled scans, and full-library indexing controls.</p>
+          <p className="label-eyebrow mb-1 text-primary/90">Metadata Providers</p>
+          <h2 className="lumina-title text-3xl font-semibold">TMDB matching</h2>
+          <p className="mt-1 text-sm text-foreground/56">
+            Save a global key, then scan libraries to match new titles and refresh matched titles
+            that are missing posters, backdrops, ratings, or overview text.
+          </p>
         </div>
         <Button onClick={onScanAll} disabled={scanPending}>
           {scanPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Scan All Libraries
+          Scan & refresh all
         </Button>
       </div>
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_280px]" id="scanning-and-indexing">
         <Field label="TMDB API key">
           <div className="flex gap-2">
             <Input
@@ -647,7 +676,7 @@ function ScanningPanel({
         </Field>
         <label className="flex items-center gap-3 rounded-xl border border-border/60 bg-white/[0.035] p-4 text-sm text-foreground/72">
           <Checkbox checked={autoMatch} onCheckedChange={(v) => setAutoMatch(!!v)} />
-          Auto-match metadata during scans
+          Match new titles and refresh incomplete matches during scans
         </label>
       </div>
       {result && (
@@ -664,6 +693,173 @@ function ScanningPanel({
           </div>
           {result.errors.length > 0 && (
             <p className="mt-3 text-xs text-amber-200/78">{result.errors.length} scan note(s) recorded.</p>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PlexSyncPanel({
+  plexUrl,
+  setPlexUrl,
+  plexToken,
+  setPlexToken,
+  direction,
+  setDirection,
+  result,
+  busy,
+  onTest,
+  onPreview,
+  onApply,
+}: {
+  plexUrl: string;
+  setPlexUrl: (value: string) => void;
+  plexToken: string;
+  setPlexToken: (value: string) => void;
+  direction: PlexSyncDirection;
+  setDirection: (value: PlexSyncDirection) => void;
+  result: PlexSyncResult | null;
+  busy: boolean;
+  onTest: () => void;
+  onPreview: () => void;
+  onApply: () => void;
+}) {
+  const pendingChanges = (result?.markedLuminaWatched ?? 0) + (result?.markedPlexWatched ?? 0);
+  return (
+    <Card id="plex-sync" className="p-5 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="label-eyebrow mb-1 text-primary/90">Plex Sync</p>
+          <h2 className="lumina-title text-3xl font-semibold">Watched history import</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-foreground/56">
+            Preview watched-state changes from Plex before applying them. Two-way mode is additive:
+            it can mark items watched on either side, but it never marks anything unwatched.
+          </p>
+        </div>
+        <Badge variant="secondary">Preview first</Badge>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_220px]">
+        <Field label="Plex server URL">
+          <Input
+            value={plexUrl}
+            onChange={(e) => setPlexUrl(e.target.value)}
+            placeholder="http://192.168.1.10:32400"
+            className="font-mono text-sm"
+          />
+          <p className="mt-1 text-xs text-foreground/42">Leave blank to use PLEX_URL or LUMINA_PLEX_URL.</p>
+        </Field>
+        <Field label="Plex token">
+          <Input
+            type="password"
+            value={plexToken}
+            onChange={(e) => setPlexToken(e.target.value)}
+            placeholder="Token from your Plex server"
+            className="font-mono text-sm"
+          />
+          <p className="mt-1 text-xs text-foreground/42">Leave blank to use PLEX_TOKEN or LUMINA_PLEX_TOKEN.</p>
+        </Field>
+        <Field label="Direction">
+          <Select value={direction} onValueChange={(v) => setDirection(v as PlexSyncDirection)}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pull">Plex to Lumina</SelectItem>
+              <SelectItem value="two-way">Two-way watched</SelectItem>
+              <SelectItem value="push">Lumina to Plex</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button variant="outline" onClick={onTest} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Server className="h-4 w-4" />}
+          Test
+        </Button>
+        <Button variant="outline" onClick={onPreview} disabled={busy}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
+          Preview
+        </Button>
+        <Button onClick={onApply} disabled={busy || !result || result.mode === "test" || pendingChanges === 0}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+          Apply watched sync
+        </Button>
+      </div>
+
+      {result && (
+        <div className="mt-5 rounded-xl border border-border/60 bg-background/45 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-semibold">
+                {result.serverName ?? "Plex"} {result.mode === "test" ? "connection" : "sync report"}
+              </div>
+              <div className="mt-1 text-xs text-foreground/48">
+                {result.scanned.toLocaleString()} Plex item(s) scanned · {result.matched.toLocaleString()} matched · {result.unmatched.toLocaleString()} unmatched
+              </div>
+            </div>
+            <Badge variant={pendingChanges > 0 ? "default" : "secondary"}>
+              {pendingChanges.toLocaleString()} change(s)
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+            <ResultStat label="Lumina" value={result.markedLuminaWatched} />
+            <ResultStat label="Plex" value={result.markedPlexWatched} />
+            <ResultStat label="Synced" value={result.alreadySynced} />
+            <ResultStat label="Skipped" value={result.skipped} />
+            <ResultStat label="Unmatched" value={result.unmatched} />
+          </div>
+
+          {result.errors.length > 0 && (
+            <p className="mt-3 rounded-lg border border-amber-500/18 bg-amber-500/8 px-3 py-2 text-xs leading-5 text-amber-200/78">
+              {result.errors.length} Plex note(s): {result.errors.slice(0, 2).join(" · ")}
+            </p>
+          )}
+
+          {result.items.length > 0 && (
+            <div className="thin-scrollbar mt-4 max-h-72 overflow-auto rounded-lg border border-border/50">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="border-b border-border/50 text-left text-xs uppercase tracking-[0.12em] text-foreground/45">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Title</th>
+                    <th className="px-3 py-2 font-semibold">Item</th>
+                    <th className="px-3 py-2 font-semibold">Plex</th>
+                    <th className="px-3 py-2 font-semibold">Lumina</th>
+                    <th className="px-3 py-2 font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.items.map((item, index) => (
+                    <tr key={`${item.plexRatingKey ?? item.title}-${index}`} className="border-b border-border/35 last:border-0">
+                      <td className="px-3 py-2 font-medium">{item.title}</td>
+                      <td className="px-3 py-2 text-foreground/62">
+                        {item.type === "TV" && item.seasonNumber != null && item.episodeNumber != null
+                          ? `S${item.seasonNumber} E${item.episodeNumber}`
+                          : item.year ?? "Movie"}
+                      </td>
+                      <td className="px-3 py-2 text-foreground/62">{item.plexWatched ? "Watched" : "Unwatched"}</td>
+                      <td className="px-3 py-2 text-foreground/62">
+                        {item.luminaWatched == null ? "No match" : item.luminaWatched ? "Watched" : "Unwatched"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge variant={item.action === "unmatched" ? "outline" : item.action === "already-synced" ? "secondary" : "default"}>
+                          {item.action === "mark-lumina-watched"
+                            ? "Mark Lumina"
+                            : item.action === "mark-plex-watched"
+                              ? "Mark Plex"
+                              : item.action === "already-synced"
+                                ? "Synced"
+                                : item.action === "unmatched"
+                                  ? "Unmatched"
+                                  : "Skip"}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

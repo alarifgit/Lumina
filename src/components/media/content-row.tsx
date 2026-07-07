@@ -59,7 +59,7 @@ export function ContentRow({ title, items, onOpen, onPlay, accent }: Props) {
   if (!items?.length) return null;
 
   return (
-    <section className="group/row relative py-4">
+    <section className="group/row render-lazy-row relative py-4">
       <div className="mb-2 px-4 sm:px-6 lg:px-8">
         <h2
           className={cn(

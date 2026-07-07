@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { Star, Play, Plus, Check, ChevronDown, Info } from "lucide-react";
+import { Star, Play, Plus, Check, ChevronDown } from "lucide-react";
 import type { MediaSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ProceduralPoster } from "./procedural-poster";
@@ -13,12 +12,12 @@ interface Props {
   media: MediaSummary;
   onOpen: (id: string) => void;
   onPlay: (mediaId: string, episodeId: string | null, startAt: number) => void;
+  variant?: "row" | "grid";
   className?: string;
 }
 
 export function MediaCard({ media, onOpen, onPlay, className }: Props) {
   const [imgError, setImgError] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const toggle = useToggleMyList();
   const pct = progressPercent(media);
   const showImg = !!media.posterUrl && !imgError;
@@ -30,10 +29,7 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
 
   return (
     <div
-      className={cn("relative shrink-0 cursor-pointer transition-none", className)}
-      style={{ zIndex: hovered ? 30 : 1 }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      className={cn("group/card relative z-[1] shrink-0 cursor-pointer transition-none hover:z-30", className)}
       onClick={() => onOpen(media.id)}
       role="button"
       tabIndex={0}
@@ -46,18 +42,8 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
       aria-label={`${media.title}${media.year ? ` (${media.year})` : ""}`}
     >
       {/* Base poster card */}
-      <motion.div
-        animate={{
-          scale: hovered ? 1.08 : 1,
-          y: hovered ? -6 : 0,
-        }}
-        transition={{ type: "spring", stiffness: 250, damping: 30, mass: 0.6 }}
-        className="relative z-10 aspect-[2/3] overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10"
-        style={{
-          boxShadow: hovered
-            ? "0 25px 60px -5px rgba(0,0,0,0.8), 0 0 0 3px var(--primary), 0 0 50px 12px rgba(245,158,11,0.45), 0 0 80px 20px rgba(245,158,11,0.2)"
-            : undefined,
-        }}
+      <div
+        className="relative z-10 aspect-[2/3] overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10 transition-[transform,box-shadow,ring-color] duration-200 ease-out will-change-transform group-hover/card:-translate-y-1.5 group-hover/card:scale-[1.045] group-hover/card:ring-primary/70 group-hover/card:shadow-[0_18px_42px_-10px_rgba(0,0,0,0.82),0_0_28px_rgba(245,182,42,0.18)]"
       >
         {showImg ? (
           <img
@@ -72,13 +58,19 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
         )}
 
         {/* hover gradient + info */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-transparent opacity-0 transition-opacity duration-300" style={{ opacity: hovered ? 1 : 0 }} />
-        <div
-          className="absolute inset-x-0 bottom-0 p-3 transition-all duration-300"
-          style={{
-            opacity: hovered ? 1 : 0,
-            transform: hovered ? "translateY(0)" : "translateY(8px)",
+        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-transparent opacity-0 transition-opacity duration-200 group-hover/card:opacity-100" />
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlay(media.id, media.progressEpisodeId ?? null, media.progressPosition ?? 0);
           }}
+          className="absolute left-1/2 top-1/2 z-10 inline-flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 scale-90 items-center justify-center rounded-full bg-white/95 text-black opacity-0 shadow-[0_12px_32px_rgba(0,0,0,0.42)] transition-[opacity,transform] duration-200 hover:scale-100 group-hover/card:scale-100 group-hover/card:opacity-100"
+          aria-label={`Play ${media.title}`}
+        >
+          <Play className="ml-0.5 h-5 w-5 fill-current" />
+        </button>
+        <div
+          className="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition-[opacity,transform] duration-200 group-hover/card:translate-y-0 group-hover/card:opacity-100"
         >
           <div className="mb-2 flex items-center gap-2">
             <button
@@ -148,7 +140,7 @@ export function MediaCard({ media, onOpen, onPlay, className }: Props) {
             <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
           </div>
         )}
-      </motion.div>
+      </div>
     </div>
   );
 }

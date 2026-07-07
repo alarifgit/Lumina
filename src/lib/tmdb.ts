@@ -105,7 +105,7 @@ export async function fetchTmdbTv(tmdbId: number, key?: string) {
   const apiKey = key ?? (await getTmdbKey());
   if (!apiKey) throw new Error("No TMDB API key configured");
   const data = await tmdbFetch<any>(`/tv/${tmdbId}`, {
-    append_to_response: "credits,content_ratings,videos",
+    append_to_response: "credits,content_ratings,external_ids,videos",
   }, apiKey);
   const certification = extractTvCertification(data.content_ratings);
 

@@ -118,7 +118,7 @@ export function typeLabel(type: MediaType): string {
 }
 
 /** Sort + group helpers for episodes. */
-export function groupEpisodesBySeason<T extends { seasonNumber: number }>(episodes: T[]): Map<number, T[]> {
+export function groupEpisodesBySeason<T extends { seasonNumber: number; episodeNumber: number }>(episodes: T[]): Map<number, T[]> {
   const map = new Map<number, T[]>();
   for (const e of episodes) {
     const arr = map.get(e.seasonNumber) ?? [];

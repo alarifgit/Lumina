@@ -17,7 +17,7 @@ ENV DATABASE_URL="file:/tmp/build.db"
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN bun run db:generate
-RUN bun run build
+RUN bun run build:docker
 
 # ── Stage 3: Production runner (Node.js for best Prisma CLI compat) ─
 # We use node:20-slim instead of oven/bun:1 here because the Prisma CLI

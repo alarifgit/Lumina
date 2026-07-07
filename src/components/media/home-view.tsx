@@ -78,7 +78,7 @@ export function HomeView({ onOpen, onPlay }: Props) {
       )}
       <div className="mt-6 space-y-5">
         {data.continueWatching.length > 0 && (
-          <section className="py-4">
+          <section className="render-lazy-row py-4">
             <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight sm:px-6 sm:text-xl lg:px-8">
               Continue Watching
             </h2>
@@ -124,7 +124,7 @@ function EmptyHomeState({
     {
       icon: ScanSearch,
       label: "Scanning & Indexing",
-      detail: "Build shelves, genres, runtime, and resume data.",
+      detail: "Build shelves, runtime, artwork, and resume data.",
     },
   ];
 

@@ -13,9 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Play, Plus, Check, Star, Clock, Calendar, X } from "lucide-react";
+import { Play, Plus, Check, Star, Clock, Calendar, X, CheckCircle2 } from "lucide-react";
 import { useMediaStore } from "@/store/media-store";
-import { useMediaDetail, useToggleMyList, useBrowse } from "@/lib/queries";
+import { useMediaDetail, useToggleMyList, useBrowse, useSaveProgress } from "@/lib/queries";
 import { ProceduralPoster } from "./procedural-poster";
 import { ContentRow } from "./content-row";
 import { formatRuntime, progressPercent } from "@/lib/media-utils";
@@ -31,7 +31,10 @@ export function DetailOverlay({ onPlay }: Props) {
 
   return (
     <Dialog open={!!id} onOpenChange={(o) => !o && close()}>
-      <DialogContent className="max-h-[94vh] max-w-5xl gap-0 overflow-hidden rounded-2xl border-border/60 bg-card p-0 sm:max-w-5xl">
+      <DialogContent
+        showCloseButton={false}
+        className="max-h-[94vh] max-w-5xl gap-0 overflow-hidden rounded-2xl border-border/60 bg-card p-0 sm:max-w-5xl"
+      >
         {id ? (
           <DetailContent key={id} id={id} onPlay={onPlay} />
         ) : (
@@ -48,6 +51,7 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
   const [season, setSeason] = useState<number | undefined>(undefined);
   const detail = useMediaDetail(id, season);
   const toggle = useToggleMyList();
+  const saveProgress = useSaveProgress();
   const similar = useBrowse({
     genre: detail.data?.genres?.[0] ?? null,
     page: 1,
@@ -57,15 +61,45 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
   const d = detail.data;
   const currentSeason = season ?? d?.seasons?.[0]?.seasonNumber;
   const similarItems = (similar.data?.items ?? []).filter((m) => m.id !== id).slice(0, 8);
+  const nextEpisode = d?.type === "TV" ? (d.nextEpisode ?? d.episodes[0] ?? null) : null;
+  const nextEpisodeProgress =
+    nextEpisode && d?.type === "TV"
+      ? (d.episodes.find((ep) => ep.id === nextEpisode.id)?.progressPosition ??
+        (d.progressEpisodeId === nextEpisode.id ? d.progressPosition ?? 0 : 0))
+      : 0;
+  const hasTvProgress =
+    d?.type === "TV" &&
+    (Boolean(d.progressEpisodeId) ||
+      (d.progressPosition ?? 0) > 0 ||
+      d.episodes.some((ep) => (ep.progressPosition ?? 0) > 0 || (ep.progressPercent ?? 0) > 0));
+  const playLabel =
+    d?.type === "TV"
+      ? hasTvProgress
+        ? "Play Next Episode"
+        : "Play"
+      : d?.progressPosition
+        ? "Resume"
+        : "Play";
 
   const handleMainPlay = () => {
     if (!d) return;
     if (d.type === "TV") {
-      const epId = d.nextEpisode?.id ?? d.episodes[0]?.id ?? null;
-      onPlay(d.id, epId, 0);
+      onPlay(d.id, nextEpisode?.id ?? null, nextEpisodeProgress);
     } else {
       onPlay(d.id, null, d.progressPosition ?? 0);
     }
+  };
+
+  const markEpisodeWatched = async (episodeId: string, runtime: number | null | undefined) => {
+    if (!d) return;
+    const duration = runtime && runtime > 0 ? runtime * 60 : 1;
+    await saveProgress.mutateAsync({
+      mediaId: d.id,
+      episodeId,
+      position: duration,
+      duration,
+      completed: true,
+    });
   };
 
   if (!d) {
@@ -150,7 +184,7 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
             className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-transform hover:scale-105"
           >
             <Play className="h-5 w-5 fill-current" />
-            {d.type === "TV" ? "Play Next Episode" : d.progressPosition ? "Resume" : "Play"}
+            {playLabel}
           </button>
           <button
             onClick={() => toggle.mutate(d.id)}
@@ -262,6 +296,22 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
                       {ep.overview && (
                         <p className="mt-1 line-clamp-2 text-xs text-foreground/60">{ep.overview}</p>
                       )}
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          onClick={() => markEpisodeWatched(ep.id, ep.runtime)}
+                          disabled={ep.completed || saveProgress.isPending}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors",
+                            ep.completed
+                              ? "border-primary/35 bg-primary/10 text-primary"
+                              : "border-foreground/15 bg-foreground/5 text-foreground/58 hover:border-primary/35 hover:text-primary",
+                            saveProgress.isPending && "opacity-60"
+                          )}
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          {ep.completed ? "Watched" : "Mark watched"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

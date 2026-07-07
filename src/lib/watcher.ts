@@ -76,7 +76,8 @@ export async function startMediaWatcher() {
       });
 
       watcher.on("error", (err) => {
-        console.error(`[Lumina Watcher] Error watching "${section.mediaDir}":`, err.message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Lumina Watcher] Error watching "${section.mediaDir}":`, message);
       });
 
       watchers.push(watcher);

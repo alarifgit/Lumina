@@ -44,6 +44,7 @@ export interface Subtitle {
   format: string;
   isDefault: boolean;
   url: string;
+  source?: string;
 }
 
 export interface Episode {
@@ -149,4 +150,42 @@ export interface LibrarySectionInfo {
   lastScan: string | null;
   scanCount: number;
   mediaCount: number;
+}
+
+export type PlexSyncDirection = "pull" | "push" | "two-way";
+
+export interface PlexSyncItem {
+  type: MediaType;
+  title: string;
+  year: number | null;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  plexRatingKey: string | null;
+  plexWatched: boolean;
+  luminaWatched: boolean | null;
+  match: "matched" | "unmatched";
+  action:
+    | "mark-lumina-watched"
+    | "mark-plex-watched"
+    | "already-synced"
+    | "skipped"
+    | "unmatched";
+  reason: string;
+}
+
+export interface PlexSyncResult {
+  ok: true;
+  mode: "preview" | "apply" | "test";
+  direction: PlexSyncDirection;
+  serverName?: string | null;
+  sections?: number;
+  scanned: number;
+  matched: number;
+  unmatched: number;
+  alreadySynced: number;
+  markedLuminaWatched: number;
+  markedPlexWatched: number;
+  skipped: number;
+  errors: string[];
+  items: PlexSyncItem[];
 }

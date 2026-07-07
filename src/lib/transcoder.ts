@@ -8,6 +8,8 @@ export interface CodecInfo {
   browserCompatible: boolean;
   /** human-readable reason if not compatible */
   reason: string | null;
+  directPlayable: boolean;
+  directPlayReason: string | null;
 }
 
 // Codecs the browser can decode natively (Chromium/Firefox/Safari)
@@ -138,7 +140,15 @@ export async function probeCodecs(filePath: string): Promise<CodecInfo> {
       reason = `Video codec "${videoCodec.toUpperCase()}" isn't supported by browsers — needs transcoding to H.264.`;
     }
     const browserCompatible = !reason;
-    return { videoCodec, audioCodec, container, browserCompatible, reason };
+    return {
+      videoCodec,
+      audioCodec,
+      container,
+      browserCompatible,
+      reason,
+      directPlayable: browserCompatible,
+      directPlayReason: reason,
+    };
   } catch {
     return {
       videoCodec: null,
@@ -146,6 +156,8 @@ export async function probeCodecs(filePath: string): Promise<CodecInfo> {
       container: null,
       browserCompatible: true,
       reason: null,
+      directPlayable: true,
+      directPlayReason: null,
     };
   }
 }

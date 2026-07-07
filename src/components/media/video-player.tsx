@@ -60,6 +60,8 @@ function PlayerSession({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSave = useRef(0);
+  const rateMenuRef = useRef<HTMLDivElement>(null);
+  const ccMenuRef = useRef<HTMLDivElement>(null);
 
   const [activeEpId, setActiveEpId] = useState<string | null>(episodeIdParam);
   const [resumeAt, setResumeAt] = useState(startAt);
@@ -85,6 +87,10 @@ function PlayerSession({
   const [buffered, setBuffered] = useState(0);
 
   const d = detail.data;
+  const closeMenus = useCallback(() => {
+    setRateOpen(false);
+    setCcOpen(false);
+  }, []);
 
   const currentEpisode: Episode | null = useMemo(() => {
     if (!d) return null;
@@ -278,6 +284,10 @@ function PlayerSession({
           });
           break;
         case "Escape":
+          if (rateOpen || ccOpen) {
+            closeMenus();
+            break;
+          }
           if (!document.fullscreenElement) close();
           break;
         case "s":
@@ -288,7 +298,7 @@ function PlayerSession({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [close, flashControls]);
+  }, [ccOpen, close, closeMenus, flashControls, rateOpen]);
 
   // fullscreen change
   useEffect(() => {
@@ -296,6 +306,30 @@ function PlayerSession({
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
+
+  useEffect(() => {
+    if (!rateOpen && !ccOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (rateMenuRef.current?.contains(target) || ccMenuRef.current?.contains(target)) return;
+      closeMenus();
+    };
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeMenus();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onEscape, true);
+    };
+  }, [ccOpen, closeMenus, rateOpen]);
 
   // Subtitle appearance — inject ::cue styling so size/background apply to the active track.
   useEffect(() => {
@@ -654,12 +688,12 @@ function PlayerSession({
           )}
 
           <div className="ml-auto flex items-center gap-2">
-            <div className="relative">
+            <div ref={rateMenuRef} className="relative">
               <CtrlButton onClick={() => { setCcOpen(false); setRateOpen((o) => !o); }} label="Playback speed">
                 <Settings className="h-5 w-5" />
               </CtrlButton>
               {rateOpen && (
-                <div className="lumina-panel absolute bottom-12 right-0 w-52 rounded-lg p-2 backdrop-blur-md">
+                <div className="lumina-panel absolute bottom-12 right-0 z-30 w-52 rounded-lg p-2 backdrop-blur-md">
                   <div className="px-1 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
                     Playback speed
                   </div>
@@ -713,7 +747,7 @@ function PlayerSession({
             </span>
 
             {/* Subtitles / CC */}
-            <div className="relative">
+            <div ref={ccMenuRef} className="relative">
               <CtrlButton
                 onClick={() => {
                   if (subtitles.length === 0) return;
@@ -726,7 +760,7 @@ function PlayerSession({
                 <Captions className={cn("h-5 w-5", activeSubId && "text-primary")} />
               </CtrlButton>
               {ccOpen && subtitles.length > 0 && (
-                <div className="lumina-panel thin-scrollbar absolute bottom-12 right-0 max-h-[60vh] w-56 overflow-y-auto rounded-lg p-2 backdrop-blur-md">
+                <div className="lumina-panel thin-scrollbar absolute bottom-12 right-0 z-30 max-h-[60vh] w-56 overflow-y-auto rounded-lg p-2 backdrop-blur-md">
                   <div className="mb-1 px-2 text-[10px] font-bold uppercase tracking-wider text-white/40">Subtitles</div>
                   <button
                     onClick={() => { applySubtitle(null); setCcOpen(false); }}

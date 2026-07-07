@@ -8,6 +8,8 @@ import type {
   MediaDetail,
   MediaSummary,
   MediaType,
+  PlexSyncDirection,
+  PlexSyncResult,
   SaveProgressPayload,
   ScanResult,
 } from "@/lib/types";
@@ -65,6 +67,8 @@ export interface CodecInfo {
   container: string | null;
   browserCompatible: boolean;
   reason: string | null;
+  directPlayable?: boolean;
+  directPlayReason?: string | null;
 }
 
 /** Probe a media file's codecs (via ffprobe) to decide if transcoding is needed. */
@@ -81,10 +85,20 @@ export interface BrowseParams {
   type?: MediaType;
   genre?: string | null;
   category?: string | null;
+  sectionId?: string | null;
   sort?: string;
   page: number;
   pageSize?: number;
   q?: string;
+  enabled?: boolean;
+}
+
+interface BrowseResult {
+  items: MediaSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  genres: string[];
 }
 
 export function useBrowse(params: BrowseParams) {
@@ -92,20 +106,16 @@ export function useBrowse(params: BrowseParams) {
   if (params.type) qs.set("type", params.type);
   if (params.genre) qs.set("genre", params.genre);
   if (params.category) qs.set("category", params.category);
+  if (params.sectionId) qs.set("sectionId", params.sectionId);
   if (params.q) qs.set("q", params.q);
   if (params.sort) qs.set("sort", params.sort);
   qs.set("page", String(params.page));
   qs.set("pageSize", String(params.pageSize ?? 24));
   const key = `${qs.toString()}`;
-  return useQuery<{
-    items: MediaSummary[];
-    total: number;
-    page: number;
-    pageSize: number;
-    genres: string[];
-  }>({
+  return useQuery<BrowseResult>({
     queryKey: ["browse", key],
-    queryFn: () => fetchJson(`/api/library/browse?${qs}`),
+    queryFn: () => fetchJson<BrowseResult>(`/api/library/browse?${qs}`),
+    enabled: params.enabled ?? true,
   });
 }
 
@@ -123,6 +133,7 @@ export function useBrowseInfinite(params: Omit<BrowseParams, "page">) {
     if (params.type) qs.set("type", params.type);
     if (params.genre) qs.set("genre", params.genre);
     if (params.category) qs.set("category", params.category);
+    if (params.sectionId) qs.set("sectionId", params.sectionId);
     if (params.q) qs.set("q", params.q);
     if (params.sort) qs.set("sort", params.sort);
     qs.set("page", String(page));
@@ -135,14 +146,16 @@ export function useBrowseInfinite(params: Omit<BrowseParams, "page">) {
       params.type ?? "all",
       params.genre ?? "all",
       params.category ?? "all",
+      params.sectionId ?? "all",
       params.sort ?? "popular",
       params.q ?? "",
     ],
     queryFn: ({ pageParam }) =>
-      fetchJson(`/api/library/browse?${build(pageParam as number)}`),
+      fetchJson<BrowseResult>(`/api/library/browse?${build(pageParam as number)}`),
     initialPageParam: 1,
-    getNextPageParam: (last) =>
+    getNextPageParam: (last: BrowseResult) =>
       last.items.length < last.pageSize ? undefined : last.page + 1,
+    enabled: params.enabled ?? true,
   });
 }
 
@@ -181,6 +194,7 @@ export function useSaveProgress() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["progress"] });
       qc.invalidateQueries({ queryKey: ["home"] });
+      qc.invalidateQueries({ queryKey: ["media"], exact: false });
     },
   });
 }
@@ -205,6 +219,32 @@ export function useSaveTmdbKey() {
     mutationFn: (tmdbKey: string) =>
       fetchJson<{ ok: boolean }>("/api/library/config", post({ tmdbKey })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["stats"] }),
+  });
+}
+
+export function useTestPlexConnection() {
+  return useMutation({
+    mutationFn: (body: { url?: string; token?: string }) =>
+      fetchJson<PlexSyncResult>("/api/plex/test", post(body)),
+  });
+}
+
+export function usePlexSync() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      url?: string;
+      token?: string;
+      direction: PlexSyncDirection;
+      apply?: boolean;
+    }) => fetchJson<PlexSyncResult>("/api/plex/sync", post(body)),
+    onSuccess: (_data, variables) => {
+      if (!variables.apply) return;
+      qc.invalidateQueries({ queryKey: ["progress"] });
+      qc.invalidateQueries({ queryKey: ["home"] });
+      qc.invalidateQueries({ queryKey: ["media"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+    },
   });
 }
 

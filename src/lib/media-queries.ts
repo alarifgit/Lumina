@@ -61,6 +61,12 @@ interface ProgressInfo {
   updatedAt: Date;
 }
 
+type ContinueWatchingCandidate = {
+  media: MediaRow;
+  progress: ProgressInfo;
+  sortAt: Date;
+};
+
 function genresOf(m: MediaRow): string[] {
   return m.genres.map((g) => g.genre.name).sort();
 }
@@ -289,44 +295,125 @@ export async function getTopGenres(limit = 5): Promise<string[]> {
 export async function getContinueWatching(
   limit = 12
 ): Promise<MediaSummary[]> {
-  const rows = await db.watchProgress.findMany({
+  const maxNextEpisodeAgeDays = Number(process.env.LUMINA_CONTINUE_NEXT_EPISODE_DAYS ?? 730);
+  const maxNextEpisodeAgeMs = Math.max(1, maxNextEpisodeAgeDays) * 24 * 60 * 60 * 1000;
+
+  const inProgressRows = await db.watchProgress.findMany({
+    where: { completed: false },
     orderBy: { updatedAt: "desc" },
     take: limit * 3,
     include: { media: { include: mediaInclude }, episode: true },
   });
   const seen = new Set<string>();
-  const latest: typeof rows = [];
-  for (const r of rows) {
+  const candidates: ContinueWatchingCandidate[] = [];
+
+  for (const r of inProgressRows) {
     if (!seen.has(r.mediaId)) {
       seen.add(r.mediaId);
-      latest.push(r);
+      candidates.push({
+        media: r.media,
+        progress: {
+          position: r.position,
+          duration: r.duration,
+          episodeId: r.episodeId,
+          episode: r.episode
+            ? {
+                seasonNumber: r.episode.seasonNumber,
+                episodeNumber: r.episode.episodeNumber,
+              }
+            : null,
+          updatedAt: r.updatedAt,
+        },
+        sortAt: r.updatedAt,
+      });
     }
-    if (latest.length >= limit) break;
+    if (candidates.length >= limit) break;
   }
-  if (latest.length === 0) return [];
+
+  if (candidates.length < limit) {
+    const watchedEpisodeRows = await db.watchProgress.findMany({
+      where: {
+        completed: true,
+        episodeId: { not: null },
+        media: { type: "TV", id: { notIn: [...seen] } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: limit * 6,
+      include: {
+        episode: true,
+        media: {
+          include: {
+            genres: { include: { genre: true } },
+            episodes: {
+              orderBy: [{ seasonNumber: "asc" }, { episodeNumber: "asc" }],
+              include: { progress: { where: { completed: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    for (const watched of watchedEpisodeRows) {
+      if (!watched.episode || seen.has(watched.mediaId)) continue;
+      const show = watched.media;
+
+      const latestIndex = show.episodes.findIndex((ep) => ep.id === watched.episodeId);
+      if (latestIndex < 0) continue;
+
+      const watchedIds = new Set(
+        show.episodes
+          .filter((ep) => ep.progress.some((p) => p.completed))
+          .map((ep) => ep.id)
+      );
+      const nextEpisode = show.episodes
+        .slice(latestIndex + 1)
+        .find((ep) => !watchedIds.has(ep.id) && (ep.filePath || ep.streamUrl));
+      if (!nextEpisode) continue;
+
+      const now = Date.now();
+      if (nextEpisode.airDate && nextEpisode.airDate.getTime() > now) continue;
+
+      const previousAirDate = watched.episode.airDate;
+      const nextEpisodeAge =
+        previousAirDate && nextEpisode.airDate
+          ? nextEpisode.airDate.getTime() - previousAirDate.getTime()
+          : now - watched.updatedAt.getTime();
+      if (nextEpisodeAge > maxNextEpisodeAgeMs) continue;
+
+      seen.add(show.id);
+      candidates.push({
+        media: show,
+        progress: {
+          position: 0,
+          duration: (nextEpisode.runtime ?? show.runtime ?? 0) * 60,
+          episodeId: nextEpisode.id,
+          episode: {
+            seasonNumber: nextEpisode.seasonNumber,
+            episodeNumber: nextEpisode.episodeNumber,
+          },
+          updatedAt: nextEpisode.airDate ?? nextEpisode.createdAt,
+        },
+        sortAt: nextEpisode.airDate ?? nextEpisode.createdAt,
+      });
+
+      if (candidates.length >= limit) break;
+    }
+  }
+
+  if (candidates.length === 0) return [];
+  candidates.sort((a, b) => b.sortAt.getTime() - a.sortAt.getTime());
+  const latest = candidates.slice(0, limit);
+
   const col = await getMyListCollection();
   const myListItems = await db.collectionItem.findMany({
-    where: { collectionId: col.id, mediaId: { in: latest.map((r) => r.mediaId) } },
+    where: { collectionId: col.id, mediaId: { in: latest.map((r) => r.media.id) } },
   });
   const myListSet = new Set(myListItems.map((i) => i.mediaId));
-  return latest.map((r) =>
-    toSummary(r.media, myListSet.has(r.mediaId), {
-      position: r.position,
-      duration: r.duration,
-      episodeId: r.episodeId,
-      episode: r.episode
-        ? {
-            seasonNumber: r.episode.seasonNumber,
-            episodeNumber: r.episode.episodeNumber,
-          }
-        : null,
-      updatedAt: r.updatedAt,
-    })
-  );
+  return latest.map((r) => toSummary(r.media, myListSet.has(r.media.id), r.progress));
 }
 
 export async function getHomeData(): Promise<HomeData> {
-  const [featured, continueWatching, recentlyAddedEpisodes, recentlyAddedMovies, trending, popularMovies, popularTV, topRated, newReleases, topGenres] =
+  const [featured, continueWatching, recentlyAddedEpisodes, recentlyAddedMovies, trending, popularMovies, popularTV, topRated, newReleases] =
     await Promise.all([
       getFeatured(6),
       getContinueWatching(12),
@@ -337,7 +424,6 @@ export async function getHomeData(): Promise<HomeData> {
       getPopularTV(20),
       getTopRated(20),
       getNewReleases(20),
-      getTopGenres(4),
     ]);
 
   const rows: ContentRow[] = [
@@ -349,11 +435,6 @@ export async function getHomeData(): Promise<HomeData> {
     { key: "top-rated", title: "Top Rated", items: topRated },
     { key: "new-releases", title: "New Releases", items: newReleases },
   ];
-
-  for (const g of topGenres) {
-    const items = await getByGenre(g, 20);
-    if (items.length) rows.push({ key: `genre-${g}`, title: g, items });
-  }
 
   return { featured, continueWatching, rows };
 }
@@ -496,15 +577,17 @@ export async function browseMedia(params: {
   type?: MediaType;
   genre?: string;
   category?: string;
+  sectionId?: string;
   q?: string;
   sort?: string;
   page?: number;
   pageSize?: number;
 }) {
-  const { type, genre, category, q, sort = "popular", page = 1, pageSize = 24 } = params;
+  const { type, genre, category, sectionId, q, sort = "popular", page = 1, pageSize = 24 } = params;
   const where: Prisma.MediaWhereInput = {};
   if (type) where.type = type;
   if (category) where.category = category;
+  if (sectionId) where.sectionId = sectionId;
   if (q) where.title = { contains: q };
   if (genre) where.genres = { some: { genre: { name: genre } } };
 

@@ -93,8 +93,15 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
           added++;
         }
         const target = existing ?? (await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } }));
-        if (autoMatch && tmdbKey && target && !target.tmdbId) {
-          await autoMatchTmdb(target.id, title, section.type as "MOVIE" | "TV", year, tmdbKey, errors);
+        if (autoMatch && tmdbKey && target) {
+          await syncTmdbMetadataIfNeeded(
+            target,
+            title,
+            section.type as "MOVIE" | "TV",
+            year ?? undefined,
+            tmdbKey,
+            errors
+          );
         }
         continue;
       }
@@ -163,8 +170,8 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
             }
           }
 
-          if (autoMatch && tmdbKey && !show.tmdbId) {
-            await autoMatchTmdb(show.id, title, "TV", undefined, tmdbKey, errors);
+          if (autoMatch && tmdbKey) {
+            await syncTmdbMetadataIfNeeded(show, title, "TV", undefined, tmdbKey, errors);
           }
           continue;
         }
@@ -187,8 +194,15 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
             added++;
           }
           const target = existing ?? (await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } }));
-          if (autoMatch && tmdbKey && target && !target.tmdbId) {
-            await autoMatchTmdb(target.id, title, section.type as "MOVIE" | "TV", year, tmdbKey, errors);
+          if (autoMatch && tmdbKey && target) {
+            await syncTmdbMetadataIfNeeded(
+              target,
+              title,
+              section.type as "MOVIE" | "TV",
+              year ?? undefined,
+              tmdbKey,
+              errors
+            );
           }
         } else {
           skipped++;
@@ -236,8 +250,24 @@ async function syncSubtitles(mediaId: string, episodeId: string | null, videoPat
   }
 }
 
-async function autoMatchTmdb(
-  mediaId: string,
+type MetadataCandidate = {
+  id: string;
+  tmdbId: number | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  overview: string | null;
+  rating: number | null;
+};
+
+function needsMetadataRefresh(media: MetadataCandidate) {
+  return (
+    !!media.tmdbId &&
+    (!media.posterUrl || !media.backdropUrl || !media.overview || media.rating == null)
+  );
+}
+
+async function syncTmdbMetadataIfNeeded(
+  media: MetadataCandidate,
   title: string,
   type: "MOVIE" | "TV",
   year: number | undefined,
@@ -245,9 +275,15 @@ async function autoMatchTmdb(
   errors: string[]
 ) {
   try {
+    if (media.tmdbId) {
+      if (needsMetadataRefresh(media)) {
+        await applyTmdbMetadata(media.id, media.tmdbId, type, key);
+      }
+      return;
+    }
     const matches = await searchTmdb(title, type, year, key);
     if (matches.length === 0) return;
-    await applyTmdbMetadata(mediaId, matches[0].tmdbId, type, key);
+    await applyTmdbMetadata(media.id, matches[0].tmdbId, type, key);
   } catch (e) {
     errors.push(`Metadata match failed for "${title}": ${(e as Error).message}`);
   }
