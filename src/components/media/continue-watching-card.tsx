@@ -37,7 +37,7 @@ export function ContinueWatchingCard({ media, onPlay }: Props) {
       aria-label={`Resume ${media.title}`}
     >
       <div
-        className="relative aspect-video overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10 transition-[transform,box-shadow,ring-color] duration-200 ease-out will-change-transform group-hover/card:-translate-y-1.5 group-hover/card:scale-[1.04] group-hover/card:ring-primary/70 group-hover/card:shadow-[0_18px_42px_-10px_rgba(0,0,0,0.82),0_0_28px_rgba(245,182,42,0.18)]"
+        className="relative aspect-video overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10 transition-[transform,box-shadow,ring-color] duration-200 ease-out will-change-transform group-hover/card:-translate-y-1 group-hover/card:scale-[1.02] group-hover/card:ring-white/22 group-hover/card:shadow-[0_18px_38px_-18px_rgba(0,0,0,0.92)]"
       >
         {showImg ? (
           <img

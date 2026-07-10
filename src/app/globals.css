@@ -134,10 +134,9 @@
 
   /* ── Cinematic canvas background (design.md §3 background gradient) ── */
   --app-bg:
-    radial-gradient(circle at 18% 0%, rgba(217, 170, 76, 0.09), transparent 32%),
-    radial-gradient(circle at 78% 8%, rgba(12, 26, 45, 0.78), transparent 42%),
-    radial-gradient(circle at 58% 100%, rgba(8, 17, 29, 0.78), transparent 34%),
-    linear-gradient(180deg, #05070a 0%, #030405 48%, #000000 100%);
+    radial-gradient(ellipse 120% 72% at 50% -24%, rgba(16, 34, 58, 0.92), transparent 58%),
+    linear-gradient(180deg, rgba(246, 239, 227, 0.025) 0%, transparent 18%, rgba(0, 0, 0, 0.34) 100%),
+    linear-gradient(180deg, #07101b 0%, #030405 58%, #010101 100%);
   --lumina-card-bg:
     linear-gradient(145deg, rgba(16, 34, 58, 0.84), rgba(5, 7, 10, 0.92));
   --lumina-gold-gradient:
@@ -155,7 +154,7 @@
     scroll-behavior: smooth;
   }
   body {
-    /* Layered gold-lit black canvas instead of a flat colour */
+    /* Deep navy canvas; the app shell adds the branded light sweep above it. */
     background: var(--app-bg);
     background-attachment: fixed;
     color: var(--foreground);
@@ -237,6 +236,48 @@
   .lumina-page {
     margin-inline: auto;
     max-width: 1600px;
+  }
+
+  .lumina-canvas {
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+  }
+
+  .lumina-canvas::before,
+  .lumina-canvas::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  .lumina-canvas::before {
+    background:
+      radial-gradient(ellipse 120% 52% at 110% -16%, transparent 55%, rgba(217, 170, 76, 0.13) 56%, rgba(255, 248, 216, 0.20) 56.7%, rgba(217, 170, 76, 0.08) 57.6%, transparent 59%),
+      radial-gradient(ellipse 92% 38% at 116% -8%, transparent 61%, rgba(238, 209, 132, 0.10) 62%, transparent 63.4%),
+      radial-gradient(ellipse 76% 30% at 116% 0%, transparent 66%, rgba(217, 170, 76, 0.07) 67%, transparent 68.2%),
+      linear-gradient(106deg, transparent 0 58%, rgba(112, 67, 21, 0.03) 62%, rgba(238, 209, 132, 0.075) 66%, transparent 74%),
+      linear-gradient(180deg, rgba(8, 17, 29, 0.18), rgba(3, 4, 5, 0.72));
+    opacity: 0.86;
+  }
+
+  .lumina-canvas::after {
+    opacity: 0.42;
+    background-image:
+      radial-gradient(circle, rgba(238, 209, 132, 0.36) 0 0.75px, transparent 1px),
+      radial-gradient(circle, rgba(246, 239, 227, 0.16) 0 0.6px, transparent 0.9px),
+      linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.34) 100%);
+    background-position:
+      0 0,
+      21px 37px,
+      0 0;
+    background-size:
+      142px 142px,
+      190px 190px,
+      100% 100%;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 62%);
   }
 
   .render-lazy-row {

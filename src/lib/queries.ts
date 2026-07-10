@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import type {
   HomeData,
   LibraryStats,
+  LibraryConfigInfo,
   LibrarySectionInfo,
   MediaDetail,
   MediaSummary,
@@ -40,6 +41,13 @@ export function useStats() {
   return useQuery<LibraryStats>({
     queryKey: ["stats"],
     queryFn: () => fetchJson<LibraryStats>("/api/library/stats"),
+  });
+}
+
+export function useLibraryConfig() {
+  return useQuery<LibraryConfigInfo>({
+    queryKey: ["library-config"],
+    queryFn: () => fetchJson<LibraryConfigInfo>("/api/library/config"),
   });
 }
 
@@ -195,6 +203,7 @@ export function useSaveProgress() {
       qc.invalidateQueries({ queryKey: ["progress"] });
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse"], exact: false });
     },
   });
 }
@@ -218,7 +227,26 @@ export function useSaveTmdbKey() {
   return useMutation({
     mutationFn: (tmdbKey: string) =>
       fetchJson<{ ok: boolean }>("/api/library/config", post({ tmdbKey })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["stats"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["library-config"] });
+    },
+  });
+}
+
+export function useSaveLibraryConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      tmdbKey?: string;
+      plexUrl?: string;
+      plexToken?: string;
+      plexSyncDirection?: PlexSyncDirection;
+    }) => fetchJson<{ ok: boolean; config: LibraryConfigInfo }>("/api/library/config", post(body)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["library-config"] });
+    },
   });
 }
 
@@ -237,6 +265,7 @@ export function usePlexSync() {
       token?: string;
       direction: PlexSyncDirection;
       apply?: boolean;
+      sectionId?: string | null;
     }) => fetchJson<PlexSyncResult>("/api/plex/sync", post(body)),
     onSuccess: (_data, variables) => {
       if (!variables.apply) return;
@@ -266,6 +295,8 @@ export function useApplyMetadata() {
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["sections"] });
     },
   });
 }

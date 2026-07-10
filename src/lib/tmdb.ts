@@ -23,12 +23,20 @@ async function tmdbFetch<T>(path: string, params: TmdbOptions, key: string): Pro
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url.toString(), { next: { revalidate: 86400 } });
+  const res = await fetch(url.toString(), { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`TMDB request failed (${res.status}): ${text.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
+}
+
+function extractSearchYear(raw: string, fallback?: number) {
+  const match = raw.match(/\(?\b(19\d{2}|20\d{2})\b\)?\s*$/);
+  return {
+    title: raw.replace(/\(?\b(19\d{2}|20\d{2})\b\)?\s*$/, "").replace(/\s+/g, " ").trim(),
+    year: fallback ?? (match ? Number(match[1]) : undefined),
+  };
 }
 
 export interface TmdbMatch {
@@ -50,17 +58,22 @@ export async function searchTmdb(
   if (!apiKey) throw new Error("No TMDB API key configured");
 
   const path = type === "MOVIE" ? "/search/movie" : "/search/tv";
-  const params: TmdbOptions = { query: title, include_adult: false };
-  if (year && type === "MOVIE") params.year = year;
-  if (year && type === "TV") params.first_air_date_year = year;
+  const parsed = extractSearchYear(title, year);
+  const query = parsed.title || title;
+  const params: TmdbOptions = { query, include_adult: false };
+  if (parsed.year && type === "MOVIE") params.year = parsed.year;
+  if (parsed.year && type === "TV") params.first_air_date_year = parsed.year;
 
-  const data = await tmdbFetch<{ results: any[] }>(path, params, apiKey);
+  let data = await tmdbFetch<{ results: any[] }>(path, params, apiKey);
+  if ((data.results?.length ?? 0) === 0 && parsed.year) {
+    data = await tmdbFetch<{ results: any[] }>(path, { query, include_adult: false }, apiKey);
+  }
   return data.results
     .filter((r) => r)
     .slice(0, 8)
     .map((r) => ({
       tmdbId: r.id,
-      title: r.title || r.name || title,
+      title: r.title || r.name || query,
       year: r.release_date ? new Date(r.release_date).getFullYear() : r.first_air_date ? new Date(r.first_air_date).getFullYear() : null,
       overview: r.overview || null,
       posterUrl: tmdbPoster(r.poster_path),
@@ -101,7 +114,7 @@ export async function fetchTmdbMovie(tmdbId: number, key?: string) {
   };
 }
 
-export async function fetchTmdbTv(tmdbId: number, key?: string) {
+export async function fetchTmdbTv(tmdbId: number, key?: string, seasonFilter?: number[]) {
   const apiKey = key ?? (await getTmdbKey());
   if (!apiKey) throw new Error("No TMDB API key configured");
   const data = await tmdbFetch<any>(`/tv/${tmdbId}`, {
@@ -118,8 +131,10 @@ export async function fetchTmdbTv(tmdbId: number, key?: string) {
     airDate: Date | null;
     runtime: number | null;
   }[] = [];
+  const wantedSeasons = seasonFilter ? new Set(seasonFilter) : null;
   for (const season of data.seasons || []) {
     if (season.season_number === 0) continue; // skip specials by default
+    if (wantedSeasons && !wantedSeasons.has(season.season_number)) continue;
     const seasonData = await tmdbFetch<any>(`/tv/${tmdbId}/season/${season.season_number}`, {}, apiKey);
     for (const ep of seasonData.episodes || []) {
       episodes.push({
@@ -189,10 +204,29 @@ export async function applyTmdbMetadata(
   type: "MOVIE" | "TV",
   key?: string
 ) {
+  const existingMatch = await db.media.findFirst({
+    where: { tmdbId, type, id: { not: mediaId } },
+  });
+  if (existingMatch) {
+    await mergeMediaRows(mediaId, existingMatch.id);
+    mediaId = existingMatch.id;
+  }
+
+  const localTvEpisodes =
+    type === "TV"
+      ? await db.episode.findMany({
+          where: {
+            mediaId,
+            OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
+          },
+          select: { seasonNumber: true },
+        })
+      : [];
+  const localSeasons = [...new Set(localTvEpisodes.map((episode) => episode.seasonNumber))];
   const data =
     type === "MOVIE"
       ? await fetchTmdbMovie(tmdbId, key)
-      : await fetchTmdbTv(tmdbId, key);
+      : await fetchTmdbTv(tmdbId, key, localSeasons);
 
   await db.media.update({
     where: { id: mediaId },
@@ -227,22 +261,25 @@ export async function applyTmdbMetadata(
   });
 
   if (type === "TV") {
-    // Replace episodes with TMDB episode metadata (keep local filePath mapping by SxxExx where possible)
+    // Enrich local episodes with TMDB metadata. Lumina should not create or
+    // display remote-only/future episodes that are not present on disk.
     const tv = data as Awaited<ReturnType<typeof fetchTmdbTv>>;
     const existing = await db.episode.findMany({ where: { mediaId } });
     const existingByKey = new Map(
       existing.map((e) => [`${e.seasonNumber}x${e.episodeNumber}`, e])
     );
-    // Remove episodes not present in TMDB
+    // Clean up old TMDB-only rows from earlier builds while preserving local files.
     const tmdbKeys = new Set(tv.episodes.map((e) => `${e.seasonNumber}x${e.episodeNumber}`));
     for (const e of existing) {
-      if (!tmdbKeys.has(`${e.seasonNumber}x${e.episodeNumber}`)) {
+      if (!e.filePath && !e.streamUrl) {
+        await db.episode.delete({ where: { id: e.id } });
+      } else if (!tmdbKeys.has(`${e.seasonNumber}x${e.episodeNumber}`)) {
         await db.episode.delete({ where: { id: e.id } });
       }
     }
     for (const ep of tv.episodes) {
       const existingEp = existingByKey.get(`${ep.seasonNumber}x${ep.episodeNumber}`);
-      if (existingEp) {
+      if (existingEp && (existingEp.filePath || existingEp.streamUrl)) {
         await db.episode.update({
           where: { id: existingEp.id },
           data: {
@@ -253,20 +290,109 @@ export async function applyTmdbMetadata(
             runtime: ep.runtime,
           },
         });
-      } else {
-        await db.episode.create({
-          data: {
-            mediaId,
-            seasonNumber: ep.seasonNumber,
-            episodeNumber: ep.episodeNumber,
-            title: ep.title,
-            overview: ep.overview,
-            stillUrl: ep.stillUrl,
-            airDate: ep.airDate,
-            runtime: ep.runtime,
-          },
-        });
       }
     }
   }
+
+  return { mediaId };
+}
+
+export async function mergeMediaRows(sourceId: string, targetId: string) {
+  if (sourceId === targetId) return;
+
+  const [source, target] = await Promise.all([
+    db.media.findUnique({
+      where: { id: sourceId },
+      include: { episodes: true, progress: true, subtitles: true, collections: true },
+    }),
+    db.media.findUnique({
+      where: { id: targetId },
+      include: { episodes: true },
+    }),
+  ]);
+  if (!source || !target) return;
+
+  await db.media.update({
+    where: { id: target.id },
+    data: {
+      filePath: target.filePath ?? source.filePath,
+      streamUrl: target.streamUrl ?? source.streamUrl,
+      sectionId: target.sectionId ?? source.sectionId,
+      category: target.category || source.category,
+      sortTitle: target.sortTitle ?? source.sortTitle,
+      sourceCreatedAt: target.sourceCreatedAt ?? source.sourceCreatedAt,
+      sourceModifiedAt: target.sourceModifiedAt ?? source.sourceModifiedAt,
+    },
+  });
+
+  for (const sourceEpisode of source.episodes) {
+    const targetEpisode = target.episodes.find(
+      (ep) =>
+        ep.seasonNumber === sourceEpisode.seasonNumber &&
+        ep.episodeNumber === sourceEpisode.episodeNumber
+    );
+    if (targetEpisode) {
+      await db.episode.update({
+        where: { id: targetEpisode.id },
+        data: {
+          filePath: targetEpisode.filePath ?? sourceEpisode.filePath,
+          streamUrl: targetEpisode.streamUrl ?? sourceEpisode.streamUrl,
+          sourceCreatedAt: targetEpisode.sourceCreatedAt ?? sourceEpisode.sourceCreatedAt,
+          sourceModifiedAt: targetEpisode.sourceModifiedAt ?? sourceEpisode.sourceModifiedAt,
+        },
+      });
+      await db.watchProgress.updateMany({
+        where: { episodeId: sourceEpisode.id },
+        data: { mediaId: target.id, episodeId: targetEpisode.id },
+      });
+      await db.subtitle.updateMany({
+        where: { episodeId: sourceEpisode.id },
+        data: { mediaId: target.id, episodeId: targetEpisode.id },
+      });
+      await db.episode.delete({ where: { id: sourceEpisode.id } });
+    } else {
+      await db.episode.update({
+        where: { id: sourceEpisode.id },
+        data: { mediaId: target.id },
+      });
+      await db.watchProgress.updateMany({
+        where: { episodeId: sourceEpisode.id },
+        data: { mediaId: target.id },
+      });
+      await db.subtitle.updateMany({
+        where: { episodeId: sourceEpisode.id },
+        data: { mediaId: target.id },
+      });
+    }
+  }
+
+  await db.watchProgress.updateMany({
+    where: { mediaId: source.id, episodeId: null },
+    data: { mediaId: target.id },
+  });
+  await db.subtitle.updateMany({
+    where: { mediaId: source.id, episodeId: null },
+    data: { mediaId: target.id },
+  });
+
+  for (const item of source.collections) {
+    const exists = await db.collectionItem.findUnique({
+      where: {
+        collectionId_mediaId: {
+          collectionId: item.collectionId,
+          mediaId: target.id,
+        },
+      },
+    });
+    if (exists) {
+      await db.collectionItem.delete({ where: { id: item.id } });
+    } else {
+      await db.collectionItem.update({
+        where: { id: item.id },
+        data: { mediaId: target.id },
+      });
+    }
+  }
+
+  await db.media.delete({ where: { id: source.id } });
 }

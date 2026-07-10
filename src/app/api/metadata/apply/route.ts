@@ -18,8 +18,8 @@ export async function POST(req: Request) {
         { error: "mediaId, tmdbId and type required" },
         { status: 400 }
       );
-    await applyTmdbMetadata(mediaId, tmdbId, type);
-    const media = await getMediaDetail(mediaId);
+    const result = await applyTmdbMetadata(mediaId, tmdbId, type);
+    const media = await getMediaDetail(result.mediaId);
     return NextResponse.json({ ok: true, media });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

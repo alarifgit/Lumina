@@ -19,6 +19,7 @@ const BROWSER_VIDEO_CODECS = new Set(["h264", "vp8", "vp9", "av1", "h265", "hevc
 const BROWSER_AUDIO_CODECS = new Set(["aac", "mp3", "opus", "vorbis", "flac"]);
 const DEFAULT_VAAPI_DEVICE = "/dev/dri/renderD128";
 const VALID_ENCODERS = new Set(["auto", "libx264", "h264_vaapi"]);
+let vaapiCheckCache: { device: string; ok: boolean; reason: string | null; checkedAt: number } | null = null;
 
 export interface TranscodeStatus {
   transcodeAvailable: boolean;
@@ -62,6 +63,38 @@ function deviceAvailable(device: string) {
     windowsHide: true,
   });
   return !result.error && result.status === 0;
+}
+
+function vaapiUsable(device: string) {
+  const now = Date.now();
+  if (vaapiCheckCache?.device === device && now - vaapiCheckCache.checkedAt < 60_000) {
+    return vaapiCheckCache;
+  }
+
+  const result = spawnSync("ffmpeg", [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-vaapi_device", device,
+    "-f", "lavfi",
+    "-i", "nullsrc=s=16x16:d=0.1",
+    "-vf", "format=nv12,hwupload",
+    "-c:v", "h264_vaapi",
+    "-frames:v", "1",
+    "-f", "null",
+    "-",
+  ], {
+    encoding: "utf8",
+    timeout: 5000,
+    windowsHide: true,
+  });
+  const ok = !result.error && result.status === 0;
+  vaapiCheckCache = {
+    device,
+    ok,
+    reason: ok ? null : (result.stderr || result.error?.message || "VAAPI device failed an ffmpeg smoke test.").trim(),
+    checkedAt: now,
+  };
+  return vaapiCheckCache;
 }
 
 export function getTranscodeStatus(): TranscodeStatus {
@@ -110,6 +143,20 @@ export function getTranscodeStatus(): TranscodeStatus {
         requestedEncoder === "h264_vaapi"
           ? "VAAPI was requested, but this ffmpeg build does not expose h264_vaapi. Falling back to CPU transcoding."
           : null,
+    };
+  }
+
+  const vaapi = vaapiUsable(device);
+  if (!vaapi.ok) {
+    return {
+      transcodeAvailable: true,
+      transcodeHardware: false,
+      transcodeEncoder: "CPU transcoding via libx264",
+      transcodeEncoderKey: "libx264",
+      transcodeReason:
+        requestedEncoder === "h264_vaapi"
+          ? `VAAPI was requested, but ${device} failed to initialize. Falling back to CPU transcoding.`
+          : vaapi.reason,
     };
   }
 
@@ -288,4 +335,55 @@ export function registerTranscodeCleanup(
   signal.addEventListener("abort", kill, { once: true });
   proc.on("exit", () => signal.removeEventListener("abort", kill));
   return proc;
+}
+
+export function childProcessToWebStream(proc: ReturnType<typeof spawn>, signal: AbortSignal) {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (!proc.stdout) {
+        controller.error(new Error("Transcode process has no stdout stream."));
+        return;
+      }
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {}
+      };
+      const error = (err: Error) => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.error(err);
+        } catch {}
+      };
+      const abort = () => {
+        closed = true;
+        try {
+          proc.kill("SIGTERM");
+        } catch {}
+      };
+
+      proc.stdout.on("data", (chunk: Buffer) => {
+        if (closed) return;
+        try {
+          controller.enqueue(new Uint8Array(chunk));
+        } catch {
+          abort();
+        }
+      });
+      proc.stdout.on("end", close);
+      proc.stdout.on("error", error);
+      proc.on("error", error);
+      proc.on("exit", close);
+      signal.addEventListener("abort", abort, { once: true });
+    },
+    cancel() {
+      try {
+        proc.kill("SIGTERM");
+      } catch {}
+    },
+  });
 }

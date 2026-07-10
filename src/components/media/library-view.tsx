@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   ScanLine,
+  Search,
   Server,
   ShieldCheck,
   Sparkles,
@@ -23,15 +24,17 @@ import {
   Tv,
   Users,
   WandSparkles,
+  X,
 } from "lucide-react";
 import {
   useApplyMetadata,
   useBrowse,
   useCreateSection,
   useDeleteSection,
+  useLibraryConfig,
   useMetadataSearch,
   usePlexSync,
-  useSaveTmdbKey,
+  useSaveLibraryConfig,
   useScan,
   useScanSection,
   useSections,
@@ -71,9 +74,26 @@ const SETTINGS_NAV = [
   { label: "Storage Health", icon: HardDrive },
 ];
 
+type MetadataResult = {
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  overview: string | null;
+  posterUrl: string | null;
+  type: string;
+};
+
+type MatchTarget = {
+  id: string;
+  title: string;
+  type: "MOVIE" | "TV";
+  year?: number | null;
+};
+
 export function LibraryView({ mode = "library" }: { mode?: "library" | "settings" }) {
   const isSettings = mode === "settings";
   const { data: stats, isLoading: statsLoading } = useStats();
+  const { data: config } = useLibraryConfig();
   const { data: sections, isLoading: sectionsLoading } = useSections();
   const createSection = useCreateSection();
   const updateSection = useUpdateSection();
@@ -82,7 +102,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const scanAll = useScan();
   const metaSearch = useMetadataSearch();
   const applyMeta = useApplyMetadata();
-  const saveTmdbKey = useSaveTmdbKey();
+  const saveLibraryConfig = useSaveLibraryConfig();
   const testPlex = useTestPlexConnection();
   const plexSync = usePlexSync();
   const { toast } = useToast();
@@ -95,6 +115,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const [sectionResults, setSectionResults] = useState<Record<string, ScanResult>>({});
   const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [inventoryType, setInventoryType] = useState<MediaType | "ALL">("MOVIE");
+  const [inventoryWindow, setInventoryWindow] = useState({ key: "", limit: 100 });
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<MediaType>("MOVIE");
@@ -103,24 +124,41 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const [plexUrl, setPlexUrl] = useState("");
   const [plexToken, setPlexToken] = useState("");
   const [plexDirection, setPlexDirection] = useState<PlexSyncDirection>("pull");
+  const [plexSectionId, setPlexSectionId] = useState<string>("all");
   const [plexResult, setPlexResult] = useState<PlexSyncResult | null>(null);
+  const [tmdbEdited, setTmdbEdited] = useState(false);
+  const [plexUrlEdited, setPlexUrlEdited] = useState(false);
+  const [plexDirectionEdited, setPlexDirectionEdited] = useState(false);
+  const [matchTarget, setMatchTarget] = useState<MatchTarget | null>(null);
+  const [matchQuery, setMatchQuery] = useState("");
+  const [matchResults, setMatchResults] = useState<MetadataResult[]>([]);
+  const [matchingId, setMatchingId] = useState<string | null>(null);
+
+  const effectiveTmdbKey = tmdbEdited ? globalTmdbKey : config?.tmdbKey ?? "";
+  const effectivePlexUrl = plexUrlEdited ? plexUrl : config?.plexUrl ?? "";
+  const effectivePlexDirection = plexDirectionEdited
+    ? plexDirection
+    : config?.plexSyncDirection ?? "pull";
 
   const effectiveType = sectionFilter ? sectionFilter.type : inventoryType;
+  const inventoryKey = `${sectionFilter?.id ?? "all"}:${effectiveType}`;
+  const inventoryLimit = inventoryWindow.key === inventoryKey ? inventoryWindow.limit : 100;
+
   const list = useBrowse({
     type: effectiveType === "ALL" ? undefined : effectiveType,
     sectionId: sectionFilter?.id,
     page: 1,
-    pageSize: 100,
+    pageSize: inventoryLimit,
     sort: "title",
     enabled: !isSettings,
   });
 
   const onSaveTmdbKey = async () => {
     try {
-      await saveTmdbKey.mutateAsync(globalTmdbKey);
+      await saveLibraryConfig.mutateAsync({ tmdbKey: effectiveTmdbKey });
       toast({
         title: "TMDB key saved",
-        description: globalTmdbKey
+        description: effectiveTmdbKey
           ? "This key will be used for all scans and metadata fetches."
           : "TMDB key cleared. Scans will run without metadata matching.",
       });
@@ -129,11 +167,28 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     }
   };
 
+  const onSavePlexSettings = async () => {
+    try {
+      await saveLibraryConfig.mutateAsync({
+        plexUrl: effectivePlexUrl,
+        plexToken: plexToken || undefined,
+        plexSyncDirection: effectivePlexDirection,
+      });
+      setPlexToken("");
+      toast({
+        title: "Plex settings saved",
+        description: "Lumina will use these settings for watched history sync.",
+      });
+    } catch (e) {
+      toast({ title: "Couldn't save Plex settings", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
   const onScanAll = async () => {
     setAllResult(null);
     try {
       const res = await scanAll.mutateAsync({
-        tmdbKey: globalTmdbKey || undefined,
+        tmdbKey: effectiveTmdbKey || undefined,
         autoMatch: globalAutoMatch,
       });
       setAllResult(res);
@@ -154,7 +209,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     try {
       const res = await scanSection.mutateAsync({
         sectionId: s.id,
-        tmdbKey: globalTmdbKey || undefined,
+        tmdbKey: effectiveTmdbKey || undefined,
         autoMatch: globalAutoMatch,
       });
       setSectionResults((p) => ({ ...p, [s.id]: res }));
@@ -217,15 +272,62 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     }
   };
 
+  const onOpenManualMatch = async (media: MatchTarget) => {
+    setMatchTarget(media);
+    setMatchQuery(media.title);
+    setMatchResults([]);
+    try {
+      const { results } = await metaSearch.mutateAsync({
+        title: media.title,
+        type: media.type,
+        year: media.year ?? undefined,
+      });
+      setMatchResults(results);
+    } catch (e) {
+      toast({ title: "Metadata search failed", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
+  const onSearchManualMatch = async () => {
+    if (!matchTarget || !matchQuery.trim()) return;
+    try {
+      const { results } = await metaSearch.mutateAsync({
+        title: matchQuery,
+        type: matchTarget.type,
+        year: matchTarget.year ?? undefined,
+      });
+      setMatchResults(results);
+    } catch (e) {
+      toast({ title: "Metadata search failed", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
+  const onApplyManualMatch = async (tmdbId: number) => {
+    if (!matchTarget) return;
+    setMatchingId(matchTarget.id);
+    try {
+      await applyMeta.mutateAsync({ mediaId: matchTarget.id, tmdbId, type: matchTarget.type });
+      toast({ title: "Metadata match applied", description: `"${matchTarget.title}" was matched and refreshed.` });
+      setMatchTarget(null);
+      setMatchResults([]);
+      setMatchQuery("");
+    } catch (e) {
+      toast({ title: "Couldn't apply match", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setMatchingId(null);
+    }
+  };
+
   const plexPayload = () => ({
-    url: plexUrl || undefined,
+    url: effectivePlexUrl || undefined,
     token: plexToken || undefined,
-    direction: plexDirection,
+    direction: effectivePlexDirection,
+    sectionId: plexSectionId === "all" ? null : plexSectionId,
   });
 
   const onTestPlex = async () => {
     try {
-      const result = await testPlex.mutateAsync({ url: plexUrl || undefined, token: plexToken || undefined });
+      const result = await testPlex.mutateAsync({ url: effectivePlexUrl || undefined, token: plexToken || undefined });
       setPlexResult(result);
       toast({
         title: "Plex connected",
@@ -289,7 +391,25 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
             setInventoryType={setInventoryType}
             clearSection={() => setLibrarySectionFilter(null)}
             onFetchMetadata={onFetchMetadata}
+            onOpenManualMatch={onOpenManualMatch}
+            matchTarget={matchTarget}
+            matchQuery={matchQuery}
+            setMatchQuery={setMatchQuery}
+            matchResults={matchResults}
+            searchPending={metaSearch.isPending}
+            matchingId={matchingId}
+            onSearchMatch={onSearchManualMatch}
+            onApplyMatch={onApplyManualMatch}
+            onCloseMatch={() => setMatchTarget(null)}
             fetchingId={fetchingId}
+            hasMore={items.length < totalItems}
+            onLoadMore={() =>
+              setInventoryWindow({
+                key: inventoryKey,
+                limit: inventoryLimit + 100,
+              })
+            }
+            loadingMore={list.isFetching && !list.isLoading}
           />
         </>
       )}
@@ -323,26 +443,41 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
               results={sectionResults}
             />
             <ScanningPanel
-              tmdbKey={globalTmdbKey}
-              setTmdbKey={setGlobalTmdbKey}
+              tmdbKey={effectiveTmdbKey}
+              setTmdbKey={(value) => {
+                setTmdbEdited(true);
+                setGlobalTmdbKey(value);
+              }}
               autoMatch={globalAutoMatch}
               setAutoMatch={setGlobalAutoMatch}
-              saved={!!stats?.tmdbKey}
-              savePending={saveTmdbKey.isPending}
+              saved={!!config?.tmdbKey || !!stats?.tmdbKey}
+              savePending={saveLibraryConfig.isPending}
               scanPending={scanAll.isPending}
               onSave={onSaveTmdbKey}
               onScanAll={onScanAll}
               result={allResult}
             />
             <PlexSyncPanel
-              plexUrl={plexUrl}
-              setPlexUrl={setPlexUrl}
+              plexUrl={effectivePlexUrl}
+              setPlexUrl={(value) => {
+                setPlexUrlEdited(true);
+                setPlexUrl(value);
+              }}
               plexToken={plexToken}
               setPlexToken={setPlexToken}
-              direction={plexDirection}
-              setDirection={setPlexDirection}
+              direction={effectivePlexDirection}
+              setDirection={(value) => {
+                setPlexDirectionEdited(true);
+                setPlexDirection(value);
+              }}
+              sectionId={plexSectionId}
+              setSectionId={setPlexSectionId}
+              sections={sections ?? []}
               result={plexResult}
+              tokenSaved={!!config?.plexTokenSaved}
               busy={testPlex.isPending || plexSync.isPending}
+              savePending={saveLibraryConfig.isPending}
+              onSave={onSavePlexSettings}
               onTest={onTestPlex}
               onPreview={onPreviewPlexSync}
               onApply={onApplyPlexSync}
@@ -707,8 +842,14 @@ function PlexSyncPanel({
   setPlexToken,
   direction,
   setDirection,
+  sectionId,
+  setSectionId,
+  sections,
   result,
+  tokenSaved,
   busy,
+  savePending,
+  onSave,
   onTest,
   onPreview,
   onApply,
@@ -719,8 +860,14 @@ function PlexSyncPanel({
   setPlexToken: (value: string) => void;
   direction: PlexSyncDirection;
   setDirection: (value: PlexSyncDirection) => void;
+  sectionId: string;
+  setSectionId: (value: string) => void;
+  sections: LibrarySectionInfo[];
   result: PlexSyncResult | null;
+  tokenSaved: boolean;
   busy: boolean;
+  savePending: boolean;
+  onSave: () => void;
   onTest: () => void;
   onPreview: () => void;
   onApply: () => void;
@@ -740,7 +887,7 @@ function PlexSyncPanel({
         <Badge variant="secondary">Preview first</Badge>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_220px]">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_210px_230px]">
         <Field label="Plex server URL">
           <Input
             value={plexUrl}
@@ -755,10 +902,14 @@ function PlexSyncPanel({
             type="password"
             value={plexToken}
             onChange={(e) => setPlexToken(e.target.value)}
-            placeholder="Token from your Plex server"
+            placeholder={tokenSaved ? "Saved token active" : "Token from your Plex server"}
             className="font-mono text-sm"
           />
-          <p className="mt-1 text-xs text-foreground/42">Leave blank to use PLEX_TOKEN or LUMINA_PLEX_TOKEN.</p>
+          <p className="mt-1 text-xs text-foreground/42">
+            {tokenSaved
+              ? "Leave blank to keep the saved token."
+              : "Leave blank to use PLEX_TOKEN or LUMINA_PLEX_TOKEN."}
+          </p>
         </Field>
         <Field label="Direction">
           <Select value={direction} onValueChange={(v) => setDirection(v as PlexSyncDirection)}>
@@ -770,9 +921,27 @@ function PlexSyncPanel({
             </SelectContent>
           </Select>
         </Field>
+        <Field label="Scope">
+          <Select value={sectionId} onValueChange={setSectionId}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Lumina libraries</SelectItem>
+              {sections.map((section) => (
+                <SelectItem key={section.id} value={section.id}>
+                  {section.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-xs text-foreground/42">Limits Lumina matching and updates to this library.</p>
+        </Field>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
+        <Button variant="outline" onClick={onSave} disabled={savePending}>
+          {savePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+          Save settings
+        </Button>
         <Button variant="outline" onClick={onTest} disabled={busy}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Server className="h-4 w-4" />}
           Test
@@ -916,7 +1085,20 @@ function InventoryTable({
   setInventoryType,
   clearSection,
   onFetchMetadata,
+  onOpenManualMatch,
+  matchTarget,
+  matchQuery,
+  setMatchQuery,
+  matchResults,
+  searchPending,
+  matchingId,
+  onSearchMatch,
+  onApplyMatch,
+  onCloseMatch,
   fetchingId,
+  hasMore,
+  onLoadMore,
+  loadingMore,
 }: {
   items: any[];
   totalItems: number;
@@ -927,7 +1109,20 @@ function InventoryTable({
   setInventoryType: (value: MediaType | "ALL") => void;
   clearSection: () => void;
   onFetchMetadata: (mediaId: string, title: string, type: "MOVIE" | "TV") => void;
+  onOpenManualMatch: (media: MatchTarget) => void;
+  matchTarget: MatchTarget | null;
+  matchQuery: string;
+  setMatchQuery: (value: string) => void;
+  matchResults: MetadataResult[];
+  searchPending: boolean;
+  matchingId: string | null;
+  onSearchMatch: () => void;
+  onApplyMatch: (tmdbId: number) => void;
+  onCloseMatch: () => void;
   fetchingId: string | null;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  loadingMore: boolean;
 }) {
   return (
     <Card className="overflow-hidden p-0">
@@ -954,6 +1149,70 @@ function InventoryTable({
           <Badge variant="secondary">{items.length} shown</Badge>
         </div>
       </div>
+      {matchTarget && (
+        <div className="border-b border-border/60 bg-white/[0.035] p-5">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="label-eyebrow mb-1 text-primary/90">Manual match</p>
+              <h3 className="text-lg font-semibold">{matchTarget.title}</h3>
+              <p className="mt-1 text-sm text-foreground/52">
+                Pick the correct TMDB result. If another Lumina row already uses that TMDB ID,
+                the stub will be merged into it.
+              </p>
+            </div>
+            <Button variant="ghost" onClick={onCloseMatch}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={matchQuery}
+              onChange={(e) => setMatchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onSearchMatch()}
+              placeholder="Search TMDB title"
+            />
+            <Button variant="outline" onClick={onSearchMatch} disabled={searchPending}>
+              {searchPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              Search
+            </Button>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {matchResults.map((result) => (
+              <button
+                key={result.tmdbId}
+                onClick={() => onApplyMatch(result.tmdbId)}
+                disabled={matchingId === matchTarget.id}
+                className="rounded-lg border border-border/60 bg-background/45 p-3 text-left transition-colors hover:border-primary/55 hover:bg-primary/8 disabled:opacity-60"
+              >
+                <div className="flex gap-3">
+                  {result.posterUrl ? (
+                    <img
+                      src={result.posterUrl}
+                      alt={result.title}
+                      className="h-24 w-16 shrink-0 rounded object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="grid h-24 w-16 shrink-0 place-items-center rounded bg-white/8 text-xs text-foreground/42">
+                      No art
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="line-clamp-2 font-semibold">{result.title}</div>
+                    <div className="mt-1 text-xs text-foreground/50">{result.year ?? "Unknown year"}</div>
+                    <p className="mt-2 line-clamp-3 text-xs leading-5 text-foreground/50">
+                      {result.overview ?? "No overview from TMDB."}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {!searchPending && matchResults.length === 0 && (
+            <p className="mt-3 text-sm text-foreground/48">No TMDB candidates yet.</p>
+          )}
+        </div>
+      )}
       <div className="thin-scrollbar max-h-[68vh] overflow-auto">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="border-b border-border/60 text-left text-xs uppercase tracking-[0.12em] text-foreground/50">
@@ -990,10 +1249,26 @@ function InventoryTable({
                       )}
                     </td>
                     <td className="px-5 py-3 text-right">
-                      <Button variant="outline" disabled={fetchingId === m.id} onClick={() => onFetchMetadata(m.id, m.title, m.type)}>
-                        {fetchingId === m.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                        Fetch
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" disabled={fetchingId === m.id} onClick={() => onFetchMetadata(m.id, m.title, m.type)}>
+                          {fetchingId === m.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                          Fetch
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            onOpenManualMatch({
+                              id: m.id,
+                              title: m.title,
+                              type: m.type,
+                              year: m.year,
+                            })
+                          }
+                        >
+                          <Search className="h-3.5 w-3.5" />
+                          Match
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1002,6 +1277,14 @@ function InventoryTable({
           </tbody>
         </table>
       </div>
+      {hasMore && (
+        <div className="border-t border-border/60 p-4 text-center">
+          <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
+            {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            Load 100 more
+          </Button>
+        </div>
+      )}
     </Card>
   );
 }

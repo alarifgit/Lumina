@@ -70,9 +70,8 @@ export function HomeView({ onOpen, onPlay }: Props) {
 
   return (
     <div className="pb-10">
-      {/* Hero pulls up under the transparent nav for a full-bleed cinematic feel */}
       {data.featured.length > 0 && (
-        <div className="-mt-16">
+        <div>
           <HeroCarousel items={data.featured} onOpen={onOpen} onPlay={onPlay} />
         </div>
       )}

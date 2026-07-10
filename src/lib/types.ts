@@ -27,6 +27,8 @@ export interface MediaSummary {
   popularity: number;
   inMyList: boolean;
   createdAt?: string | null;
+  sourceCreatedAt?: string | null;
+  sourceModifiedAt?: string | null;
   // Continue-watching context
   progressPercent?: number;
   progressPosition?: number;
@@ -82,11 +84,14 @@ export interface MediaDetail extends MediaSummary {
   releaseDate: string | null;
   streamUrl: string | null;
   filePath: string | null;
+  sourceCreatedAt?: string | null;
+  sourceModifiedAt?: string | null;
   subtitles: Subtitle[];
   sectionId: string | null;
   category: string;
   seasons: Season[];
   episodes: Episode[]; // episodes of the currently-selected season
+  playableEpisodes?: Episode[]; // all local/downloaded episodes, used by player
   nextEpisode?: Episode | null;
 }
 
@@ -126,6 +131,13 @@ export interface LibraryStats {
   transcodeEncoder?: string;
   transcodeEncoderKey?: string;
   transcodeReason?: string | null;
+}
+
+export interface LibraryConfigInfo {
+  tmdbKey: string;
+  plexUrl: string;
+  plexTokenSaved: boolean;
+  plexSyncDirection: PlexSyncDirection;
 }
 
 export interface ScanResult {

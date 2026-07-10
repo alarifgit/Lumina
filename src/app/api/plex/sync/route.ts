@@ -15,6 +15,7 @@ export async function POST(req: Request) {
       token: typeof body?.token === "string" ? body.token : undefined,
       direction: directionOf(body?.direction),
       apply: body?.apply === true,
+      sectionId: typeof body?.sectionId === "string" && body.sectionId ? body.sectionId : null,
     });
     return NextResponse.json(result);
   } catch (error) {

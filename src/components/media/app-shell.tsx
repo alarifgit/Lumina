@@ -27,7 +27,7 @@ export function AppShell() {
   }, [route]);
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-background text-foreground">
+    <div className="lumina-canvas relative flex min-h-screen flex-col text-foreground">
       <TopNav />
       <main className="flex-1">
         {route === "home" && <HomeView onOpen={openDetail} onPlay={handlePlay} />}

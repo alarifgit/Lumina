@@ -12,6 +12,7 @@ import type {
   LibrarySectionInfo,
   MediaType,
   Subtitle,
+  PlexSyncDirection,
 } from "@/lib/types";
 
 type SubtitleRow = {
@@ -98,6 +99,8 @@ export function toSummary(
     popularity: m.popularity,
     inMyList,
     createdAt: m.createdAt?.toISOString() ?? null,
+    sourceCreatedAt: m.sourceCreatedAt?.toISOString() ?? null,
+    sourceModifiedAt: m.sourceModifiedAt?.toISOString() ?? null,
     ...(progress
       ? {
           progressPercent: percent,
@@ -225,13 +228,13 @@ export async function getByGenre(
 }
 
 /**
- * Recently added MOVIES — newest by creation time.
- * Each item carries its own createdAt so the row reflects when it was scanned in.
+ * Recently added MOVIES — newest by filesystem timestamp, falling back to
+ * row creation time until the next scan backfills source timestamps.
  */
 export async function getRecentlyAddedMovies(limit = 20): Promise<MediaSummary[]> {
   const items = await db.media.findMany({
     where: { type: "MOVIE" },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ sourceModifiedAt: "desc" }, { createdAt: "desc" }],
     take: limit,
     include: mediaInclude,
   });
@@ -239,14 +242,14 @@ export async function getRecentlyAddedMovies(limit = 20): Promise<MediaSummary[]
 }
 
 /**
- * Recently added EPISODES — newest episodes by creation time, collapsed to
+ * Recently added EPISODES — newest episodes by filesystem timestamp, collapsed to
  * their parent show so we don't show the same show 5 times. Each returned
  * summary carries the latest episode's id/season/episode for "resume" context.
  */
 export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary[]> {
   // Fetch the newest episodes, grouped by show
   const episodes = await db.episode.findMany({
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ sourceModifiedAt: "desc" }, { createdAt: "desc" }],
     take: limit * 5, // over-fetch to dedupe by show
     include: { media: { include: mediaInclude } },
   });
@@ -271,7 +274,7 @@ export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary
       duration: 0,
       episodeId: ep.id,
       episode: { seasonNumber: ep.seasonNumber, episodeNumber: ep.episodeNumber },
-      updatedAt: ep.createdAt,
+      updatedAt: ep.sourceModifiedAt ?? ep.createdAt,
     })
   );
 }
@@ -391,9 +394,9 @@ export async function getContinueWatching(
             seasonNumber: nextEpisode.seasonNumber,
             episodeNumber: nextEpisode.episodeNumber,
           },
-          updatedAt: nextEpisode.airDate ?? nextEpisode.createdAt,
+          updatedAt: nextEpisode.airDate ?? nextEpisode.sourceModifiedAt ?? nextEpisode.createdAt,
         },
-        sortAt: nextEpisode.airDate ?? nextEpisode.createdAt,
+        sortAt: nextEpisode.airDate ?? nextEpisode.sourceModifiedAt ?? nextEpisode.createdAt,
       });
 
       if (candidates.length >= limit) break;
@@ -469,26 +472,29 @@ export async function getMediaDetail(
   });
   const latestProgress = progressRows[0];
 
-  const seasonNumbers = [...new Set(media.episodes.map((e) => e.seasonNumber))].sort(
+  const playableEpisodeRows = media.episodes.filter((e) => e.filePath || e.streamUrl);
+  const episodeRowsForDisplay = media.type === "TV" ? playableEpisodeRows : media.episodes;
+
+  const seasonNumbers = [...new Set(episodeRowsForDisplay.map((e) => e.seasonNumber))].sort(
     (a, b) => a - b
   );
   const seasons: Season[] = seasonNumbers.map((s) => ({
     seasonNumber: s,
     name: s === 0 ? "Specials" : `Season ${s}`,
-    episodeCount: media.episodes.filter((e) => e.seasonNumber === s).length,
+    episodeCount: episodeRowsForDisplay.filter((e) => e.seasonNumber === s).length,
     airDate:
-      media.episodes.find((e) => e.seasonNumber === s && e.airDate)?.airDate?.toISOString() ??
+      episodeRowsForDisplay.find((e) => e.seasonNumber === s && e.airDate)?.airDate?.toISOString() ??
       null,
     overview: null,
   }));
 
   const targetSeason = season ?? seasons[0]?.seasonNumber ?? 1;
-  const seasonEpisodes = media.episodes.filter((e) => e.seasonNumber === targetSeason);
+  const seasonEpisodes = episodeRowsForDisplay.filter((e) => e.seasonNumber === targetSeason);
 
   const epProgressMap = new Map(
     progressRows.filter((p) => p.episodeId).map((p) => [p.episodeId!, p])
   );
-  const episodes: Episode[] = seasonEpisodes.map((e) => {
+  const serializeEpisode = (e: typeof media.episodes[number]): Episode => {
     const p = epProgressMap.get(e.id);
     return {
       id: e.id,
@@ -512,28 +518,20 @@ export async function getMediaDetail(
           }
         : {}),
     };
-  });
+  };
+  const episodes: Episode[] = seasonEpisodes.map(serializeEpisode);
+  const playableEpisodes = playableEpisodeRows.map(serializeEpisode);
 
   let nextEpisode: Episode | null = null;
-  if (media.type === "TV" && media.episodes.length) {
+  if (media.type === "TV" && playableEpisodeRows.length) {
     const watchedIds = new Set(
       progressRows.filter((p) => p.completed).map((p) => p.episodeId)
     );
+    const now = Date.now();
     const next =
-      media.episodes.find((e) => !watchedIds.has(e.id)) ?? media.episodes[0];
-    nextEpisode = {
-      id: next.id,
-      seasonNumber: next.seasonNumber,
-      episodeNumber: next.episodeNumber,
-      title: next.title,
-      overview: next.overview,
-      stillUrl: next.stillUrl,
-      airDate: next.airDate?.toISOString() ?? null,
-      runtime: next.runtime,
-      streamUrl: next.streamUrl,
-      filePath: next.filePath,
-      subtitles: serializeSubtitles(next.subtitles),
-    };
+      playableEpisodeRows.find((e) => !watchedIds.has(e.id) && (!e.airDate || e.airDate.getTime() <= now)) ??
+      playableEpisodeRows[0];
+    nextEpisode = serializeEpisode(next);
   }
 
   const summary = toSummary(
@@ -564,11 +562,14 @@ export async function getMediaDetail(
     releaseDate: media.releaseDate?.toISOString() ?? null,
     streamUrl: media.streamUrl,
     filePath: media.filePath,
+    sourceCreatedAt: media.sourceCreatedAt?.toISOString() ?? null,
+    sourceModifiedAt: media.sourceModifiedAt?.toISOString() ?? null,
     subtitles: serializeSubtitles(media.subtitles),
     sectionId: media.sectionId,
     category: media.category,
     seasons,
     episodes,
+    playableEpisodes,
     nextEpisode,
   };
 }
@@ -656,6 +657,20 @@ async function getLibraryConfigForStats() {
   }
 }
 
+export async function getLibraryConfig() {
+  const config = await db.libraryConfig.upsert({
+    where: { id: "default" },
+    update: {},
+    create: { id: "default" },
+  });
+  return {
+    tmdbKey: config.tmdbKey ?? process.env.TMDB_API_KEY ?? "",
+    plexUrl: config.plexUrl ?? process.env.PLEX_URL ?? process.env.LUMINA_PLEX_URL ?? "",
+    plexTokenSaved: !!(config.plexToken || process.env.PLEX_TOKEN || process.env.LUMINA_PLEX_TOKEN),
+    plexSyncDirection: (config.plexSyncDirection || "pull") as PlexSyncDirection,
+  };
+}
+
 export async function getStats(): Promise<LibraryStats> {
   const [mediaCount, movieCount, tvCount, episodeCount, genreCount, config, movieRuntime, epRuntime] =
     await Promise.all([
@@ -692,6 +707,32 @@ export async function saveTmdbKey(key: string): Promise<{ ok: true }> {
     create: { id: "default", tmdbKey: key || null },
   });
   return { ok: true };
+}
+
+export async function saveLibraryConfig(input: {
+  tmdbKey?: string;
+  plexUrl?: string;
+  plexToken?: string;
+  plexSyncDirection?: PlexSyncDirection;
+}) {
+  const data: {
+    tmdbKey?: string | null;
+    plexUrl?: string | null;
+    plexToken?: string | null;
+    plexSyncDirection?: string;
+  } = {};
+
+  if (input.tmdbKey !== undefined) data.tmdbKey = input.tmdbKey.trim() || null;
+  if (input.plexUrl !== undefined) data.plexUrl = input.plexUrl.trim().replace(/\/+$/, "") || null;
+  if (input.plexToken !== undefined) data.plexToken = input.plexToken.trim() || null;
+  if (input.plexSyncDirection) data.plexSyncDirection = input.plexSyncDirection;
+
+  await db.libraryConfig.upsert({
+    where: { id: "default" },
+    update: data,
+    create: { id: "default", ...data },
+  });
+  return { ok: true, config: await getLibraryConfig() };
 }
 
 export async function saveProgress(payload: {

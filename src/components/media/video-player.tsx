@@ -65,6 +65,7 @@ function PlayerSession({
 
   const [activeEpId, setActiveEpId] = useState<string | null>(episodeIdParam);
   const [resumeAt, setResumeAt] = useState(startAt);
+  const [timelineOffset, setTimelineOffset] = useState(startAt);
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -95,8 +96,9 @@ function PlayerSession({
   const currentEpisode: Episode | null = useMemo(() => {
     if (!d) return null;
     if (d.type !== "TV") return null;
+    const playableEpisodes = d.playableEpisodes ?? d.episodes;
     if (activeEpId) {
-      const found = d.episodes.find((e) => e.id === activeEpId);
+      const found = playableEpisodes.find((e) => e.id === activeEpId);
       if (found) return found;
       return {
         id: activeEpId,
@@ -111,7 +113,7 @@ function PlayerSession({
         filePath: null,
       } as Episode;
     }
-    return d.nextEpisode ?? d.episodes[0] ?? null;
+    return d.nextEpisode ?? playableEpisodes[0] ?? null;
   }, [d, activeEpId]);
 
   // Subtitles for the currently-playing item (episode subs for TV, media subs for movies)
@@ -133,7 +135,19 @@ function PlayerSession({
     : false;
   const transcode = transcodeOverride ?? autoTranscode;
 
-  const setTranscode = (v: boolean) => setTranscodeOverride(v);
+  const setTranscode = (v: boolean) => {
+    const nextStart = Math.max(0, current || resumeAt || 0);
+    setTimelineOffset(v ? nextStart : 0);
+    setResumeAt(v ? nextStart : current || 0);
+    setTranscodeOverride(v);
+  };
+
+  const expectedDuration = useMemo(() => {
+    const runtime = currentEpisode?.runtime ?? d?.runtime ?? null;
+    return runtime && runtime > 0 ? runtime * 60 : 0;
+  }, [currentEpisode?.runtime, d?.runtime]);
+
+  const hasLocalTranscodeSource = transcode && !currentEpisode?.streamUrl && !d?.streamUrl;
 
   // Build the source URL. When transcoding, append ?transcode=1&t=<resumePos>
   // so ffmpeg starts at the resume position (seeking a live transcode isn't possible).
@@ -142,15 +156,16 @@ function PlayerSession({
     const base = currentEpisode
       ? (currentEpisode.streamUrl ?? `/api/episodes/${currentEpisode.id}/stream`)
       : (d.streamUrl ?? `/api/media/${d.id}/stream`);
-    if (!transcode || currentEpisode?.streamUrl || d.streamUrl) return base;
+    if (!hasLocalTranscodeSource) return base;
     const sep = base.includes("?") ? "&" : "?";
     return `${base}${sep}transcode=1${resumeAt > 1 ? `&t=${Math.floor(resumeAt)}` : ""}`;
-  }, [d, currentEpisode, transcode, resumeAt]);
+  }, [d, currentEpisode, hasLocalTranscodeSource, resumeAt]);
 
   const nextUp = useMemo(() => {
     if (!d || d.type !== "TV" || !currentEpisode) return null;
-    const idx = d.episodes.findIndex((e) => e.id === currentEpisode.id);
-    if (idx >= 0 && idx < d.episodes.length - 1) return d.episodes[idx + 1];
+    const playableEpisodes = d.playableEpisodes ?? d.episodes;
+    const idx = playableEpisodes.findIndex((e) => e.id === currentEpisode.id);
+    if (idx >= 0 && idx < playableEpisodes.length - 1) return playableEpisodes[idx + 1];
     return null;
   }, [d, currentEpisode]);
 
@@ -158,8 +173,9 @@ function PlayerSession({
     (force = false, traktEvent?: "start" | "pause" | "resume" | "stop") => {
       const v = videoRef.current;
       if (!v || !mediaId || !d) return;
-      const pos = v.currentTime || 0;
-      const dur = v.duration || 0;
+      const pos = hasLocalTranscodeSource ? timelineOffset + (v.currentTime || 0) : v.currentTime || 0;
+      const rawDuration = Number.isFinite(v.duration) ? v.duration : 0;
+      const dur = expectedDuration || (hasLocalTranscodeSource ? timelineOffset + rawDuration : rawDuration);
       if (dur <= 0) return;
       const now = Date.now();
       if (!force && now - lastSave.current < 4000) return;
@@ -179,7 +195,7 @@ function PlayerSession({
         }),
       }).catch(() => {});
     },
-    [mediaId, d, activeEpId]
+    [mediaId, d, activeEpId, expectedDuration, hasLocalTranscodeSource, timelineOffset]
   );
 
   const togglePlay = () => {
@@ -213,6 +229,25 @@ function PlayerSession({
       if (videoRef.current && !videoRef.current.paused) setShowControls(false);
     }, 3000);
   }, []);
+
+  const seek = useCallback(
+    (val: number) => {
+      const v = videoRef.current;
+      if (!v) return;
+      const target = Math.max(0, Math.min(duration || val, val));
+      if (hasLocalTranscodeSource) {
+        setResumeAt(target);
+        setTimelineOffset(target);
+        setCurrent(target);
+        setBuffered(target);
+        setBuffering(true);
+        return;
+      }
+      v.currentTime = target;
+      setCurrent(target);
+    },
+    [duration, hasLocalTranscodeSource]
+  );
 
   // periodic save + scrobble "stop" when the player unmounts (closed)
   useEffect(() => {
@@ -250,11 +285,11 @@ function PlayerSession({
           break;
         case "ArrowLeft":
           e.preventDefault();
-          v.currentTime = Math.max(0, v.currentTime - 10);
+          seek(Math.max(0, current - 10));
           break;
         case "ArrowRight":
           e.preventDefault();
-          v.currentTime = Math.min(v.duration || 0, v.currentTime + 10);
+          seek(Math.min(duration || current + 10, current + 10));
           break;
         case "ArrowUp":
           e.preventDefault();
@@ -387,12 +422,18 @@ function PlayerSession({
   const onLoadedMetadata = () => {
     const v = videoRef.current;
     if (!v) return;
-    setDuration(v.duration || 0);
+    const rawDuration = Number.isFinite(v.duration) ? v.duration : 0;
+    const offset = hasLocalTranscodeSource ? resumeAt : 0;
+    setTimelineOffset(offset);
+    setDuration(expectedDuration || (hasLocalTranscodeSource ? offset + rawDuration : rawDuration));
+    setCurrent(offset);
+    setBuffered(offset);
     setBuffering(false);
-    if (resumeAt > 0 && resumeAt < v.duration - 2) {
+    if (!hasLocalTranscodeSource && resumeAt > 0 && resumeAt < v.duration - 2) {
       v.currentTime = resumeAt;
     }
     v.volume = volume;
+    v.playbackRate = rate;
     v.play().catch(() => {});
     // Initialise the active subtitle from the default track (if any)
     const def = subtitles.find((s) => s.isDefault) ?? null;
@@ -416,13 +457,6 @@ function PlayerSession({
     setActiveSubId(id);
   };
 
-  const seek = (val: number) => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = val;
-    setCurrent(val);
-  };
-
   const changeRate = (r: number) => {
     setRate(r);
     if (videoRef.current) videoRef.current.playbackRate = r;
@@ -433,8 +467,10 @@ function PlayerSession({
     if (nextUp) {
       setActiveEpId(nextUp.id);
       setResumeAt(0);
+      setTimelineOffset(0);
       setEnded(false);
       setCurrent(0);
+      setBuffered(0);
       setActiveSubId(null);
     }
   };
@@ -481,11 +517,21 @@ function PlayerSession({
             togglePlay();
           }}
           onLoadedMetadata={onLoadedMetadata}
-          onTimeUpdate={(e) => setCurrent((e.target as HTMLVideoElement).currentTime)}
-          onDurationChange={(e) => setDuration((e.target as HTMLVideoElement).duration || 0)}
+          onTimeUpdate={(e) => {
+            const v = e.target as HTMLVideoElement;
+            setCurrent(hasLocalTranscodeSource ? timelineOffset + (v.currentTime || 0) : v.currentTime || 0);
+          }}
+          onDurationChange={(e) => {
+            const rawDuration = Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0;
+            setDuration(expectedDuration || (hasLocalTranscodeSource ? timelineOffset + rawDuration : rawDuration));
+          }}
           onProgress={(e) => {
             const v = e.currentTarget;
-            if (v.buffered.length > 0) setBuffered(v.buffered.end(v.buffered.length - 1));
+            if (v.buffered.length > 0) {
+              const rawBuffered = v.buffered.end(v.buffered.length - 1);
+              const nextBuffered = hasLocalTranscodeSource ? timelineOffset + rawBuffered : rawBuffered;
+              setBuffered(Math.min(duration || nextBuffered, nextBuffered));
+            }
           }}
           onPlay={() => {
             setPlaying(true);
@@ -542,7 +588,7 @@ function PlayerSession({
               <p className="font-semibold text-amber-300">Switched to compatibility mode</p>
               <p className="mt-0.5 text-xs text-white/70">
                 This file&apos;s audio codec (AC3/DTS/TrueHD) can&apos;t be decoded by the browser,
-                so Lumina is now transcoding it to AAC via ffmpeg. Seeking is limited while transcoding.
+                so Lumina is now transcoding it to AAC via ffmpeg. Seeking restarts the stream at the selected time.
                 {!d?.streamUrl && !currentEpisode?.streamUrl && (
                   <> You can toggle back to direct mode in the settings menu.</>
                 )}
@@ -730,7 +776,7 @@ function PlayerSession({
                         </span>
                       </button>
                       <p className="px-2 py-1 text-[10px] leading-tight text-white/40">
-                        Remuxes/transcodes to a browser-friendly format when the file can't play directly (AC3/DTS audio, MKV). Seeking is limited while active.
+                        Remuxes/transcodes to a browser-friendly format when the file can't play directly (AC3/DTS audio, MKV). Seeking restarts compatibility playback at the selected time.
                       </p>
                       {transcode && probe.data?.directPlayReason && (
                         <p className="px-2 pb-1 text-[10px] leading-tight text-amber-300/80">
@@ -904,8 +950,12 @@ function PlexSeekbar({
         />
         {/* thumb */}
         <div
-          className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow transition-transform"
-          style={{ left: `${pct}%`, opacity: hovering ? 1 : 0, transform: `translate(-50%,-50%) scale(${hovering ? 1 : 0.6})` }}
+          className="absolute top-1/2 h-3 w-3 rounded-full bg-white shadow transition-transform"
+          style={{
+            left: `${pct}%`,
+            opacity: hovering ? 1 : 0,
+            transform: `translate3d(-50%, -50%, 0) scale(${hovering ? 1 : 0.6})`,
+          }}
         />
       </div>
       {/* accessible native input (transparent overlay for keyboard seeking) */}

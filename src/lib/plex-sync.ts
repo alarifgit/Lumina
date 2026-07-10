@@ -10,6 +10,7 @@ export interface PlexSyncCredentials {
 export interface PlexSyncRequest extends PlexSyncCredentials {
   direction?: PlexSyncDirection;
   apply?: boolean;
+  sectionId?: string | null;
 }
 
 export interface PlexSyncItem {
@@ -77,9 +78,22 @@ type MediaWithProgress = Awaited<ReturnType<typeof loadLuminaLibrary>>["movies"]
 type ShowWithEpisodes = Awaited<ReturnType<typeof loadLuminaLibrary>>["shows"][number];
 type EpisodeWithProgress = ShowWithEpisodes["episodes"][number];
 
-function credentials(input: PlexSyncCredentials) {
-  const url = (input.url || process.env.PLEX_URL || process.env.LUMINA_PLEX_URL || "").trim().replace(/\/+$/, "");
-  const token = (input.token || process.env.PLEX_TOKEN || process.env.LUMINA_PLEX_TOKEN || "").trim();
+async function credentials(input: PlexSyncCredentials) {
+  const config = await db.libraryConfig.findUnique({ where: { id: "default" } }).catch(() => null);
+  const url = (
+    input.url ||
+    config?.plexUrl ||
+    process.env.PLEX_URL ||
+    process.env.LUMINA_PLEX_URL ||
+    ""
+  ).trim().replace(/\/+$/, "");
+  const token = (
+    input.token ||
+    config?.plexToken ||
+    process.env.PLEX_TOKEN ||
+    process.env.LUMINA_PLEX_TOKEN ||
+    ""
+  ).trim();
   if (!url || !token) {
     throw new Error("Plex URL and token are required. Enter them here or set PLEX_URL and PLEX_TOKEN.");
   }
@@ -244,14 +258,15 @@ async function loadPlexLibrary(creds: { url: string; token: string }) {
   return { sections: supported.length, items, errors };
 }
 
-async function loadLuminaLibrary() {
+async function loadLuminaLibrary(sectionId?: string | null) {
+  const sectionWhere = sectionId ? { sectionId } : {};
   const [movies, shows] = await Promise.all([
     db.media.findMany({
-      where: { type: "MOVIE" },
+      where: { type: "MOVIE", ...sectionWhere },
       include: { progress: true },
     }),
     db.media.findMany({
-      where: { type: "TV" },
+      where: { type: "TV", ...sectionWhere },
       include: {
         progress: true,
         episodes: { include: { progress: true } },
@@ -371,7 +386,7 @@ function actionFor(direction: PlexSyncDirection, plexWatched: boolean, luminaWat
 }
 
 export async function testPlexConnection(input: PlexSyncCredentials): Promise<PlexSyncResult> {
-  const creds = credentials(input);
+  const creds = await credentials(input);
   const [serverName, sections] = await Promise.all([plexIdentity(creds), plexSections(creds)]);
   return {
     ok: true,
@@ -392,13 +407,14 @@ export async function testPlexConnection(input: PlexSyncCredentials): Promise<Pl
 }
 
 export async function syncPlexWatched(input: PlexSyncRequest): Promise<PlexSyncResult> {
-  const creds = credentials(input);
-  const direction = input.direction ?? "pull";
+  const creds = await credentials(input);
+  const config = await db.libraryConfig.findUnique({ where: { id: "default" } }).catch(() => null);
+  const direction = input.direction ?? (config?.plexSyncDirection as PlexSyncDirection | undefined) ?? "pull";
   const apply = input.apply ?? false;
   const [serverName, plex, lumina] = await Promise.all([
     plexIdentity(creds).catch(() => null),
     loadPlexLibrary(creds),
-    loadLuminaLibrary(),
+    loadLuminaLibrary(input.sectionId),
   ]);
   const { movieMaps, showMaps } = buildMaps(lumina);
   const rows: Array<
