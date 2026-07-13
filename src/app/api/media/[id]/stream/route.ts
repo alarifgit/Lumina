@@ -20,10 +20,17 @@ export async function GET(
   const url = new URL(req.url);
   const transcode = url.searchParams.get("transcode") === "1";
   const startTime = parseFloat(url.searchParams.get("t") ?? "0") || 0;
+  const subtitleId = url.searchParams.get("subtitleId");
+  const subtitle = subtitleId
+    ? await db.subtitle.findFirst({ where: { id: subtitleId, mediaId: id, episodeId: null } })
+    : null;
 
   if (transcode) {
     const codecs = await probeCodecs(media.filePath);
-    const proc = spawnTranscode(media.filePath, codecs, { startTime });
+    const proc = spawnTranscode(media.filePath, codecs, {
+      startTime,
+      subtitleStreamIndex: subtitle?.streamIndex ?? undefined,
+    });
     // Kill ffmpeg when the client disconnects (seeking, closing player, etc.)
     registerTranscodeCleanup(proc, req.signal);
     const webStream = childProcessToWebStream(proc, req.signal);

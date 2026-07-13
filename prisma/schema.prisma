@@ -183,6 +183,9 @@ model Subtitle {
   streamUrl String?
   /// Format hint derived from extension: "vtt" | "srt" | "ass" | "ssa" | "sub"
   format    String   @default("srt")
+  /// ffprobe stream index for a subtitle embedded in the media container.
+  streamIndex Int?
+  codec       String?
   isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
 

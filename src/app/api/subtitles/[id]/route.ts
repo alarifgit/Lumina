@@ -28,7 +28,7 @@ export async function GET(
       return NextResponse.json({ error: "No subtitle file" }, { status: 404 });
     }
     // Local subtitle — serve as WebVTT (convert SRT/ASS on the fly)
-    const vtt = await readSubtitleAsVtt(sub.filePath);
+    const vtt = await readSubtitleAsVtt(sub.filePath, sub.streamIndex);
     return new NextResponse(vtt, {
       status: 200,
       headers: {

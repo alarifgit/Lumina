@@ -46,7 +46,8 @@ export interface Subtitle {
   format: string;
   isDefault: boolean;
   url: string;
-  source?: string;
+  source: "sidecar" | "embedded";
+  delivery: "track" | "burn-in";
 }
 
 export interface Episode {

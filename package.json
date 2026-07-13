@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build && node scripts/copy-standalone-assets.mjs",
-    "build:docker": "next build && bun scripts/copy-standalone-assets.mjs",
+    "build:docker": "next build",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
     "db:push": "prisma db push",

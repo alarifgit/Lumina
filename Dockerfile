@@ -19,6 +19,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN bun run db:generate
 RUN bun run build:docker
 
+# Install only Prisma's migration CLI and its transitive dependencies. Keeping
+# it separate avoids copying the complete build-time node_modules into runtime.
+FROM node:20-slim AS prisma-cli
+WORKDIR /opt/prisma
+RUN npm init -y \
+    && npm install --omit=dev --no-audit --no-fund --no-package-lock prisma@6.19.3 \
+    && npm cache clean --force
+
 # ── Stage 3: Production runner (Node.js for best Prisma CLI compat) ─
 # We use node:20-slim instead of oven/bun:1 here because the Prisma CLI
 # (used by the entrypoint to run `db push` on startup) is designed for
@@ -47,13 +55,12 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Copy the FULL node_modules on top of the standalone's minimal set.
-# This ensures the Prisma CLI has ALL its transitive dependencies
-# (e.g. @prisma/config → effect) available for `db push` on startup.
-COPY --from=builder /app/node_modules ./node_modules
+# Prisma CLI is isolated from the app's minimal standalone dependencies.
+COPY --from=prisma-cli /opt/prisma/node_modules /opt/prisma/node_modules
 
 # Prisma schema (needed by `db push`)
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/scripts/repair-media-identities.mjs ./scripts/repair-media-identities.mjs
 
 # Entrypoint that ensures the DB schema exists, then starts the server
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

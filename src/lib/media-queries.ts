@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getTranscodeStatus } from "@/lib/transcoder";
+import { isTextSubtitleCodec } from "@/lib/subtitles";
 import { Prisma } from "@prisma/client";
 import type {
   MediaSummary,
@@ -23,6 +24,8 @@ type SubtitleRow = {
   isDefault: boolean;
   streamUrl: string | null;
   filePath: string | null;
+  streamIndex: number | null;
+  codec: string | null;
 };
 
 /** Serialise subtitle rows into the client-facing shape with a serving URL. */
@@ -33,12 +36,38 @@ function serializeSubtitles(rows: SubtitleRow[]): Subtitle[] {
     label: s.label,
     format: s.format,
     isDefault: s.isDefault,
+    source: s.streamIndex == null ? "sidecar" : "embedded",
+    delivery:
+      s.streamIndex != null && !isTextSubtitleCodec(s.codec)
+        ? "burn-in"
+        : "track",
     // Remote subs use their URL directly; local subs are served (and SRT→VTT converted) by the API
     url: s.streamUrl ?? `/api/subtitles/${s.id}`,
   }));
 }
 
 const MY_LIST_SLUG = "my-list";
+
+const playableMediaWhere: Prisma.MediaWhereInput = {
+  OR: [
+    {
+      type: "MOVIE",
+      OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
+    },
+    {
+      type: "TV",
+      episodes: {
+        some: {
+          OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
+        },
+      },
+    },
+  ],
+};
+
+function locallyAvailable(where: Prisma.MediaWhereInput = {}): Prisma.MediaWhereInput {
+  return { AND: [where, playableMediaWhere] };
+}
 
 export async function getMyListCollection() {
   let col = await db.collection.findUnique({ where: { slug: MY_LIST_SLUG } });
@@ -611,10 +640,11 @@ export async function browseMedia(params: {
           ? { title: "asc" }
           : { popularity: "desc" };
 
+  const visibleWhere = locallyAvailable(where);
   const [total, items] = await Promise.all([
-    db.media.count({ where }),
+    db.media.count({ where: visibleWhere }),
     db.media.findMany({
-      where,
+      where: visibleWhere,
       orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -630,7 +660,7 @@ export async function searchMedia(q: string, limit = 30) {
   const trimmed = q.trim();
   if (!trimmed) return { items: [], query: q };
   const items = await db.media.findMany({
-    where: { title: { contains: trimmed } },
+    where: locallyAvailable({ title: { contains: trimmed } }),
     take: limit,
     orderBy: { popularity: "desc" },
     include: mediaInclude,
@@ -684,10 +714,12 @@ export async function getLibraryConfig() {
 export async function getStats(): Promise<LibraryStats> {
   const [mediaCount, movieCount, tvCount, episodeCount, genreCount, config, movieRuntime, epRuntime] =
     await Promise.all([
-      db.media.count(),
-      db.media.count({ where: { type: "MOVIE" } }),
-      db.media.count({ where: { type: "TV" } }),
-      db.episode.count(),
+      db.media.count({ where: playableMediaWhere }),
+      db.media.count({ where: locallyAvailable({ type: "MOVIE" }) }),
+      db.media.count({ where: locallyAvailable({ type: "TV" }) }),
+      db.episode.count({
+        where: { OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }] },
+      }),
       db.genre.count(),
       getLibraryConfigForStats(),
       db.media.aggregate({ where: { type: "MOVIE" }, _sum: { runtime: true } }),
@@ -824,7 +856,11 @@ export async function toggleMyList(mediaId: string) {
 export async function getSections(): Promise<LibrarySectionInfo[]> {
   const sections = await db.librarySection.findMany({
     orderBy: [{ type: "asc" }, { category: "asc" }, { name: "asc" }],
-    include: { _count: { select: { media: true } } },
+    include: {
+      _count: {
+        select: { media: { where: playableMediaWhere } },
+      },
+    },
   });
   return sections.map((s) => ({
     id: s.id,

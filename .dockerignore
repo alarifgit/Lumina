@@ -32,5 +32,24 @@ verify-*.png
 .DS_Store
 Thumbs.db
 
-# Prisma generated client is regenerated during build
-# (kept out of context to reduce build size — copied from builder stage)
+# Development and source-material directories
+.agents
+.zscripts
+db
+download
+examples
+mini-services
+upload
+worklog.md
+AGENTS.md
+Caddyfile
+*.tsbuildinfo
+next-env.d.ts
+
+# Brand source sheets and unused review variants remain in Git, not the image.
+public/brand-reference
+public/app-icons
+public/brand/logo-v*.png
+public/brand/logo-mark.png
+public/logo.svg
+public/subtitles

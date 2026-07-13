@@ -49,6 +49,13 @@ dev.out.log
 test
 prompt
 
+# Local generator artifacts and imported source material
+/db/
+/upload/
+/.zscripts/
+/download/
+/mini-services/
+
 server.log
 # Skills directory
 /skills/

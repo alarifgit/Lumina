@@ -237,6 +237,8 @@ function runProbe(filePath: string): Promise<any> {
 export interface TranscodeOptions {
   /** Start position in seconds (for resume). 0 = from start. */
   startTime?: number;
+  /** Embedded bitmap subtitle stream to burn into the video. */
+  subtitleStreamIndex?: number;
 }
 
 /**
@@ -254,6 +256,7 @@ export function spawnTranscode(
   opts: TranscodeOptions = {}
 ) {
   const encoder = getTranscodeStatus().transcodeEncoderKey;
+  const burnSubtitle = opts.subtitleStreamIndex != null;
   const args: string[] = [
     "-hide_banner",
     "-loglevel", "error",
@@ -263,7 +266,7 @@ export function spawnTranscode(
   }
 
   const v = codecs.videoCodec;
-  const copyVideo = !!v && (v === "h264" || v === "hevc" || v === "h265");
+  const copyVideo = !burnSubtitle && !!v && (v === "h264" || v === "hevc" || v === "h265");
   if (!copyVideo && encoder === "h264_vaapi") {
     args.push("-vaapi_device", configuredVaapiDevice());
   }
@@ -274,14 +277,29 @@ export function spawnTranscode(
   if (copyVideo) {
     args.push("-c:v", "copy");
   } else if (encoder === "h264_vaapi") {
+    if (burnSubtitle) {
+      args.push(
+        "-filter_complex", `[0:v:0][0:${opts.subtitleStreamIndex}]overlay,format=nv12,hwupload[v]`,
+        "-map", "[v]",
+        "-map", "0:a:0?",
+      );
+    } else {
+      args.push("-vf", "format=nv12,hwupload");
+    }
     args.push(
-      "-vf", "format=nv12,hwupload",
       "-c:v", "h264_vaapi",
       "-qp", "23",
       "-maxrate", "8M",
       "-bufsize", "16M",
     );
   } else {
+    if (burnSubtitle) {
+      args.push(
+        "-filter_complex", `[0:v:0][0:${opts.subtitleStreamIndex}]overlay,format=yuv420p[v]`,
+        "-map", "[v]",
+        "-map", "0:a:0?",
+      );
+    }
     args.push(
       "-c:v", "libx264",
       "-preset", "veryfast",

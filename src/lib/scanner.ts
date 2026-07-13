@@ -15,6 +15,25 @@ function isVideo(name: string): boolean {
   return VIDEO_EXTS.includes(path.extname(name).toLowerCase());
 }
 
+const EXTRA_DIR_RE = /^(extras?|featurettes?|trailers?|samples?|behind[ ._-]*the[ ._-]*scenes)$/i;
+const EXTRA_FILE_RE = /(?:^|[ ._-])(sample|trailer|featurette|behind[ ._-]*the[ ._-]*scenes)(?:[ ._-]|$)/i;
+
+async function findMovieVideos(root: string, depth = 0): Promise<string[]> {
+  if (depth > 4) return [];
+  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  const videos: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (!EXTRA_DIR_RE.test(entry.name)) {
+        videos.push(...await findMovieVideos(path.join(root, entry.name), depth + 1));
+      }
+    } else if (entry.isFile() && isVideo(entry.name) && !EXTRA_FILE_RE.test(entry.name)) {
+      videos.push(path.join(root, entry.name));
+    }
+  }
+  return videos;
+}
+
 /** Clean a filename into a human title. */
 function cleanTitle(raw: string): { title: string; year: number | null } {
   let t = path.basename(raw, path.extname(raw));
@@ -91,6 +110,64 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
   const autoMatch = opts.autoMatch ?? section.autoMatch;
   const errors: string[] = [];
   let scanned = 0, added = 0, updated = 0, skipped = 0;
+  const discoveredMediaPaths = new Set<string>();
+
+  const scanMovie = async (rawTitle: string, file: string) => {
+    scanned++;
+    discoveredMediaPaths.add(path.resolve(file));
+    const { title, year } = cleanTitle(rawTitle);
+    const fileStat = await fs.stat(file);
+    const dates = sourceDates(fileStat);
+    const existing = await db.media.findFirst({
+      where: {
+        type: section.type,
+        sectionId: section.id,
+        OR: [
+          { filePath: file },
+          { title, ...(year ? { year } : {}) },
+        ],
+      },
+      orderBy: { filePath: "desc" },
+    });
+    if (existing) {
+      await db.media.update({
+        where: { id: existing.id },
+        data: { filePath: file, year: existing.year ?? year, ...dates },
+      });
+      await syncSubtitles(existing.id, null, file);
+      updated++;
+    } else {
+      const media = await db.media.create({
+        data: {
+          type: section.type,
+          title,
+          filePath: file,
+          year,
+          sortTitle: title.toLowerCase(),
+          sectionId: section.id,
+          category: section.category,
+          ...dates,
+        },
+      });
+      await syncSubtitles(media.id, null, file);
+      added++;
+    }
+    const target = await db.media.findFirst({
+      where: { type: section.type, sectionId: section.id, filePath: file },
+    });
+    if (!target) return;
+    await mergeSiblingYearStubs(target.id, title, year, section.type, section.id);
+    if (autoMatch && tmdbKey) {
+      await syncTmdbMetadataIfNeeded(
+        target,
+        title,
+        section.type as "MOVIE" | "TV",
+        year ?? undefined,
+        tmdbKey,
+        errors
+      );
+    }
+  };
 
   let entries: string[];
   try {
@@ -119,35 +196,7 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
 
     try {
       if (stat.isFile() && isVideo(entry)) {
-        scanned++;
-        const { title, year } = cleanTitle(entry);
-        const dates = sourceDates(stat);
-        const existing = await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } });
-        if (existing) {
-          await db.media.update({ where: { id: existing.id }, data: { filePath: entryPath, year: existing.year ?? year, ...dates } });
-          await syncSubtitles(existing.id, null, entryPath);
-          updated++;
-        } else {
-          const m = await db.media.create({
-            data: { type: section.type, title, filePath: entryPath, year, sortTitle: title.toLowerCase(), sectionId: section.id, category: section.category, ...dates },
-          });
-          await syncSubtitles(m.id, null, entryPath);
-          added++;
-        }
-        const target = existing ?? (await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } }));
-        if (target) {
-          await mergeSiblingYearStubs(target.id, title, year, section.type, section.id);
-        }
-        if (autoMatch && tmdbKey && target) {
-          await syncTmdbMetadataIfNeeded(
-            target,
-            title,
-            section.type as "MOVIE" | "TV",
-            year ?? undefined,
-            tmdbKey,
-            errors
-          );
-        }
+        await scanMovie(entry, entryPath);
         continue;
       }
 
@@ -169,7 +218,18 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
           scanned++;
           const { title, year } = cleanTitle(entry);
           const folderDates = sourceDates(stat);
-          let show = await db.media.findFirst({ where: { title, type: "TV", sectionId: section.id } });
+          discoveredMediaPaths.add(path.resolve(entryPath));
+          let show = await db.media.findFirst({
+            where: {
+              type: "TV",
+              sectionId: section.id,
+              OR: [
+                { filePath: entryPath },
+                { title, ...(year ? { year } : {}) },
+              ],
+            },
+            orderBy: { filePath: "desc" },
+          });
           if (!show) {
             show = await db.media.create({
               data: { type: "TV", title, filePath: entryPath, year, sortTitle: title.toLowerCase(), sectionId: section.id, category: section.category, ...folderDates },
@@ -232,6 +292,15 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
             }
           }
 
+          const episodePaths = epFiles.map((episode) => episode.file);
+          await db.episode.updateMany({
+            where: {
+              mediaId: show.id,
+              filePath: episodePaths.length ? { notIn: episodePaths } : { not: null },
+            },
+            data: { filePath: null },
+          });
+
           await db.episode.deleteMany({
             where: {
               mediaId: show.id,
@@ -246,38 +315,24 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
           continue;
         }
 
-        // Movie folder (single video inside)
-        if (allFiles.length > 0) {
-          scanned++;
-          const { title, year } = cleanTitle(entry);
-          const file = path.join(entryPath, allFiles[0]);
-          const fileStat = await fs.stat(file).catch(() => stat);
-          const dates = sourceDates(fileStat);
-          const existing = await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } });
-          if (existing) {
-            await db.media.update({ where: { id: existing.id }, data: { filePath: file, year: existing.year ?? year, ...dates } });
-            await syncSubtitles(existing.id, null, file);
-            updated++;
-          } else {
-            const m = await db.media.create({
-              data: { type: section.type, title, filePath: file, year, sortTitle: title.toLowerCase(), sectionId: section.id, category: section.category, ...dates },
-            });
-            await syncSubtitles(m.id, null, file);
-            added++;
+        // A movie folder may be a single title or a collection containing
+        // several title folders. Scan every real feature instead of choosing
+        // an arbitrary first file.
+        const movieFiles = await findMovieVideos(entryPath);
+        if (movieFiles.length > 0) {
+          const filesPerParent = new Map<string, number>();
+          for (const file of movieFiles) {
+            const parent = path.dirname(file);
+            filesPerParent.set(parent, (filesPerParent.get(parent) ?? 0) + 1);
           }
-          const target = existing ?? (await db.media.findFirst({ where: { title, type: section.type, sectionId: section.id } }));
-          if (target) {
-            await mergeSiblingYearStubs(target.id, title, year, section.type, section.id);
-          }
-          if (autoMatch && tmdbKey && target) {
-            await syncTmdbMetadataIfNeeded(
-              target,
-              title,
-              section.type as "MOVIE" | "TV",
-              year ?? undefined,
-              tmdbKey,
-              errors
-            );
+          for (const file of movieFiles) {
+            const parent = path.dirname(file);
+            const rawTitle = movieFiles.length === 1
+              ? entry
+              : parent !== entryPath && filesPerParent.get(parent) === 1
+                ? path.basename(parent)
+                : path.basename(file);
+            await scanMovie(rawTitle, file);
           }
         } else {
           skipped++;
@@ -285,6 +340,49 @@ export async function scanSection(opts: ScanOptions): Promise<ScanResult> {
       }
     } catch (e) {
       errors.push(`Error processing "${entry}": ${(e as Error).message}`);
+    }
+  }
+
+  const rowsByPath = await db.media.findMany({
+    where: { sectionId: section.id, filePath: { not: null } },
+    select: {
+      id: true,
+      filePath: true,
+      tmdbId: true,
+      posterUrl: true,
+      overview: true,
+    },
+  });
+  const pathGroups = new Map<string, typeof rowsByPath>();
+  for (const media of rowsByPath) {
+    if (!media.filePath) continue;
+    const key = path.resolve(media.filePath);
+    pathGroups.set(key, [...(pathGroups.get(key) ?? []), media]);
+  }
+  for (const duplicates of pathGroups.values()) {
+    if (duplicates.length < 2) continue;
+    duplicates.sort((a, b) =>
+      Number(!!b.tmdbId) * 4 + Number(!!b.posterUrl) * 2 + Number(!!b.overview) -
+      (Number(!!a.tmdbId) * 4 + Number(!!a.posterUrl) * 2 + Number(!!a.overview))
+    );
+    const [target, ...sources] = duplicates;
+    for (const source of sources) {
+      await mergeMediaRows(source.id, target.id);
+    }
+  }
+
+  const sectionRows = await db.media.findMany({
+    where: { sectionId: section.id, filePath: { not: null } },
+    select: { id: true, type: true, filePath: true },
+  });
+  for (const media of sectionRows) {
+    if (!media.filePath || discoveredMediaPaths.has(path.resolve(media.filePath))) continue;
+    await db.media.update({ where: { id: media.id }, data: { filePath: null } });
+    if (media.type === "TV") {
+      await db.episode.updateMany({
+        where: { mediaId: media.id, filePath: { not: null } },
+        data: { filePath: null },
+      });
     }
   }
 
@@ -319,7 +417,9 @@ async function syncSubtitles(mediaId: string, episodeId: string | null, videoPat
         label: s.label,
         filePath: s.filePath,
         format: s.format,
-        isDefault: i === 0,
+        streamIndex: s.streamIndex,
+        codec: s.codec,
+        isDefault: s.isDefault || (i === 0 && !found.some((track) => track.isDefault)),
       },
     });
   }

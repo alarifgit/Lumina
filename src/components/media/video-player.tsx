@@ -11,6 +11,7 @@ import {
   Rewind,
   FastForward,
   ChevronLeft,
+  ChevronRight,
   SkipForward,
   Loader2,
   Settings,
@@ -73,6 +74,7 @@ function PlayerSession({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [rateOpen, setRateOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<"root" | "speed">("root");
   const [ccOpen, setCcOpen] = useState(false);
   const [activeSubId, setActiveSubId] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
@@ -90,6 +92,7 @@ function PlayerSession({
   const d = detail.data;
   const closeMenus = useCallback(() => {
     setRateOpen(false);
+    setSettingsPage("root");
     setCcOpen(false);
   }, []);
 
@@ -118,6 +121,10 @@ function PlayerSession({
 
   // Subtitles for the currently-playing item (episode subs for TV, media subs for movies)
   const subtitles = currentEpisode?.subtitles ?? d?.subtitles ?? [];
+  const trackSubtitles = subtitles.filter((subtitle) => subtitle.delivery === "track");
+  const burnedSubtitle = subtitles.find(
+    (subtitle) => subtitle.id === activeSubId && subtitle.delivery === "burn-in"
+  );
 
   // Transcoding state.
   // `transcodeOverride` is null (auto), or a user's explicit choice (true/false).
@@ -158,8 +165,8 @@ function PlayerSession({
       : (d.streamUrl ?? `/api/media/${d.id}/stream`);
     if (!hasLocalTranscodeSource) return base;
     const sep = base.includes("?") ? "&" : "?";
-    return `${base}${sep}transcode=1${resumeAt > 1 ? `&t=${Math.floor(resumeAt)}` : ""}`;
-  }, [d, currentEpisode, hasLocalTranscodeSource, resumeAt]);
+    return `${base}${sep}transcode=1${resumeAt > 1 ? `&t=${Math.floor(resumeAt)}` : ""}${burnedSubtitle ? `&subtitleId=${encodeURIComponent(burnedSubtitle.id)}` : ""}`;
+  }, [d, currentEpisode, hasLocalTranscodeSource, resumeAt, burnedSubtitle]);
 
   const nextUp = useMemo(() => {
     if (!d || d.type !== "TV" || !currentEpisode) return null;
@@ -449,10 +456,16 @@ function PlayerSession({
   const applySubtitle = (id: string | null) => {
     const v = videoRef.current;
     if (!v) return;
+    const selected = subtitles.find((subtitle) => subtitle.id === id) ?? null;
     const tracks = v.textTracks;
-    for (let i = 0; i < tracks.length && i < subtitles.length; i++) {
-      // tracks[i] corresponds to subtitles[i] (same render order)
-      tracks[i].mode = subtitles[i].id === id ? "showing" : "disabled";
+    for (let i = 0; i < tracks.length && i < trackSubtitles.length; i++) {
+      tracks[i].mode = trackSubtitles[i].id === id ? "showing" : "disabled";
+    }
+    if (selected?.delivery === "burn-in" || burnedSubtitle) {
+      const nextStart = Math.max(0, current || resumeAt || 0);
+      setResumeAt(nextStart);
+      setTimelineOffset(nextStart);
+      setTranscodeOverride(true);
     }
     setActiveSubId(id);
   };
@@ -560,7 +573,7 @@ function PlayerSession({
             }
           }}
         >
-          {subtitles.map((s) => (
+          {trackSubtitles.map((s) => (
             <track
               key={s.id}
               kind="subtitles"
@@ -679,21 +692,8 @@ function PlayerSession({
           </span>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:flex-nowrap sm:gap-2">
-          <CtrlButton onClick={togglePlay} label={playing ? "Pause" : "Play"}>
-            {playing ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
-          </CtrlButton>
-          <CtrlButton onClick={stopPlayback} label="Stop">
-            <Square className="h-[18px] w-[18px] fill-current" />
-          </CtrlButton>
-          <CtrlButton onClick={() => seek(Math.max(0, current - 10))} label="Rewind 10s">
-            <Rewind className="h-5 w-5" />
-          </CtrlButton>
-          <CtrlButton onClick={() => seek(Math.min(duration, current + 10))} label="Forward 10s">
-            <FastForward className="h-5 w-5" />
-          </CtrlButton>
-
-          <div className="group/vol flex items-center gap-1">
+        <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-1 sm:gap-3">
+          <div className="group/vol hidden min-w-0 items-center gap-1 justify-self-start md:flex">
             <CtrlButton
               onClick={() => {
                 const v = videoRef.current;
@@ -727,71 +727,103 @@ function PlayerSession({
             />
           </div>
 
-          {nextUp && (
-            <CtrlButton onClick={playNext} label="Next episode">
-              <SkipForward className="h-5 w-5" />
+          <div className="flex items-center justify-center gap-0.5 sm:gap-1">
+            <CtrlButton onClick={() => seek(Math.max(0, current - 10))} label="Rewind 10 seconds">
+              <Rewind className="h-5 w-5" />
             </CtrlButton>
-          )}
+            <CtrlButton onClick={togglePlay} label={playing ? "Pause" : "Play"} emphasis>
+              {playing ? <Pause className="h-5 w-5 fill-current" /> : <Play className="ml-0.5 h-5 w-5 fill-current" />}
+            </CtrlButton>
+            <CtrlButton onClick={() => seek(Math.min(duration, current + 10))} label="Forward 10 seconds">
+              <FastForward className="h-5 w-5" />
+            </CtrlButton>
+            {nextUp && (
+              <CtrlButton onClick={playNext} label="Next episode">
+                <SkipForward className="h-5 w-5" />
+              </CtrlButton>
+            )}
+            <span className="hidden sm:inline-flex">
+              <CtrlButton onClick={stopPlayback} label="Stop playback">
+                <Square className="h-4 w-4 fill-current" />
+              </CtrlButton>
+            </span>
+          </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center justify-self-end gap-0.5 sm:gap-1">
             <div ref={rateMenuRef} className="relative">
-              <CtrlButton onClick={() => { setCcOpen(false); setRateOpen((o) => !o); }} label="Playback speed">
+              <CtrlButton
+                onClick={() => {
+                  setCcOpen(false);
+                  setSettingsPage("root");
+                  setRateOpen((open) => !open);
+                }}
+                label="Player settings"
+              >
                 <Settings className="h-5 w-5" />
               </CtrlButton>
               {rateOpen && (
-                <div className="lumina-panel absolute bottom-12 right-0 z-30 w-52 rounded-lg p-2 backdrop-blur-md">
-                  <div className="px-1 py-1 text-[10px] font-bold uppercase tracking-wider text-white/40">
-                    Playback speed
-                  </div>
-                  {RATES.map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => changeRate(r)}
-                      className={cn(
-                        "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
-                        r === rate && "bg-white/10 font-semibold text-white"
-                      )}
-                    >
-                      <span>{r === 1 ? "Normal" : `${r}x`}</span>
-                      {r === rate && <Check className="h-3.5 w-3.5 text-primary" />}
-                    </button>
-                  ))}
-                  {/* Compatibility mode toggle (only for local files) */}
-                  {!d?.streamUrl && !currentEpisode?.streamUrl && (
+                <div className="!absolute bottom-12 right-0 z-30 w-64 overflow-hidden rounded-lg border border-white/15 bg-[#0a111c]/96 p-2 shadow-2xl backdrop-blur-xl">
+                  {settingsPage === "root" ? (
                     <>
-                      <div className="my-2 border-t border-white/10" />
+                      <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white/45">
+                        Settings
+                      </div>
                       <button
-                        onClick={() => {
-                          setTranscode(!transcode);
-                          setRateOpen(false);
-                        }}
-                        className={cn(
-                          "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
-                          transcode && "bg-white/10 font-semibold text-white"
-                        )}
+                        onClick={() => setSettingsPage("speed")}
+                        className="flex w-full items-center justify-between rounded px-2 py-2 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
                       >
-                        <span>Compatibility mode</span>
-                        <span className={cn("text-xs", transcode ? "text-primary" : "text-white/40")}>
-                          {transcode ? "On" : "Off"}
+                        <span>Playback speed</span>
+                        <span className="flex items-center gap-1 text-xs text-white/50">
+                          {rate === 1 ? "Normal" : `${rate}x`}
+                          <ChevronRight className="h-4 w-4" />
                         </span>
                       </button>
-                      <p className="px-2 py-1 text-[10px] leading-tight text-white/40">
-                        Remuxes/transcodes to a browser-friendly format when the file can't play directly (AC3/DTS audio, MKV). Seeking restarts compatibility playback at the selected time.
-                      </p>
-                      {transcode && probe.data?.directPlayReason && (
-                        <p className="px-2 pb-1 text-[10px] leading-tight text-amber-300/80">
-                          Reason: {probe.data.directPlayReason}
-                        </p>
+                      {!d?.streamUrl && !currentEpisode?.streamUrl && (
+                        <>
+                          <div className="my-1 border-t border-white/10" />
+                          <button
+                            onClick={() => setTranscode(!transcode)}
+                            className="flex w-full items-center justify-between rounded px-2 py-2 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
+                          >
+                            <span>Compatibility mode</span>
+                            <span className={cn("text-xs", transcode ? "text-primary" : "text-white/45")}>
+                              {transcode ? "On" : "Auto"}
+                            </span>
+                          </button>
+                          {probe.data?.directPlayReason && (
+                            <p className="px-2 pb-1 text-[10px] leading-4 text-white/40">
+                              {probe.data.directPlayReason}
+                            </p>
+                          )}
+                        </>
                       )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setSettingsPage("root")}
+                        className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm font-semibold text-white hover:bg-white/10"
+                      >
+                        <ChevronLeft className="h-4 w-4" /> Playback speed
+                      </button>
+                      {RATES.map((option) => (
+                        <button
+                          key={option}
+                          onClick={() => changeRate(option)}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
+                            option === rate && "bg-white/10 font-semibold text-white"
+                          )}
+                        >
+                          <span>{option === 1 ? "Normal" : `${option}x`}</span>
+                          {option === rate && <Check className="h-3.5 w-3.5 text-primary" />}
+                        </button>
+                      ))}
                     </>
                   )}
                 </div>
               )}
             </div>
-            <span className="hidden text-xs font-medium text-white/60 sm:inline">
-              {rate !== 1 ? `${rate}x` : "1x"}
-            </span>
-
             {/* Subtitles / CC */}
             <div ref={ccMenuRef} className="relative">
               <CtrlButton
@@ -806,7 +838,7 @@ function PlayerSession({
                 <Captions className={cn("h-5 w-5", activeSubId && "text-primary")} />
               </CtrlButton>
               {ccOpen && subtitles.length > 0 && (
-                <div className="lumina-panel thin-scrollbar absolute bottom-12 right-0 z-30 max-h-[60vh] w-56 overflow-y-auto rounded-lg p-2 backdrop-blur-md">
+                <div className="thin-scrollbar !absolute bottom-12 right-0 z-30 max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-white/15 bg-[#0a111c]/96 p-2 shadow-2xl backdrop-blur-xl">
                   <div className="mb-1 px-2 text-[10px] font-bold uppercase tracking-wider text-white/40">Subtitles</div>
                   <button
                     onClick={() => { applySubtitle(null); setCcOpen(false); }}
@@ -830,7 +862,7 @@ function PlayerSession({
                       <span className="min-w-0">
                         <span className="block truncate">{s.label.replace(/\s*\(embedded\)\s*$/i, "")}</span>
                         <span className="block text-[10px] font-medium uppercase tracking-wide text-white/35">
-                          {s.source === "embedded" ? "embedded" : "sidecar"}{s.format !== "vtt" ? ` · ${s.format}` : ""}
+                          {s.source === "embedded" ? "embedded" : "sidecar"}{s.delivery === "burn-in" ? " · burn-in" : s.format !== "vtt" ? ` · ${s.format}` : ""}
                         </span>
                       </span>
                       {activeSubId === s.id && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
@@ -881,17 +913,22 @@ function CtrlButton({
   onClick,
   label,
   disabled,
+  emphasis = false,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   label: string;
   disabled?: boolean;
+  emphasis?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white/88 transition-colors hover:bg-white/12 hover:text-[var(--lumina-gold-bright)] disabled:cursor-not-allowed disabled:text-white/28 disabled:hover:bg-transparent"
+      className={cn(
+        "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/88 transition-colors hover:bg-white/12 hover:text-[var(--lumina-gold-bright)] disabled:cursor-not-allowed disabled:text-white/28 disabled:hover:bg-transparent",
+        emphasis && "h-11 w-11 bg-[var(--lumina-gold)] text-black shadow-[0_6px_22px_rgba(215,168,77,0.26)] hover:bg-[var(--lumina-gold-bright)] hover:text-black"
+      )}
       aria-label={label}
       title={label}
     >
