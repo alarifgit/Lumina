@@ -9,10 +9,7 @@ import {
   Home as HomeIcon,
   Tv,
   Bookmark,
-  Library,
   Settings,
-  ChevronDown,
-  LayoutGrid,
 } from "lucide-react";
 import { useMediaStore, type RouteKey } from "@/store/media-store";
 import { Logo } from "./logo";
@@ -23,35 +20,21 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-import { useGenres } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 const NAV: { key: RouteKey; label: string; icon: typeof HomeIcon }[] = [
   { key: "home", label: "Home", icon: HomeIcon },
   { key: "movies", label: "Movies", icon: Film },
   { key: "tv", label: "TV Shows", icon: Tv },
-  { key: "category", label: "Categories", icon: LayoutGrid },
   { key: "mylist", label: "My List", icon: Bookmark },
-  { key: "library", label: "Library", icon: Library },
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
 export function TopNav() {
   const route = useMediaStore((s) => s.route);
   const setRoute = useMediaStore((s) => s.setRoute);
-  const setGenreFilter = useMediaStore((s) => s.setGenreFilter);
-  const genreFilter = useMediaStore((s) => s.genreFilter);
   const searchQuery = useMediaStore((s) => s.searchQuery);
   const setSearch = useMediaStore((s) => s.setSearch);
-  const { data: genres } = useGenres();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -62,8 +45,8 @@ export function TopNav() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  const isActive = (key: RouteKey) => route === key;
-  const isCategoryActive = route === "category";
+  const isActive = (key: RouteKey) =>
+    route === key || (key === "settings" && route === "library");
 
   const navButtonClass = (active: boolean) =>
     cn(
@@ -95,56 +78,6 @@ export function TopNav() {
         <div className="ml-3 hidden items-center gap-1 rounded-full border border-[var(--line-soft)] bg-[#08111d]/62 p-1 shadow-[inset_0_1px_0_rgba(255,238,184,0.06)] md:flex">
           {NAV.map((item) => {
             const Icon = item.icon;
-            if (item.key === "category") {
-              return (
-                <div key={item.key} className="contents">
-                  <DropdownMenu onOpenChange={(open) => open && setRoute("category")}>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        onClick={() => setRoute("category")}
-                        className={navButtonClass(isCategoryActive)}
-                      >
-                        <Icon className="h-4 w-4" />
-                        Categories
-                        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="start"
-                      className="thin-scrollbar max-h-[70vh] w-56 overflow-y-auto"
-                    >
-                      <DropdownMenuLabel>Browse by genre</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onClick={() => setRoute("movies")}
-                        className="cursor-pointer"
-                      >
-                        <Film className="mr-2 h-4 w-4" /> All Movies
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => setRoute("tv")}
-                        className="cursor-pointer"
-                      >
-                        <Tv className="mr-2 h-4 w-4" /> All TV Shows
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      {(genres ?? []).map((g, i) => (
-                        <DropdownMenuItem
-                          key={`${g}-${i}`}
-                          onClick={() => setGenreFilter(g)}
-                          className={cn(
-                            "cursor-pointer justify-between",
-                            isCategoryActive && genreFilter === g && "bg-primary/10 text-primary"
-                          )}
-                        >
-                          {g}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              );
-            }
             return (
               <button
                 key={item.key}
@@ -237,26 +170,6 @@ export function TopNav() {
                     );
                   })}
                 </nav>
-                {/* mobile categories */}
-                <div className="mt-4">
-                  <p className="px-3 pb-1 text-xs font-bold uppercase tracking-wider text-foreground/40">
-                    Categories
-                  </p>
-                  <div className="flex flex-wrap gap-1.5 px-3">
-                    {(genres ?? []).slice(0, 16).map((g, i) => (
-                      <button
-                        key={`${g}-${i}`}
-                        onClick={() => {
-                          setGenreFilter(g);
-                          setMobileOpen(false);
-                        }}
-                        className="rounded-full bg-foreground/8 px-2.5 py-1 text-xs text-foreground/70 transition-colors hover:bg-primary/15 hover:text-primary"
-                      >
-                        {g}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
             </SheetContent>
           </Sheet>

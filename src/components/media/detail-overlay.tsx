@@ -18,6 +18,7 @@ import { useMediaStore } from "@/store/media-store";
 import { useMediaDetail, useToggleMyList, useBrowse, useSaveProgress } from "@/lib/queries";
 import { ProceduralPoster } from "./procedural-poster";
 import { ContentRow } from "./content-row";
+import { MediaActionsMenu } from "./media-actions-menu";
 import { formatRuntime, progressPercent } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
 
@@ -196,6 +197,13 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
             {d.inMyList ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {d.inMyList ? "In My List" : "My List"}
           </button>
+          <MediaActionsMenu
+            media={d}
+            onPlay={onPlay}
+            showPlay={false}
+            showMyList={false}
+            triggerClassName="h-10 w-10 rounded-lg border-foreground/20 bg-foreground/10 text-foreground hover:border-foreground/30 hover:bg-foreground/20"
+          />
         </div>
 
         {d.genres.length > 0 && (

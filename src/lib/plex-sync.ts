@@ -358,7 +358,12 @@ async function markLuminaWatched(target: { mediaId: string; episodeId?: string |
   if (existing) {
     await db.watchProgress.update({
       where: { id: existing.id },
-      data: { position: target.duration, duration: target.duration, completed: true },
+      data: {
+        position: target.duration,
+        duration: target.duration,
+        completed: true,
+        hiddenFromContinueWatching: false,
+      },
     });
   } else {
     await db.watchProgress.create({

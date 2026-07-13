@@ -83,7 +83,7 @@ export function HomeView({ onOpen, onPlay }: Props) {
             </h2>
             <div className="no-scrollbar flex gap-3 overflow-x-auto overflow-y-visible px-4 pb-6 pt-4 sm:gap-4 sm:px-6 lg:px-8">
               {data.continueWatching.map((m: MediaSummary) => (
-                <ContinueWatchingCard key={m.id} media={m} onPlay={onPlay} />
+                <ContinueWatchingCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} />
               ))}
             </div>
           </section>

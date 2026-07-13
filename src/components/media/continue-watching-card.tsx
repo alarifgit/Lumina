@@ -5,13 +5,15 @@ import { Play } from "lucide-react";
 import type { MediaSummary } from "@/lib/types";
 import { ProceduralPoster } from "./procedural-poster";
 import { formatRuntime, progressPercent } from "@/lib/media-utils";
+import { MediaActionsMenu } from "./media-actions-menu";
 
 interface Props {
   media: MediaSummary;
+  onOpen: (id: string) => void;
   onPlay: (mediaId: string, episodeId: string | null, startAt: number) => void;
 }
 
-export function ContinueWatchingCard({ media, onPlay }: Props) {
+export function ContinueWatchingCard({ media, onOpen, onPlay }: Props) {
   const [imgError, setImgError] = useState(false);
   const pct = progressPercent(media);
   const showImg = !!media.backdropUrl && !imgError;
@@ -61,6 +63,13 @@ export function ContinueWatchingCard({ media, onPlay }: Props) {
             <Play className="ml-0.5 h-5 w-5 fill-current" />
           </span>
         </div>
+        <MediaActionsMenu
+          media={media}
+          onOpen={onOpen}
+          onPlay={onPlay}
+          showRemoveFromContinueWatching
+          triggerClassName="absolute right-2 top-2 z-20 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/card:opacity-100 data-[state=open]:opacity-100"
+        />
         <div className="absolute inset-x-0 bottom-0 p-2.5">
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="truncate text-xs font-semibold text-white">{media.title}</span>

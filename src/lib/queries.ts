@@ -190,6 +190,8 @@ export function useToggleMyList() {
       qc.invalidateQueries({ queryKey: ["collections"] });
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse-infinite"], exact: false });
     },
   });
 }
@@ -204,6 +206,19 @@ export function useSaveProgress() {
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
       qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse-infinite"], exact: false });
+    },
+  });
+}
+
+export function useDismissContinueWatching() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { mediaId: string; episodeId?: string | null; duration?: number }) =>
+      fetchJson<{ ok: boolean }>("/api/progress/dismiss", post(body)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["progress"] });
+      qc.invalidateQueries({ queryKey: ["home"] });
     },
   });
 }
@@ -218,6 +233,7 @@ export function useScan() {
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["genres"] });
       qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse-infinite"], exact: false });
     },
   });
 }
@@ -273,6 +289,7 @@ export function usePlexSync() {
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
       qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse-infinite"], exact: false });
     },
   });
 }
@@ -295,7 +312,30 @@ export function useApplyMetadata() {
       qc.invalidateQueries({ queryKey: ["media"], exact: false });
       qc.invalidateQueries({ queryKey: ["home"] });
       qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["progress"] });
+      qc.invalidateQueries({ queryKey: ["collections"] });
       qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse-infinite"], exact: false });
+      qc.invalidateQueries({ queryKey: ["search"], exact: false });
+      qc.invalidateQueries({ queryKey: ["sections"] });
+    },
+  });
+}
+
+export function useRefreshMetadata() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (mediaId: string) =>
+      fetchJson<{ ok: boolean; media: MediaDetail }>("/api/metadata/refresh", post({ mediaId })),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["media"], exact: false });
+      qc.invalidateQueries({ queryKey: ["home"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["progress"] });
+      qc.invalidateQueries({ queryKey: ["collections"] });
+      qc.invalidateQueries({ queryKey: ["browse"], exact: false });
+      qc.invalidateQueries({ queryKey: ["browse-infinite"], exact: false });
+      qc.invalidateQueries({ queryKey: ["search"], exact: false });
       qc.invalidateQueries({ queryKey: ["sections"] });
     },
   });

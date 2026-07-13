@@ -4,6 +4,7 @@ import path from "path";
 import { db } from "@/lib/db";
 import { searchTmdb, applyTmdbMetadata, mergeMediaRows } from "@/lib/tmdb";
 import { findSubtitlesForVideo } from "@/lib/subtitles";
+import { splitTrailingReleaseYear } from "@/lib/title-parser";
 import type { ScanResult } from "@/lib/types";
 
 const VIDEO_EXTS = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".ts"];
@@ -19,12 +20,10 @@ function cleanTitle(raw: string): { title: string; year: number | null } {
   let t = path.basename(raw, path.extname(raw));
   t = t.replace(/[._]/g, " ");
   t = t.replace(/\b(1080p|720p|480p|2160p|4k|x264|x265|h264|h265|hevc|bluray|web-dl|webrip|web|brrip|bdrip|dvdrip|remux|hdr|atmos|aac|ac3|5\.1|2\.0|10bit|dual|audio)\b/gi, " ");
-  const yearMatch = t.match(/\((\d{4})\)|\b(19\d{2}|20\d{2})\b/);
-  const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
-  if (yearMatch?.[0]) t = t.replace(yearMatch[0], " ");
   t = t.replace(/\(|\)|\[|\]/g, " ");
   t = t.replace(/\s+/g, " ").trim();
-  return { title: t || raw, year };
+  const parsed = splitTrailingReleaseYear(t);
+  return { title: parsed.title || raw, year: parsed.year ?? null };
 }
 
 function sourceDates(stat: Stats) {

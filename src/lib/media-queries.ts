@@ -302,7 +302,7 @@ export async function getContinueWatching(
   const maxNextEpisodeAgeMs = Math.max(1, maxNextEpisodeAgeDays) * 24 * 60 * 60 * 1000;
 
   const inProgressRows = await db.watchProgress.findMany({
-    where: { completed: false },
+    where: { completed: false, hiddenFromContinueWatching: false },
     orderBy: { updatedAt: "desc" },
     take: limit * 3,
     include: { media: { include: mediaInclude }, episode: true },
@@ -334,6 +334,12 @@ export async function getContinueWatching(
   }
 
   if (candidates.length < limit) {
+    const dismissedRows = await db.watchProgress.findMany({
+      where: { hiddenFromContinueWatching: true },
+      select: { mediaId: true },
+      distinct: ["mediaId"],
+    });
+    const dismissedMediaIds = new Set(dismissedRows.map((row) => row.mediaId));
     const watchedEpisodeRows = await db.watchProgress.findMany({
       where: {
         completed: true,
@@ -357,7 +363,11 @@ export async function getContinueWatching(
     });
 
     for (const watched of watchedEpisodeRows) {
-      if (!watched.episode || seen.has(watched.mediaId)) continue;
+      if (
+        !watched.episode ||
+        seen.has(watched.mediaId) ||
+        dismissedMediaIds.has(watched.mediaId)
+      ) continue;
       const show = watched.media;
 
       const latestIndex = show.episodes.findIndex((ep) => ep.id === watched.episodeId);
@@ -744,15 +754,53 @@ export async function saveProgress(payload: {
 }) {
   const { mediaId, episodeId = null, position, duration, completed = false } = payload;
   const where = episodeId ? { mediaId, episodeId } : { mediaId, episodeId: null };
+  await db.watchProgress.updateMany({
+    where: { mediaId, hiddenFromContinueWatching: true },
+    data: { hiddenFromContinueWatching: false },
+  });
   const existing = await db.watchProgress.findFirst({ where });
   if (existing) {
     await db.watchProgress.update({
       where: { id: existing.id },
-      data: { position, duration, completed, updatedAt: new Date() },
+      data: {
+        position,
+        duration,
+        completed,
+        hiddenFromContinueWatching: false,
+        updatedAt: new Date(),
+      },
     });
   } else {
     await db.watchProgress.create({
       data: { mediaId, episodeId, position, duration, completed },
+    });
+  }
+  return { ok: true };
+}
+
+export async function dismissContinueWatching(input: {
+  mediaId: string;
+  episodeId?: string | null;
+  duration?: number;
+}) {
+  const { mediaId, episodeId = null, duration = 0 } = input;
+  const media = await db.media.findUnique({ where: { id: mediaId }, select: { id: true } });
+  if (!media) throw new Error("Media item not found");
+
+  const hidden = await db.watchProgress.updateMany({
+    where: { mediaId, completed: false },
+    data: { hiddenFromContinueWatching: true },
+  });
+  if (hidden.count === 0) {
+    await db.watchProgress.create({
+      data: {
+        mediaId,
+        episodeId,
+        position: 0,
+        duration: Math.max(0, duration),
+        completed: false,
+        hiddenFromContinueWatching: true,
+      },
     });
   }
   return { ok: true };

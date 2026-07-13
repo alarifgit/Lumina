@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { splitTrailingReleaseYear } from "@/lib/title-parser";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 export const TMDB_IMG = "https://image.tmdb.org/t/p";
@@ -32,11 +33,7 @@ async function tmdbFetch<T>(path: string, params: TmdbOptions, key: string): Pro
 }
 
 function extractSearchYear(raw: string, fallback?: number) {
-  const match = raw.match(/\(?\b(19\d{2}|20\d{2})\b\)?\s*$/);
-  return {
-    title: raw.replace(/\(?\b(19\d{2}|20\d{2})\b\)?\s*$/, "").replace(/\s+/g, " ").trim(),
-    year: fallback ?? (match ? Number(match[1]) : undefined),
-  };
+  return splitTrailingReleaseYear(raw, fallback);
 }
 
 export interface TmdbMatch {
@@ -133,7 +130,7 @@ export async function fetchTmdbTv(tmdbId: number, key?: string, seasonFilter?: n
   }[] = [];
   const wantedSeasons = seasonFilter ? new Set(seasonFilter) : null;
   for (const season of data.seasons || []) {
-    if (season.season_number === 0) continue; // skip specials by default
+    if (season.season_number === 0 && !wantedSeasons?.has(0)) continue;
     if (wantedSeasons && !wantedSeasons.has(season.season_number)) continue;
     const seasonData = await tmdbFetch<any>(`/tv/${tmdbId}/season/${season.season_number}`, {}, apiKey);
     for (const ep of seasonData.episodes || []) {
@@ -204,9 +201,12 @@ export async function applyTmdbMetadata(
   type: "MOVIE" | "TV",
   key?: string
 ) {
-  const existingMatch = await db.media.findFirst({
-    where: { tmdbId, type, id: { not: mediaId } },
+  const existingMatches = await db.media.findMany({
+    where: { tmdbId, id: { not: mediaId } },
   });
+  const existingMatch = existingMatches.find(
+    (media) => media.type.toUpperCase() === type
+  );
   if (existingMatch) {
     await mergeMediaRows(mediaId, existingMatch.id);
     mediaId = existingMatch.id;
@@ -231,6 +231,7 @@ export async function applyTmdbMetadata(
   await db.media.update({
     where: { id: mediaId },
     data: {
+      type,
       tmdbId: data.tmdbId,
       title: data.title,
       overview: data.overview,
@@ -268,12 +269,10 @@ export async function applyTmdbMetadata(
     const existingByKey = new Map(
       existing.map((e) => [`${e.seasonNumber}x${e.episodeNumber}`, e])
     );
-    // Clean up old TMDB-only rows from earlier builds while preserving local files.
-    const tmdbKeys = new Set(tv.episodes.map((e) => `${e.seasonNumber}x${e.episodeNumber}`));
+    // Clean up old TMDB-only rows from earlier builds. Local files always win,
+    // even when TMDB uses different numbering or has incomplete metadata.
     for (const e of existing) {
       if (!e.filePath && !e.streamUrl) {
-        await db.episode.delete({ where: { id: e.id } });
-      } else if (!tmdbKeys.has(`${e.seasonNumber}x${e.episodeNumber}`)) {
         await db.episode.delete({ where: { id: e.id } });
       }
     }
@@ -300,99 +299,104 @@ export async function applyTmdbMetadata(
 export async function mergeMediaRows(sourceId: string, targetId: string) {
   if (sourceId === targetId) return;
 
-  const [source, target] = await Promise.all([
-    db.media.findUnique({
-      where: { id: sourceId },
-      include: { episodes: true, progress: true, subtitles: true, collections: true },
-    }),
-    db.media.findUnique({
-      where: { id: targetId },
-      include: { episodes: true },
-    }),
-  ]);
-  if (!source || !target) return;
+  return db.$transaction(
+    async (tx) => {
+      const [source, target] = await Promise.all([
+        tx.media.findUnique({
+          where: { id: sourceId },
+          include: { episodes: true, progress: true, subtitles: true, collections: true },
+        }),
+        tx.media.findUnique({
+          where: { id: targetId },
+          include: { episodes: true },
+        }),
+      ]);
+      if (!source || !target) return;
 
-  await db.media.update({
-    where: { id: target.id },
-    data: {
-      filePath: target.filePath ?? source.filePath,
-      streamUrl: target.streamUrl ?? source.streamUrl,
-      sectionId: target.sectionId ?? source.sectionId,
-      category: target.category || source.category,
-      sortTitle: target.sortTitle ?? source.sortTitle,
-      sourceCreatedAt: target.sourceCreatedAt ?? source.sourceCreatedAt,
-      sourceModifiedAt: target.sourceModifiedAt ?? source.sourceModifiedAt,
-    },
-  });
-
-  for (const sourceEpisode of source.episodes) {
-    const targetEpisode = target.episodes.find(
-      (ep) =>
-        ep.seasonNumber === sourceEpisode.seasonNumber &&
-        ep.episodeNumber === sourceEpisode.episodeNumber
-    );
-    if (targetEpisode) {
-      await db.episode.update({
-        where: { id: targetEpisode.id },
+      await tx.media.update({
+        where: { id: target.id },
         data: {
-          filePath: targetEpisode.filePath ?? sourceEpisode.filePath,
-          streamUrl: targetEpisode.streamUrl ?? sourceEpisode.streamUrl,
-          sourceCreatedAt: targetEpisode.sourceCreatedAt ?? sourceEpisode.sourceCreatedAt,
-          sourceModifiedAt: targetEpisode.sourceModifiedAt ?? sourceEpisode.sourceModifiedAt,
+          filePath: target.filePath ?? source.filePath,
+          streamUrl: target.streamUrl ?? source.streamUrl,
+          sectionId: target.sectionId ?? source.sectionId,
+          category: target.category || source.category,
+          sortTitle: target.sortTitle ?? source.sortTitle,
+          sourceCreatedAt: target.sourceCreatedAt ?? source.sourceCreatedAt,
+          sourceModifiedAt: target.sourceModifiedAt ?? source.sourceModifiedAt,
         },
       });
-      await db.watchProgress.updateMany({
-        where: { episodeId: sourceEpisode.id },
-        data: { mediaId: target.id, episodeId: targetEpisode.id },
-      });
-      await db.subtitle.updateMany({
-        where: { episodeId: sourceEpisode.id },
-        data: { mediaId: target.id, episodeId: targetEpisode.id },
-      });
-      await db.episode.delete({ where: { id: sourceEpisode.id } });
-    } else {
-      await db.episode.update({
-        where: { id: sourceEpisode.id },
-        data: { mediaId: target.id },
-      });
-      await db.watchProgress.updateMany({
-        where: { episodeId: sourceEpisode.id },
-        data: { mediaId: target.id },
-      });
-      await db.subtitle.updateMany({
-        where: { episodeId: sourceEpisode.id },
-        data: { mediaId: target.id },
-      });
-    }
-  }
 
-  await db.watchProgress.updateMany({
-    where: { mediaId: source.id, episodeId: null },
-    data: { mediaId: target.id },
-  });
-  await db.subtitle.updateMany({
-    where: { mediaId: source.id, episodeId: null },
-    data: { mediaId: target.id },
-  });
+      for (const sourceEpisode of source.episodes) {
+        const targetEpisode = target.episodes.find(
+          (ep) =>
+            ep.seasonNumber === sourceEpisode.seasonNumber &&
+            ep.episodeNumber === sourceEpisode.episodeNumber
+        );
+        if (targetEpisode) {
+          await tx.episode.update({
+            where: { id: targetEpisode.id },
+            data: {
+              filePath: targetEpisode.filePath ?? sourceEpisode.filePath,
+              streamUrl: targetEpisode.streamUrl ?? sourceEpisode.streamUrl,
+              sourceCreatedAt: targetEpisode.sourceCreatedAt ?? sourceEpisode.sourceCreatedAt,
+              sourceModifiedAt: targetEpisode.sourceModifiedAt ?? sourceEpisode.sourceModifiedAt,
+            },
+          });
+          await tx.watchProgress.updateMany({
+            where: { episodeId: sourceEpisode.id },
+            data: { mediaId: target.id, episodeId: targetEpisode.id },
+          });
+          await tx.subtitle.updateMany({
+            where: { episodeId: sourceEpisode.id },
+            data: { mediaId: target.id, episodeId: targetEpisode.id },
+          });
+          await tx.episode.delete({ where: { id: sourceEpisode.id } });
+        } else {
+          await tx.episode.update({
+            where: { id: sourceEpisode.id },
+            data: { mediaId: target.id },
+          });
+          await tx.watchProgress.updateMany({
+            where: { episodeId: sourceEpisode.id },
+            data: { mediaId: target.id },
+          });
+          await tx.subtitle.updateMany({
+            where: { episodeId: sourceEpisode.id },
+            data: { mediaId: target.id },
+          });
+        }
+      }
 
-  for (const item of source.collections) {
-    const exists = await db.collectionItem.findUnique({
-      where: {
-        collectionId_mediaId: {
-          collectionId: item.collectionId,
-          mediaId: target.id,
-        },
-      },
-    });
-    if (exists) {
-      await db.collectionItem.delete({ where: { id: item.id } });
-    } else {
-      await db.collectionItem.update({
-        where: { id: item.id },
+      await tx.watchProgress.updateMany({
+        where: { mediaId: source.id, episodeId: null },
         data: { mediaId: target.id },
       });
-    }
-  }
+      await tx.subtitle.updateMany({
+        where: { mediaId: source.id, episodeId: null },
+        data: { mediaId: target.id },
+      });
 
-  await db.media.delete({ where: { id: source.id } });
+      for (const item of source.collections) {
+        const exists = await tx.collectionItem.findUnique({
+          where: {
+            collectionId_mediaId: {
+              collectionId: item.collectionId,
+              mediaId: target.id,
+            },
+          },
+        });
+        if (exists) {
+          await tx.collectionItem.delete({ where: { id: item.id } });
+        } else {
+          await tx.collectionItem.update({
+            where: { id: item.id },
+            data: { mediaId: target.id },
+          });
+        }
+      }
+
+      await tx.media.delete({ where: { id: source.id } });
+    },
+    { maxWait: 5_000, timeout: 60_000 }
+  );
 }

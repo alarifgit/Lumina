@@ -22,7 +22,7 @@ export function Footer() {
           {stats?.lastScan ? (
             <span>Last scan: {new Date(stats.lastScan).toLocaleDateString()}</span>
           ) : (
-            <span>Point Lumina at your media in Library →</span>
+            <span>Add media paths in Settings</span>
           )}
         </div>
       </div>

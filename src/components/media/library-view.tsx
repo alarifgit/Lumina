@@ -10,19 +10,16 @@ import {
   Database,
   Film,
   FolderSearch,
-  HardDrive,
+  Library,
   Loader2,
-  Network,
   Plus,
   RefreshCw,
   ScanLine,
   Search,
   Server,
-  ShieldCheck,
   Sparkles,
   Trash2,
   Tv,
-  Users,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -58,20 +55,15 @@ import {
 } from "@/components/ui/select";
 import type { LibrarySectionInfo, MediaType, PlexSyncDirection, PlexSyncResult, ScanResult } from "@/lib/types";
 import { formatRuntime } from "@/lib/media-utils";
+import { splitTrailingReleaseYear } from "@/lib/title-parser";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV = [
-  { label: "Library Paths", icon: FolderSearch, href: "#library-paths" },
-  { label: "Metadata Providers", icon: WandSparkles, href: "#metadata-providers" },
-  { label: "Scanning & Indexing", icon: RefreshCw, href: "#scanning-and-indexing" },
-  { label: "Plex Sync", icon: Server, href: "#plex-sync" },
-  { label: "Playback & Transcoding", icon: Cpu, href: "#playback-and-transcoding" },
-  { label: "Media Sources", icon: Database },
-  { label: "Watch Folders", icon: ScanLine },
-  { label: "Network Shares", icon: Network },
-  { label: "Permissions", icon: ShieldCheck },
-  { label: "Users & Access", icon: Users },
-  { label: "Storage Health", icon: HardDrive },
+  { label: "Media inventory", icon: Library, route: "library" as const, href: null },
+  { label: "Library paths", icon: FolderSearch, route: null, href: "#library-paths" },
+  { label: "Metadata & scanning", icon: WandSparkles, route: null, href: "#metadata-providers" },
+  { label: "Plex sync", icon: Server, route: null, href: "#plex-sync" },
+  { label: "Playback & transcoding", icon: Cpu, route: null, href: "#playback-and-transcoding" },
 ];
 
 type MetadataResult = {
@@ -273,14 +265,15 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   };
 
   const onOpenManualMatch = async (media: MatchTarget) => {
+    const parsed = splitTrailingReleaseYear(media.title, media.year ?? undefined);
     setMatchTarget(media);
-    setMatchQuery(media.title);
+    setMatchQuery(parsed.title);
     setMatchResults([]);
     try {
       const { results } = await metaSearch.mutateAsync({
-        title: media.title,
+        title: parsed.title,
         type: media.type,
-        year: media.year ?? undefined,
+        year: parsed.year,
       });
       setMatchResults(results);
     } catch (e) {
@@ -290,11 +283,12 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
 
   const onSearchManualMatch = async () => {
     if (!matchTarget || !matchQuery.trim()) return;
+    const parsed = splitTrailingReleaseYear(matchQuery, matchTarget.year ?? undefined);
     try {
       const { results } = await metaSearch.mutateAsync({
-        title: matchQuery,
+        title: parsed.title,
         type: matchTarget.type,
-        year: matchTarget.year ?? undefined,
+        year: parsed.year,
       });
       setMatchResults(results);
     } catch (e) {
@@ -418,7 +412,6 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
         <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
           <SettingsSidebar />
           <div className="min-w-0 space-y-5">
-            <TranscodingPanel stats={stats} loading={statsLoading} />
             <LibraryPathsPanel
               sections={sections}
               loading={sectionsLoading}
@@ -482,6 +475,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
               onPreview={onPreviewPlexSync}
               onApply={onApplyPlexSync}
             />
+            <TranscodingPanel stats={stats} loading={statsLoading} />
           </div>
         </div>
       )}
@@ -502,7 +496,7 @@ function PageHero({ isSettings, stats }: { isSettings: boolean; stats?: { mediaC
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-foreground/68 sm:text-base">
           {isSettings
-            ? "Configure paths, sources, watch folders, network shares, permissions, metadata, scanning, playback, and storage health."
+            ? "Configure libraries, metadata, scanning, Plex sync, playback, and transcoding."
             : `${(stats?.mediaCount ?? 0).toLocaleString()} scanned titles, organized for discovery and metadata care without exposing raw admin controls.`}
         </p>
       </div>
@@ -524,41 +518,33 @@ function StatsGrid({ stats, loading }: { stats?: any; loading: boolean }) {
 }
 
 function SettingsSidebar() {
+  const setRoute = useMediaStore((s) => s.setRoute);
+
   return (
     <aside className="lumina-panel sticky top-20 h-fit rounded-xl p-3">
       <div className="px-2 pb-3 pt-1">
         <p className="label-eyebrow text-primary/90">Configuration</p>
       </div>
       <nav className="space-y-1" aria-label="Settings sections">
-        {SETTINGS_NAV.map((item, index) => {
+        {SETTINGS_NAV.map((item) => {
           const Icon = item.icon;
           const className = cn(
-            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors",
-            item.href
-              ? index === 0
-                ? "bg-primary/12 text-primary ring-1 ring-primary/25"
-                : "text-foreground/68 hover:bg-white/[0.055] hover:text-foreground"
-              : "cursor-not-allowed text-foreground/34"
+            "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold text-foreground/68 transition-colors hover:bg-white/[0.055] hover:text-foreground"
           );
           const content = (
             <>
               <Icon className="h-4 w-4" />
               <span className="min-w-0 flex-1">{item.label}</span>
-              {!item.href && (
-                <span className="rounded border border-white/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-foreground/35">
-                  Later
-                </span>
-              )}
             </>
           );
-          return item.href ? (
+          return item.route ? (
+            <button key={item.label} type="button" className={className} onClick={() => setRoute(item.route)}>
+              {content}
+            </button>
+          ) : (
             <a key={item.label} href={item.href} className={className}>
               {content}
             </a>
-          ) : (
-            <div key={item.label} className={className} aria-disabled="true">
-              {content}
-            </div>
           );
         })}
       </nav>

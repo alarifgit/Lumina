@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { applyTmdbMetadata } from "@/lib/tmdb";
 import { getMediaDetail } from "@/lib/media-queries";
 
@@ -22,6 +23,12 @@ export async function POST(req: Request) {
     const media = await getMediaDetail(result.mediaId);
     return NextResponse.json({ ok: true, media });
   } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return NextResponse.json(
+        { error: "That TMDB title is already attached to another library item. Rescan the library, then try the match again." },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }
