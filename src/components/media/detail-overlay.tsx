@@ -34,7 +34,7 @@ export function DetailOverlay({ onPlay }: Props) {
     <Dialog open={!!id} onOpenChange={(o) => !o && close()}>
       <DialogContent
         showCloseButton={false}
-        className="max-h-[94vh] max-w-5xl gap-0 overflow-hidden rounded-2xl border-border/60 bg-card p-0 sm:max-w-5xl"
+        className="flex max-h-[94dvh] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden rounded-lg border-white/14 bg-[#1b303b]/96 p-0 shadow-[0_30px_100px_rgba(7,23,32,0.55)] backdrop-blur-2xl sm:w-[min(92vw,100rem)] sm:max-w-none"
       >
         {id ? (
           <DetailContent key={id} id={id} onPlay={onPlay} />
@@ -115,7 +115,7 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
     <>
       <DialogTitle className="sr-only">{d.title}</DialogTitle>
       {/* hero */}
-      <div className="relative aspect-video w-full overflow-hidden">
+      <div className="relative h-[clamp(260px,46vh,620px)] w-full shrink-0 overflow-hidden">
         <BackdropArea d={d} />
         <div className="absolute inset-0 bg-gradient-to-t from-card via-card/30 to-transparent" />
         <button
@@ -146,7 +146,7 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
       </div>
 
       {/* body */}
-      <div className="thin-scrollbar max-h-[calc(94vh-28vw)] overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+      <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           {d.rating != null && (
             <span className="inline-flex items-center gap-1 font-semibold text-foreground">

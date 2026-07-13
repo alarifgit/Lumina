@@ -4,8 +4,6 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 const BRAND_ROOT = "/brand/lumina/codex-logo-pack/lumina_codex_logo_pack";
-const WORDMARK_GOLD = `${BRAND_ROOT}/transparent/lumina-primary-wordmark-gold-transparent.png`;
-const WORDMARK_COMPACT = `${BRAND_ROOT}/transparent/lumina-wordmark-white-transparent.png`;
 const EMBLEM_MINIMAL = `${BRAND_ROOT}/transparent/lumina-small-icon-gold-transparent-512.png`;
 const EMBLEM_RADIANT = `${BRAND_ROOT}/transparent/lumina-emblem-gold-transparent-512.png`;
 
@@ -22,20 +20,19 @@ export function Logo({
   const emblemPx = size === "sm" ? 30 : size === "lg" ? 54 : 40;
 
   if (showWord) {
-    const width = size === "sm" ? 118 : size === "lg" ? 176 : 148;
-    const height = size === "sm" ? 36 : size === "lg" ? 54 : 44;
     return (
-      <img
-        src={size === "sm" ? WORDMARK_COMPACT : WORDMARK_GOLD}
-        alt="Lumina"
-        width={width}
-        height={height}
+      <span
+        aria-label="Lumina"
         className={cn(
-          "select-none object-contain object-left drop-shadow-[0_0_18px_rgba(238,209,132,0.18)]",
+          "select-none font-sans font-semibold leading-none tracking-[-0.045em] text-white",
+          size === "sm" && "text-xl",
+          size === "md" && "text-2xl",
+          size === "lg" && "text-[1.75rem]",
           className
         )}
-        style={{ width, height: "auto" }}
-      />
+      >
+        Lumina<span className="text-primary">.</span>
+      </span>
     );
   }
 
@@ -63,14 +60,13 @@ export function LogoLockup({
   width?: number;
 }) {
   return (
-    <img
-      src={WORDMARK_GOLD}
-      alt="Lumina"
-      width={width}
-      height={Math.round(width * 0.3)}
-      className={cn("object-contain drop-shadow-[0_0_24px_rgba(238,209,132,0.2)]", className)}
-      style={{ width, height: "auto" }}
-    />
+    <span
+      aria-label="Lumina"
+      className={cn("inline-block font-sans text-5xl font-semibold leading-none tracking-[-0.055em] text-white", className)}
+      style={{ fontSize: `clamp(2.5rem, ${Math.max(3, width / 42)}vw, 5rem)` }}
+    >
+      Lumina<span className="text-primary">.</span>
+    </span>
   );
 }
 

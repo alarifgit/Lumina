@@ -112,7 +112,7 @@ export function MediaActionsMenu({
           <button
             type="button"
             className={cn(
-              "inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-black/50 text-white backdrop-blur transition-colors hover:border-white hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+              "inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/16 bg-[var(--lumina-ink)]/72 text-white shadow-sm backdrop-blur-xl transition-colors hover:border-white/32 hover:bg-[var(--lumina-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
               triggerClassName
             )}
             onClick={(event) => event.stopPropagation()}

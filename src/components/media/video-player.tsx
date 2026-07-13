@@ -460,6 +460,18 @@ function PlayerSession({
     const tracks = v.textTracks;
     for (let i = 0; i < tracks.length && i < trackSubtitles.length; i++) {
       tracks[i].mode = trackSubtitles[i].id === id ? "showing" : "disabled";
+      if (trackSubtitles[i].id === id) {
+        const keepCuesClearOfTransport = () => {
+          const cues = tracks[i].cues;
+          if (!cues) return;
+          for (let cueIndex = 0; cueIndex < cues.length; cueIndex++) {
+            const cue = cues[cueIndex];
+            if (cue instanceof VTTCue && cue.snapToLines) cue.line = -4;
+          }
+        };
+        keepCuesClearOfTransport();
+        window.setTimeout(keepCuesClearOfTransport, 250);
+      }
     }
     if (selected?.delivery === "burn-in" || burnedSubtitle) {
       const nextStart = Math.max(0, current || resumeAt || 0);
@@ -501,7 +513,10 @@ function PlayerSession({
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_18%,rgba(12,26,45,0.58),transparent_36%),radial-gradient(circle_at_18%_100%,rgba(217,170,76,0.12),transparent_34%),linear-gradient(180deg,#08111d_0%,#030405_100%)] p-4 sm:p-6"
+      className={cn(
+        "fixed inset-0 z-50 isolate flex items-center justify-center overflow-hidden bg-[#1b303b]",
+        fullscreen ? "p-0" : "p-4 sm:p-6"
+      )}
       onMouseMove={flashControls}
       onClick={(e) => {
         if (e.target === e.currentTarget || e.target === videoRef.current) togglePlay();
@@ -509,12 +524,20 @@ function PlayerSession({
       role="dialog"
       aria-label="Video player"
     >
+      {(currentEpisode?.stillUrl || d?.backdropUrl) && (
+        <img
+          src={currentEpisode?.stillUrl || d?.backdropUrl || ""}
+          alt=""
+          className="pointer-events-none absolute -inset-10 -z-10 h-[calc(100%+5rem)] w-[calc(100%+5rem)] scale-110 object-cover opacity-20 blur-3xl saturate-75"
+        />
+      )}
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(145deg,rgba(91,121,135,0.54),rgba(31,50,60,0.82)_54%,rgba(15,29,37,0.94))]" />
       <div
         className={cn(
           "relative flex items-center justify-center overflow-hidden bg-black transition-all duration-300",
           fullscreen
             ? "h-full w-full"
-            : "h-[72vh] max-h-[860px] w-[min(94vw,1520px)] rounded-[28px] border border-white/10 shadow-[0_32px_120px_rgba(0,0,0,0.72),0_0_0_1px_rgba(244,216,139,0.11)]"
+            : "h-[min(88vh,900px)] w-[min(96vw,1600px)] rounded-lg ring-1 ring-white/18 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_34px_120px_rgba(10,26,34,0.62)]"
         )}
       >
       {source && (
@@ -595,7 +618,7 @@ function PlayerSession({
           Auto-switches to the transcoded stream (ffmpeg → AAC) so playback continues with sound. */}
       {audioError && !audioHintDismissed && (
         <div className="absolute inset-x-0 top-5 z-20 mx-auto max-w-md px-4">
-          <div className="flex items-start gap-3 rounded-2xl border border-amber-500/35 bg-black/72 p-3 text-sm text-white shadow-2xl backdrop-blur-xl">
+          <div className="flex items-start gap-3 rounded-lg border border-white/16 bg-[#1b303b]/88 p-3 text-sm text-white shadow-2xl backdrop-blur-2xl">
             <VolumeX className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
             <div className="flex-1">
               <p className="font-semibold text-amber-300">Switched to compatibility mode</p>
@@ -630,25 +653,32 @@ function PlayerSession({
         </div>
       )}
 
-      {/* top bar */}
       <div
         className={cn(
-          "absolute left-4 right-4 top-4 z-10 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/28 p-3 shadow-[0_18px_48px_rgba(0,0,0,0.28)] backdrop-blur-xl transition-opacity duration-300",
+          "pointer-events-none absolute inset-x-0 top-0 z-[5] h-40 bg-gradient-to-b from-[#071720]/78 via-[#071720]/26 to-transparent transition-opacity duration-300",
           showControls ? "opacity-100" : "opacity-0"
+        )}
+      />
+
+      {/* Quiet title overlay: the film remains the dominant surface. */}
+      <div
+        className={cn(
+          "absolute left-5 right-5 top-5 z-10 flex items-center gap-3 transition-opacity duration-300 sm:left-7 sm:right-7 sm:top-7",
+          showControls ? "opacity-100" : "pointer-events-none opacity-0"
         )}
       >
         <button
           onClick={close}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/8 text-white backdrop-blur transition-colors hover:bg-white/16"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/14 bg-[#294553]/48 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-xl transition-colors hover:bg-white/16"
           aria-label="Back"
         >
           <ChevronLeft className="h-6 w-6" />
         </button>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <div className="truncate text-lg font-semibold text-white sm:text-2xl">{titleText}</div>
+            <div className="truncate text-lg font-semibold tracking-[-0.02em] text-white sm:text-xl">{titleText}</div>
             {transcode && (
-              <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-300">
+              <span className="shrink-0 rounded border border-white/12 bg-white/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary">
                 Compat
               </span>
             )}
@@ -660,7 +690,7 @@ function PlayerSession({
       {!playing && !buffering && !ended && source && (
         <button
           onClick={togglePlay}
-          className="absolute z-10 inline-flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_0_44px_rgba(245,182,42,0.32)] transition-transform hover:scale-110"
+          className="absolute z-10 inline-flex h-16 w-16 items-center justify-center rounded-full border border-white/18 bg-[var(--lumina-ink)] text-white shadow-[0_16px_46px_rgba(7,23,32,0.40)] transition-transform duration-200 hover:scale-105 active:scale-95"
           aria-label="Play"
         >
           <Play className="ml-1 h-7 w-7 fill-current" />
@@ -670,12 +700,11 @@ function PlayerSession({
       {/* bottom controls */}
       <div
         className={cn(
-          "absolute inset-x-3 bottom-3 z-10 transition-opacity duration-300 sm:inset-x-5 sm:bottom-5",
-          showControls ? "opacity-100" : "opacity-0"
+          "absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-[#071720]/96 via-[#071720]/68 to-transparent px-5 pb-5 pt-16 transition-opacity duration-300 sm:px-7 sm:pb-7 sm:pt-20",
+          showControls ? "opacity-100" : "pointer-events-none opacity-0"
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="rounded-2xl border border-white/12 bg-black/58 px-3 py-3 shadow-[0_20px_80px_rgba(0,0,0,0.46)] backdrop-blur-2xl sm:px-4">
         {/* Seek bar — Plex-style: thin gold progress over a lighter buffered region. */}
         <div className="mb-1 flex items-center gap-3">
           <span className="w-12 shrink-0 text-right text-xs font-medium tabular-nums text-white/68">
@@ -693,7 +722,7 @@ function PlayerSession({
         </div>
 
         <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-1 sm:gap-3">
-          <div className="group/vol hidden min-w-0 items-center gap-1 justify-self-start md:flex">
+          <div className="group/vol hidden min-w-0 items-center gap-1 justify-self-start pl-10 md:flex">
             <CtrlButton
               onClick={() => {
                 const v = videoRef.current;
@@ -762,7 +791,7 @@ function PlayerSession({
                 <Settings className="h-5 w-5" />
               </CtrlButton>
               {rateOpen && (
-                <div className="!absolute bottom-12 right-0 z-30 w-64 overflow-hidden rounded-lg border border-white/15 bg-[#0a111c]/96 p-2 shadow-2xl backdrop-blur-xl">
+                <div className="!absolute bottom-12 right-0 z-30 w-64 overflow-hidden rounded-lg border border-white/16 bg-[#1b303b]/92 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_22px_54px_rgba(7,23,32,0.44)] backdrop-blur-2xl">
                   {settingsPage === "root" ? (
                     <>
                       <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white/45">
@@ -838,7 +867,7 @@ function PlayerSession({
                 <Captions className={cn("h-5 w-5", activeSubId && "text-primary")} />
               </CtrlButton>
               {ccOpen && subtitles.length > 0 && (
-                <div className="thin-scrollbar !absolute bottom-12 right-0 z-30 max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-white/15 bg-[#0a111c]/96 p-2 shadow-2xl backdrop-blur-xl">
+                <div className="thin-scrollbar !absolute bottom-12 right-0 z-30 max-h-[60vh] w-56 overflow-y-auto rounded-lg border border-white/16 bg-[#1b303b]/92 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_22px_54px_rgba(7,23,32,0.44)] backdrop-blur-2xl">
                   <div className="mb-1 px-2 text-[10px] font-bold uppercase tracking-wider text-white/40">Subtitles</div>
                   <button
                     onClick={() => { applySubtitle(null); setCcOpen(false); }}
@@ -901,7 +930,6 @@ function PlayerSession({
             </CtrlButton>
           </div>
         </div>
-        </div>
       </div>
       </div>
     </div>
@@ -926,8 +954,8 @@ function CtrlButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/88 transition-colors hover:bg-white/12 hover:text-[var(--lumina-gold-bright)] disabled:cursor-not-allowed disabled:text-white/28 disabled:hover:bg-transparent",
-        emphasis && "h-11 w-11 bg-[var(--lumina-gold)] text-black shadow-[0_6px_22px_rgba(215,168,77,0.26)] hover:bg-[var(--lumina-gold-bright)] hover:text-black"
+        "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/88 transition-[color,background-color,transform] duration-200 hover:bg-white/12 hover:text-white active:scale-95 disabled:cursor-not-allowed disabled:text-white/28 disabled:hover:bg-transparent",
+        emphasis && "h-11 w-11 border border-white/16 bg-[var(--lumina-ink)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_8px_24px_rgba(7,23,32,0.30)] hover:bg-[#102a37]"
       )}
       aria-label={label}
       title={label}
@@ -938,7 +966,7 @@ function CtrlButton({
 }
 
 /**
- * Plex-style seek bar: a thin gold progress fill sitting over a lighter
+ * A thin gold progress fill sitting over a lighter
  * buffered-ahead region, with a larger thumb on hover. Click/drag to seek.
  * Keeps a hidden native range input for accessibility + keyboard arrow seeking.
  */
@@ -982,7 +1010,7 @@ function PlexSeekbar({
           style={{
             width: `${pct}%`,
             background: "var(--lumina-gold)",
-            boxShadow: "0 0 8px rgba(245,182,42,0.5)",
+            boxShadow: "none",
           }}
         />
         {/* thumb */}

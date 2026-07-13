@@ -1,10 +1,75 @@
 # Lumina — Personal Media Streaming Frontend · Worklog
 
+## Current Handoff
+
+Updated: 2026-07-13. This section,
+[Detailed Current Handoff](#detailed-current-handoff), and
+[Prioritized Roadmap](#prioritized-roadmap) are authoritative. Every task log
+or old design/API specification is historical context only.
+
+### Continue Here
+
+1. Read `AGENTS.md`, this section, and
+   [Detailed Current Handoff](#detailed-current-handoff); then inspect
+   `git status`, `git diff --stat`, and the complete diff. Never reset or
+   discard the current working tree.
+2. Do not begin another broad visual redesign. The user likes the current
+   direction; the uncommitted responsive pass needs real-library verification.
+3. Before any production rescan, implement the P0 scanner safety and diagnostic
+   gate in [Prioritized Roadmap](#prioritized-roadmap). The audit found
+   confirmed destructive and path-collision risks in the current scanner.
+4. Build on the capable host, transfer/import the image, preserve the exact NAS
+   `/data` and media mounts, and follow `DEPLOYMENT.md` for verification and
+   rollback.
+
+### Current State
+
+- Branch: `main`; last commit: `853e156`, also present at `origin/main`.
+- The working tree contains substantial intentional, locally validated
+  redesign work plus documentation changes. `scripts/seed.ts` appears modified
+  because of line-ending/index state but currently has no content diff; do not
+  fold an accidental normalization into the feature commit.
+- The local tree contains the artwork-led smoked-glass redesign and responsive
+  follow-up: a fluid 3200px shell, proportional ultrawide cards/heroes, aligned
+  full-width scrolled navigation, persistent shelf controls, stable detail
+  scrolling, and the redesigned player.
+- The currently deployed service is `http://10.41.6.100:3422`; that image
+  predates the local responsive follow-up.
+- The last reported deployed counts were 475 Lumina movies vs 478 NAS movies,
+  and 181 Lumina TV shows vs 180 NAS TV directories. Both anime counts matched.
+  Those differences are unresolved, not proof that the local scanner fixes
+  them.
+- Lint, TypeScript, Prisma validation/generation, and `build:docker` passed on
+  2026-07-13 against the current code tree. Local fixture-browser checks passed
+  at 390px, 1024px, 1694px, and 3440px.
+- Docker and FFmpeg are unavailable on this development host. Container
+  startup, production scanning, hardware acceleration, embedded subtitle
+  extraction, and bitmap subtitle burn-in remain unverified here.
+
+### Verification Vocabulary
+
+- **Compile-validated**: lint, TypeScript, Prisma validation/generation, and the
+  production build pass.
+- **Fixture-browser-validated**: a controlled local database was exercised in a
+  browser at named viewport sizes.
+- **Deployment-verified**: the transferred image started on the NAS with the
+  preserved database/mounts and passed real-library checks.
+
+Do not promote compile- or fixture-validated behavior to deployment-verified.
+
 Project: A YouTube/Apple TV/Plex/Netflix-like frontend for a personal movie + TV library.
-Brand name: **Lumina** (luminous cinema light). Warm amber/gold accent on near-black.
+Brand name: **Lumina** (luminous cinema light). Artwork-led steel-blue glass,
+porcelain type, ink controls, and restrained warm-gold state accents.
 Single user-visible route: `/` (everything else is client-side view state via Zustand + overlays).
 
 ---
+
+## Historical Bootstrap Notes — Non-Authoritative
+
+Everything from this heading until `Detailed Current Handoff` describes an
+earlier bootstrap state. It is retained for history and must not be used as the
+current API, component, Docker, or design specification.
+
 Task ID: 1
 Agent: orchestrator (main)
 Task: Foundation — schema, types, store, theme, branding.
@@ -22,11 +87,11 @@ Stage Summary:
 
 ---
 
-## API CONTRACT (both backend & frontend MUST follow exactly)
+### Historical API Contract — Obsolete
 
 All responses are JSON. Media image fields are full URLs (TMDB CDN: `https://image.tmdb.org/t/p/<size><path>`). Procedural poster fallback used client-side when `posterUrl` is null.
 
-### GET `/api/library/home` → `HomeData`
+#### Historical: GET `/api/library/home` → `HomeData`
 ```
 { featured: MediaSummary[], continueWatching: MediaSummary[], rows: ContentRow[] }
 ```
@@ -34,39 +99,39 @@ All responses are JSON. Media image fields are full URLs (TMDB CDN: `https://ima
 - `continueWatching`: up to 12 items with progress, sorted by `updatedAt` desc.
 - `rows`: ContentRow[] — keys like `trending`, `popular-movies`, `popular-tv`, `top-rated`, and one row per top genre (e.g. `genre-Action`). Each row up to 20 items.
 
-### GET `/api/library/stats` → `LibraryStats`
+#### Historical: GET `/api/library/stats` → `LibraryStats`
 
-### GET `/api/library/genres` → `string[]`
+#### Historical: GET `/api/library/genres` → `string[]`
 
-### GET `/api/library/browse?type=MOVIE|TV&genre=&q=&sort=popular|rating|year|title&page=1&pageSize=24`
+#### Historical: GET `/api/library/browse?type=MOVIE|TV&genre=&q=&sort=popular|rating|year|title&page=1&pageSize=24`
 → `{ items: MediaSummary[], total, page, pageSize, genres: string[] }`
 
-### GET `/api/media/:id?season=N` → `MediaDetail`
+#### Historical: GET `/api/media/:id?season=N` → `MediaDetail`
 - `MediaDetail` extends `MediaSummary` with `seasons: Season[]`, `episodes: Episode[]` (for the requested/first season), `nextEpisode: Episode | null`, `streamUrl`, `filePath`, `tmdbId`, `imdbId`, `voteCount`, `status`, `releaseDate`.
 - If `season` omitted, returns episodes for first season that has episodes (or season 1).
 
-### GET `/api/media/:id/stream` → video byte stream (HTTP Range supported, `Content-Type: video/mp4`). Only used when client determines the source is local (no remote `streamUrl`). Returns 404 + JSON `{ error }` if no file.
+#### Historical: GET `/api/media/:id/stream` → video byte stream (HTTP Range supported, `Content-Type: video/mp4`). Only used when client determines the source is local (no remote `streamUrl`). Returns 404 + JSON `{ error }` if no file.
 
-### GET `/api/episodes/:id/stream` → same streaming behaviour for an episode.
+#### Historical: GET `/api/episodes/:id/stream` → same streaming behaviour for an episode.
 
-### GET `/api/search?q=foo` → `{ items: MediaSummary[], query }`
+#### Historical: GET `/api/search?q=foo` → `{ items: MediaSummary[], query }`
 
-### GET `/api/progress` → `{ items: MediaSummary[] }` (continue-watching list, up to 24)
+#### Historical: GET `/api/progress` → `{ items: MediaSummary[] }` (continue-watching list, up to 24)
 
-### POST `/api/progress` body `SaveProgressPayload { mediaId, episodeId?, position, duration, completed? }` → `{ ok: true }`
+#### Historical: POST `/api/progress` body `SaveProgressPayload { mediaId, episodeId?, position, duration, completed? }` → `{ ok: true }`
 
-### GET `/api/collections` → `{ items: MediaSummary[] }` (My List)
+#### Historical: GET `/api/collections` → `{ items: MediaSummary[] }` (My List)
 
-### POST `/api/collections/toggle` body `{ mediaId }` → `{ ok: true, inMyList: boolean }`
+#### Historical: POST `/api/collections/toggle` body `{ mediaId }` → `{ ok: true, inMyList: boolean }`
 
-### POST `/api/library/scan` body `{ mediaDir?, tmdbKey? }` → `ScanResult`
+#### Historical: POST `/api/library/scan` body `{ mediaDir?, tmdbKey? }` → `ScanResult`
 - Scans the filesystem under the configured `MEDIA_DIR` (env) or `mediaDir`. Detects movies (`.mp4/.mkv/.webm` files) and TV shows (folder structure `Show Name/Season 01/S01E01.*`). Auto-matches TMDB metadata when a key is present, otherwise creates stubs. Idempotent.
 
-### POST `/api/metadata/search` body `{ title, type, year? }` → `{ results: { tmdbId, title, year, overview, posterUrl, type }[] }`
+#### Historical: POST `/api/metadata/search` body `{ title, type, year? }` → `{ results: { tmdbId, title, year, overview, posterUrl, type }[] }`
 
-### POST `/api/metadata/apply` body `{ mediaId, tmdbId, type }` → `{ ok: true, media: MediaDetail }` (fetches + saves full TMDB metadata incl. episodes for TV)
+#### Historical: POST `/api/metadata/apply` body `{ mediaId, tmdbId, type }` → `{ ok: true, media: MediaDetail }` (fetches + saves full TMDB metadata incl. episodes for TV)
 
-## MediaSummary JSON shape (see src/lib/types.ts)
+### Historical `MediaSummary` Shape — Obsolete
 ```
 { id, type:"MOVIE"|"TV", title, posterUrl, backdropUrl, year, rating, runtime, genres:string[],
   certification, overview, tagline, featured, trending, popularity, inMyList,
@@ -74,7 +139,7 @@ All responses are JSON. Media image fields are full URLs (TMDB CDN: `https://ima
   progressSeason?, progressEpisode?, progressUpdatedAt? }
 ```
 
-## DESIGN SPEC (frontend)
+### Historical Frontend Design Spec — Obsolete
 
 - **Theme**: dark-first (default `dark` class on `<html>` via next-themes, `defaultTheme="dark"`). Amber/gold accent. NO indigo/blue.
 - **Layout shell** (`AppShell`): fixed top nav (transparent → blurred/solid on scroll), main content (swaps by route), sticky footer (`mt-auto`, minimal: Lumina wordmark + "Personal media library" + scan status). Root wrapper `min-h-screen flex flex-col bg-background text-foreground`.
@@ -93,10 +158,10 @@ All responses are JSON. Media image fields are full URLs (TMDB CDN: `https://ima
 - **Loading states**: skeletons (cards + rows). **Errors**: toast (sonner) + inline messages.
 - **Accessibility**: semantic main/header/nav/footer, aria-labels on icon buttons, focus-visible rings, keyboard operable, alt text.
 
-## COMPONENTS (src/components/media/)
+### Historical Component List — Obsolete
 AppShell, TopNav, Logo, Footer, HeroCarousel, ContentRow, MediaCard, ContinueWatchingCard, ProceduralPoster, DetailOverlay, SeasonEpisodeList, VideoPlayer, BrowseView, SearchView, MyListView, LibraryView, RatingBadge, MetaRow, Skeletons, GenreSelect, SortSelect.
 
-## RULES
+### Historical Bootstrap Rules — Obsolete
 - Use existing shadcn/ui components (`@/components/ui/*`) — do NOT recreate.
 - TanStack Query (`@tanstack/react-query`) for all server state. Query keys: `["home"]`, `["browse", {type,genre,sort,page,q}]`, `["media", id, season]`, `["search", q]`, `["collections"]`, `["progress"]`, `["stats"]`, `["genres"]`.
 - Only `/` route (src/app/page.tsx). All "pages" are view-state in the Zustand store; detail & watch are overlays.
@@ -104,6 +169,310 @@ AppShell, TopNav, Logo, Footer, HeroCarousel, ContentRow, MediaCard, ContinueWat
 - z.ai web dev SDK not needed in frontend.
 
 ---
+
+## Detailed Current Handoff
+
+Updated: 2026-07-13
+
+This section is authoritative for the next Codex task. Historical entries below
+describe how Lumina evolved and can be stale or contradictory.
+
+### Repository State
+
+- Primary branch: `main`.
+- The working tree contains intentional, uncommitted visual-system and player
+  changes alongside documentation updates. Do not discard or reset them;
+  inspect `git status` and the complete diff before editing.
+- Last committed revision at this handoff: `853e156` (“Rework media browsing
+  and playback state management”).
+- Commit `853e156` is present on both local `main` and `origin/main`.
+
+### Current Architecture
+
+- Lumina is a single-page Next.js App Router application. Client-side view and
+  overlay state lives in `src/store/media-store.ts`.
+- Prisma/SQLite state is persisted at `/data/lumina.db` in production.
+- Local files are authoritative. User-facing counts and browse grids include
+  locally playable movies and shows rather than stale metadata rows.
+- TMDB identity is unique by `(type, tmdbId)`. Container startup runs
+  `scripts/repair-media-identities.mjs` to merge legacy duplicates and create
+  the expected unique index before guarded `prisma db push`.
+- Docker uses Next.js standalone output and a dedicated Prisma CLI stage. The
+  full build dependency tree is no longer copied into the runtime image.
+- Direct play remains preferred. FFmpeg compatibility transcoding uses VAAPI
+  automatically when `/dev/dri/renderD128` is usable and otherwise falls back
+  to `libx264`.
+
+### Implemented Work Covered By This Handoff
+
+- Replaced the ornate dark-gold application chrome with an artwork-led
+  smoked-glass system: steel-blue ambient canvas, cool translucent panels,
+  porcelain typography, near-black control capsules, and gold limited to
+  ratings/progress/selection/focus.
+- Replaced the image wordmark in application chrome with a compact typographic
+  `Lumina.` lockup and centered the primary navigation inside an ink capsule.
+- Reworked the Home feature carousel into an asymmetric two-title artwork deck
+  and aligned all shelves to the same bounded page width.
+- Made that shared page frame fluid through 3200px, kept one 16/24/32px gutter
+  system across navigation, hero, shelves, grids, and footer, and moved the
+  scrolled glass treatment to the full-width header so its edges stay
+  symmetric at every viewport.
+- Added a shared resize-aware horizontal rail with persistent directional
+  controls whenever content is hidden, native touch scrolling, snap alignment,
+  and matching scroll padding. Continue Watching now uses the same controls as
+  poster shelves.
+- Hardened the rail's animation-frame cleanup for React Strict Mode so a
+  setup/cleanup/setup cycle cannot suppress later arrow measurements.
+- Scaled hero, shelf, card, and grid proportions through ultrawide layouts;
+  browse grids expand to eight columns, while the secondary Home feature hides
+  below `xl` instead of becoming a cramped tablet tile.
+- Made poster titles, ratings, years, and type readable without hover; retained
+  the central play action and consistent three-dot menu, including touch
+  discoverability.
+- Unified browse filters, search, My List, category, settings, dialogs,
+  skeletons, and empty states with the same surface language and 8px radius.
+- Restyled the player surround, title treatment, controls, menus, and artwork
+  wash to match the application while preserving open gradient scrims,
+  independent menus, centered transport, and subtitle clearance.
+- Replaced the detail dialog's viewport-width-derived scroll height with a
+  bounded flex layout, preventing ultrawide windows from collapsing its
+  scrollable content body.
+
+- Removed obsolete generator scripts, examples, local database, upload scratch
+  files, unused Caddy configuration, and the unused logo-review component.
+- Tightened `.dockerignore`/`.gitignore` and reduced Docker runtime dependency
+  duplication.
+- Added safe startup repair for duplicate TMDB identities.
+- Introduced path-aware rescans, same-path row merging, media-row availability,
+  recursive movie collection scanning, and common-extras filtering. The audit
+  below identifies incomplete title-fallback, traversal, and episode-history
+  safety in that implementation.
+- Aligned library statistics, section counts, browse, and search with locally
+  playable media.
+- Fixed player settings/caption menu positioning. The shared `lumina-panel`
+  class forced `position: relative` and previously stretched the controls bar.
+- Changed the cog to a real Settings root with Playback Speed and Compatibility
+  Mode rather than opening a speed list directly.
+- Rebalanced player controls into three stable zones: volume/status left,
+  transport centered, and captions/settings/fullscreen right.
+- Expanded subtitles to detect sidecars in sibling and `Subs`/`Subtitles`
+  folders, probe embedded streams, convert text tracks to WebVTT, and offer
+  embedded bitmap tracks such as PGS/DVD subtitles through burn-in transcoding.
+- Added `Subtitle.streamIndex` and `Subtitle.codec`; startup `db push` applies
+  these additive columns on deployment.
+
+### Uncommitted Change Map
+
+- Visual tokens and shared surfaces: `src/app/globals.css` and
+  `src/components/ui/card.tsx`.
+- Shell and identity: `top-nav.tsx`, `logo.tsx`, and `footer.tsx`.
+- Home composition and responsive shelves: `home-view.tsx`,
+  `hero-carousel.tsx`, `content-row.tsx`, `continue-watching-card.tsx`, and the
+  new `horizontal-rail.tsx`.
+- Poster/browse surfaces: `media-card.tsx`, `browse-view.tsx`,
+  `category-view.tsx`, `search-view.tsx`, `my-list-view.tsx`, and
+  `skeletons.tsx`.
+- Settings and action/dialog surfaces: `library-view.tsx`,
+  `media-actions-menu.tsx`, `media-info-dialog.tsx`, and
+  `media-match-dialog.tsx`.
+- Playback surfaces: `detail-overlay.tsx` and `video-player.tsx`.
+- Handoff and operating guidance: `AGENTS.md`, `README.md`, `DEPLOYMENT.md`,
+  this file, and the brand asset-pack README.
+
+The current documentation pass does not yet fix scanner, query, watcher, or
+player correctness findings in the roadmap below. Do not infer those fixes
+from the redesign diff.
+
+### Validation State
+
+- `npm run lint` passes.
+- `npx tsc --noEmit` passes.
+- `npx prisma validate` passes.
+- `npx prisma generate` passes.
+- `npm run build:docker` passes without Turbopack trace warnings.
+- These checks were rerun successfully on 2026-07-13 after resuming the
+  deployment checklist.
+- Lint, TypeScript, Prisma validation/generation, and `build:docker` were run
+  again successfully after the smoked-glass redesign. Desktop and 390px mobile
+  shell/skeleton states were also browser-inspected locally.
+- The same complete validation set passed again after the responsive follow-up.
+  A disposable populated database was browser-tested at 390px, 1024px, 1694px,
+  and 3440px, then removed. Page geometry had no document-level horizontal
+  overflow; shelf controls advanced to the final snap point; header, hero, and
+  shelf gutters aligned; the 1024px hero stayed single-column; and the detail
+  body remained independently scrollable on mobile.
+- Local standalone output measured approximately 177.45 MB before system
+  FFmpeg and isolated Prisma CLI layers.
+- Docker and FFmpeg are not installed on this Windows development host, so the
+  container startup repair, NAS scanning, embedded subtitle extraction, and
+  bitmap subtitle burn-in still require runtime verification in the deployed
+  image.
+
+### Confirmed Audit Findings
+
+These were confirmed by code inspection on 2026-07-13. They are defects or
+safety gaps to fix; they are not yet proven to be the exact cause of each live
+count discrepancy.
+
+- `src/lib/scanner.ts` looks up movies and shows with `filePath OR title/year`.
+  A second live path with the same parsed title/year can overwrite the first
+  row before path reconciliation. Alternate editions and parser collisions are
+  therefore silent instead of explainable.
+- Several nested `readdir`/`stat` failures become an empty list or a logged
+  skip, but the scan still performs missing-path reconciliation. A partial NAS
+  traversal can mark undiscovered media unavailable.
+- The scanner deletes episode rows after clearing missing `filePath` values,
+  and TMDB cleanup also deletes rows without a current file/stream. The Prisma
+  relation cascades an episode deletion into episode watch progress. This
+  contradicts the local-media/history invariants.
+- Browse, search, headline counts, and section counts use the shared playable
+  predicate, but Home feature/trending/popular/recent/genre queries, Continue
+  Watching, My List, top-genre grouping, and runtime totals do not apply it
+  consistently. The earlier statement that all user-facing queries were
+  aligned was too broad.
+- Show-level playback resolves a playable episode for the stream but saves
+  progress using `activeEpId`; when no episode was supplied initially, a TV
+  progress row can be written with `episodeId: null`.
+- The global player key handler closes over stale `current` and `duration`
+  values because its effect omits them, so left/right keyboard seeking can use
+  an outdated position.
+- The filesystem watcher is initialized once, handles add/add-directory/raw
+  rename events only, and does not reconcile section edits or removals. Manual
+  and watcher scans have no per-section concurrency lock.
+- Every rescan probes subtitle streams again; there is no path/size/mtime media
+  analysis cache.
+- There is no automated test suite or CI workflow. `/api` still returns
+  `Hello, world!`, and the image has no Docker health check.
+
+### Prioritized Roadmap
+
+#### P0-A — Make Production Scans Safe And Explainable
+
+1. Match an exact normalized path first. Reuse a title/year row only when its
+   previous path is absent/unavailable; never overwrite a second path that was
+   discovered in the same scan.
+2. Define how multiple files/editions for one TMDB title should be represented.
+   Until a versions model exists, surface every identity collapse in the scan
+   manifest instead of silently losing a path from reconciliation evidence.
+3. Track traversal completeness. If any directory needed for a section cannot
+   be read reliably, return an incomplete scan and skip all missing-path
+   reconciliation for that section.
+4. Preserve missing episode rows, metadata, subtitles, and watch history by
+   marking them unavailable rather than deleting them. Remove the equivalent
+   destructive TMDB cleanup.
+5. Serialize scans per section across manual requests and the watcher.
+6. Return and expose a path-level reconciliation manifest: discovered videos,
+   unsupported/ignored entries with reasons, traversal errors, parser output,
+   duplicate path/title/TMDB collisions, and database rows proposed as stale.
+7. Add focused temporary-directory/SQLite scanner tests for numeric titles,
+   collection recursion, extras, same-title distinct paths, rename recovery,
+   partial traversal, missing episodes/history, and idempotent rescans.
+
+Definition of done: an incomplete scan cannot remove availability/history; the
+manifest explains every discovered or excluded path; destructive test fixtures
+pass; lint, TypeScript, Prisma validation/generation, and `build:docker` pass.
+
+#### P0-B — Deploy, Reconcile Counts, And Verify Real Media
+
+1. Follow `DEPLOYMENT.md`: inventory the live container, use an immutable image
+   tag, import a `docker save` archive, stop and back up the complete `/data`
+   bind, retain the old container/image, and recreate with the exact existing
+   port/mount/environment/device contract.
+2. Confirm duplicate repair and guarded schema push complete before
+   `Starting server on port 3000`, then compare stats/sections with the captured
+   pre-deployment JSON before scanning.
+3. After P0-A is complete, scan one section at a time and retain each manifest.
+   Reconcile the three movie differences and the extra TV row path-by-path.
+   Determine whether any difference is an intentional TMDB/edition collapse or
+   a mismatched NAS-vs-Lumina counting definition. Keep anime counts unchanged
+   and confirm *Harry Potter and the Deathly Hallows: Part 2* appears.
+4. Exercise Home, Movies, TV, Search, My List, Settings, detail, rails, and the
+   player at mobile, desktop, and ultrawide/high-DPI widths.
+5. Test direct play, compatibility fallback, resume, menus, external SRT/ASS,
+   embedded text, and PGS/DVD burn-in against named real files. Subtitles must
+   remain clear of controls.
+
+Definition of done: startup and rollback evidence is retained; every count
+difference has an itemized explanation; no unresolved scan error exists; real
+subtitle/player checks pass; the deployed image is explicitly recorded as
+deployment-verified.
+
+#### P1 — Playback, Query, Watcher, And Analysis Correctness
+
+- Apply one explicit playable predicate to every discovery surface and runtime
+  aggregate. Decide whether My List preserves offline items; if it does, label
+  them unavailable and disable playback rather than presenting a broken card.
+- Save TV progress against the resolved episode, validate that the episode
+  belongs to the submitted media, enforce/update a single logical progress row,
+  and repair stale show-level/episode resume records.
+- Make keyboard seeking read from the video element or current refs. Add
+  browser checks for keyboard, menu, transport, subtitle-clearance, shelf, and
+  responsive-detail behavior.
+- Refine codec/container direct-play decisions and fatal direct-play fallback
+  with small media fixtures.
+- Refresh watcher subscriptions when sections change; handle change/unlink and
+  unlink-directory events through the safe serialized scan path.
+- Cache codec/subtitle analysis by normalized path, size, and modification time
+  so unchanged media skips repeated `ffprobe` work.
+- Replace `/api` with a structured health/readiness response and consider a
+  Docker `HEALTHCHECK` after the endpoint is meaningful.
+
+Definition of done: query/progress/player/watcher tests cover the listed
+regressions, unchanged files skip analysis, and all standard validations pass.
+
+#### P1 — Establish A Test And CI Baseline
+
+- Add query tests proving unavailable media cannot leak into discovery shelves
+  or counts.
+- Add progress tests for show-level playback, dismissal/resume restoration,
+  completion, and next-episode selection.
+- Add subtitle/transcoder command tests and byte-range streaming tests.
+- Add a browser regression suite for the locally verified responsive geometry
+  and player interactions.
+- Run lint, TypeScript, Prisma validation/generation, tests, `build:docker`, and
+  a legacy-database startup fixture in CI.
+
+#### P2 — Operations And UX Hardening
+
+- Show/export the full reconciliation manifest instead of only a note count.
+- Replace hard-coded section “Active” status with path, watcher, and last-scan
+  health; add clear offline treatment if My List retains unavailable items.
+- Add empty-library onboarding after correctness work is stable.
+- Untrack the legacy `.env` and replace it with a non-secret example; align the
+  isolated Prisma CLI with the lockfile version; pin or intentionally update
+  base images; evaluate a non-root runtime without breaking NAS permissions.
+
+### Deployment Verification Needed
+
+The exact build/save/transfer/import, backup, startup, functional verification,
+and rollback procedure now lives in `DEPLOYMENT.md`. The key order is:
+
+1. Complete P0-A before any production rescan.
+2. Import and start the new image with the preserved live configuration.
+3. Verify state before scanning, then run section scans only with manifests and
+   a restore-ready backup.
+4. Complete real-library player and responsive checks.
+5. Review the complete diff, commit intentionally, and push `main` only after
+   the deployment is accepted.
+
+### Known Risks And Scope Guardrails
+
+- Bitmap subtitle burn-in is compile-validated but not exercised on this host.
+- The live image predates the responsive pass; current count discrepancies are
+  investigation targets, not guaranteed fixes.
+- No further broad redesign is queued. Make targeted corrections from deployed
+  evidence and preserve the current visual system.
+- Authentication, multi-user support, new page routes, and a media-versions
+  data model are separate product decisions; do not introduce them as incidental
+  fixes.
+- Historical notes below mention full runtime `node_modules`, seeded demo
+  behavior, glow-heavy cards, old logos, hover-only arrows, and earlier player
+  layouts. None is current guidance.
+
+---
+
+## Historical Task Log — Append-Only, Non-Authoritative
+
 Task ID: 2
 Agent: orchestrator (main)
 Task: Backend — API routes + lib modules.

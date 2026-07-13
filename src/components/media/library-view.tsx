@@ -364,7 +364,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     effectiveType === "MOVIE" ? "movies" : effectiveType === "TV" ? "TV shows" : "titles";
 
   return (
-    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8">
+    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8 min-[2200px]:pt-24">
       <PageHero isSettings={isSettings} stats={stats} />
 
       {!isSettings && (
@@ -485,8 +485,8 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
 
 function PageHero({ isSettings, stats }: { isSettings: boolean; stats?: { mediaCount?: number } }) {
   return (
-    <section className="lumina-panel film-grain relative mb-7 overflow-hidden rounded-xl p-5 sm:p-8">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_84%_0%,rgba(238,209,132,0.14),transparent_27%),radial-gradient(circle_at_16%_100%,rgba(12,26,45,0.82),transparent_42%)]" />
+    <section className="lumina-panel relative mb-7 overflow-hidden rounded-lg p-5 sm:p-8">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_84%_0%,rgba(232,241,244,0.13),transparent_30%),linear-gradient(120deg,rgba(39,65,77,0.42),transparent_58%)]" />
       <div className="relative max-w-3xl">
         <p className="label-eyebrow mb-2 text-primary/90">
           {isSettings ? "Server control room" : "Media inventory"}
@@ -521,7 +521,7 @@ function SettingsSidebar() {
   const setRoute = useMediaStore((s) => s.setRoute);
 
   return (
-    <aside className="lumina-panel sticky top-20 h-fit rounded-xl p-3">
+    <aside className="lumina-panel sticky top-20 h-fit rounded-lg p-3">
       <div className="px-2 pb-3 pt-1">
         <p className="label-eyebrow text-primary/90">Configuration</p>
       </div>
@@ -795,13 +795,13 @@ function ScanningPanel({
             </span>
           )}
         </Field>
-        <label className="flex items-center gap-3 rounded-xl border border-border/60 bg-white/[0.035] p-4 text-sm text-foreground/72">
+        <label className="flex items-center gap-3 rounded-lg border border-border/60 bg-white/[0.055] p-4 text-sm text-foreground/72">
           <Checkbox checked={autoMatch} onCheckedChange={(v) => setAutoMatch(!!v)} />
           Match new titles and refresh incomplete matches during scans
         </label>
       </div>
       {result && (
-        <div className="mt-4 rounded-xl border border-border/60 bg-background/45 p-4 text-sm">
+        <div className="mt-4 rounded-lg border border-border/60 bg-[var(--lumina-ink)]/28 p-4 text-sm">
           <div className="mb-2 flex items-center gap-2 font-semibold">
             <CheckCircle2 className="h-4 w-4 text-primary" />
             Scan finished in {(result.durationMs / 1000).toFixed(1)}s
@@ -943,7 +943,7 @@ function PlexSyncPanel({
       </div>
 
       {result && (
-        <div className="mt-5 rounded-xl border border-border/60 bg-background/45 p-4">
+        <div className="mt-5 rounded-lg border border-border/60 bg-[var(--lumina-ink)]/28 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
               <div className="font-semibold">
@@ -1037,11 +1037,11 @@ function LibrarySectionOverview({
         <h2 className="lumina-title text-2xl font-semibold sm:text-3xl">Library sections</h2>
       </div>
       {loading ? (
-        <div className="lumina-panel rounded-xl p-8 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>
+        <div className="lumina-panel rounded-lg p-8 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></div>
       ) : sections?.length ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {sections.map((s) => (
-            <button key={s.id} onClick={() => onManage(s)} className="lumina-panel rounded-xl p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40">
+            <button key={s.id} onClick={() => onManage(s)} className="lumina-panel rounded-lg p-4 text-left transition-all hover:-translate-y-0.5 hover:border-white/28">
               <div className="mb-4 flex items-center justify-between gap-2">
                 <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-primary/12 text-primary">
                   {s.type === "TV" ? <Tv className="h-5 w-5" /> : <Film className="h-5 w-5" />}
@@ -1055,7 +1055,7 @@ function LibrarySectionOverview({
           ))}
         </div>
       ) : (
-        <div className="lumina-panel rounded-xl p-8 text-center text-sm text-foreground/54">Add library paths in Settings to begin building this overview.</div>
+        <div className="lumina-panel rounded-lg p-8 text-center text-sm text-foreground/54">Add library paths in Settings to begin building this overview.</div>
       )}
     </section>
   );

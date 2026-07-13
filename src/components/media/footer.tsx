@@ -7,7 +7,7 @@ export function Footer() {
   const { data: stats } = useStats();
   return (
     <footer className="mt-auto border-t border-border/60 bg-background/60">
-      <div className="mx-auto flex max-w-screen-2xl flex-col items-start justify-between gap-4 px-4 py-6 sm:flex-row sm:items-center sm:px-6 lg:px-8">
+      <div className="lumina-page flex flex-col items-start justify-between gap-4 px-4 py-6 sm:flex-row sm:items-center sm:px-6 lg:px-8">
         <div className="flex items-center gap-3">
           <Logo size="sm" />
           <span className="text-xs text-foreground/50">

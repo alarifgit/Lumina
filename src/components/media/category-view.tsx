@@ -56,9 +56,9 @@ export function CategoryView({ onOpen, onPlay }: Props) {
   });
 
   return (
-    <div className="lumina-page px-4 pb-12 pt-20 sm:px-6 lg:px-8">
-      <section className="lumina-panel film-grain relative mb-7 overflow-hidden rounded-xl p-5 sm:p-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_0%,rgba(238,209,132,0.16),transparent_26%),radial-gradient(circle_at_18%_100%,rgba(12,26,45,0.78),transparent_38%)]" />
+    <div className="lumina-page px-4 pb-12 pt-20 sm:px-6 lg:px-8 min-[2200px]:pt-24">
+      <section className="lumina-panel relative mb-7 overflow-hidden rounded-lg p-5 sm:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_0%,rgba(232,241,244,0.14),transparent_30%),linear-gradient(120deg,rgba(39,65,77,0.42),transparent_58%)]" />
         <div className="relative max-w-3xl">
           <p className="label-eyebrow mb-2 text-primary/90">Discover</p>
           <h1 className="lumina-title text-5xl font-semibold leading-none sm:text-7xl">
@@ -84,7 +84,7 @@ export function CategoryView({ onOpen, onPlay }: Props) {
             return (
               <button
                 key={card.title}
-                className="group lumina-panel overflow-hidden rounded-xl p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-[0_0_28px_rgba(238,209,132,0.12)]"
+                className="group lumina-panel overflow-hidden rounded-lg p-4 text-left transition-all hover:-translate-y-0.5 hover:border-white/28"
               >
                 <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-full border border-primary/22 bg-primary/10 text-primary">
                   <Icon className="h-5 w-5" />
@@ -112,16 +112,16 @@ export function CategoryView({ onOpen, onPlay }: Props) {
                   key={genre}
                   onClick={() => setGenreFilter(genre)}
                   className={cn(
-                    "group relative min-h-28 overflow-hidden rounded-xl border p-4 text-left transition-all",
+                    "group relative min-h-28 overflow-hidden rounded-lg border p-4 text-left transition-all",
                     selectedGenre === genre
                       ? "border-primary/55 bg-primary/12"
-                      : "border-[var(--line-soft)] bg-[#0c1a2d]/62 hover:border-primary/35"
+                      : "border-[var(--line-soft)] bg-white/[0.065] hover:border-white/24 hover:bg-white/[0.10]"
                   )}
                 >
                   <div
                     className="absolute inset-0 opacity-70"
                     style={{
-                      background: `radial-gradient(circle at ${24 + (index % 5) * 14}% 10%, rgba(238,209,132,0.16), transparent 32%), linear-gradient(135deg, rgba(16,34,58,0.74), rgba(3,4,5,0.82))`,
+                      background: `radial-gradient(circle at ${24 + (index % 5) * 14}% 10%, rgba(232,241,244,0.16), transparent 32%), linear-gradient(135deg, rgba(78,108,121,0.72), rgba(24,43,53,0.84))`,
                     }}
                   />
                   <div className="relative flex min-h-20 flex-col justify-end">
@@ -136,7 +136,7 @@ export function CategoryView({ onOpen, onPlay }: Props) {
           )}
         </div>
 
-        <aside className="lumina-panel rounded-xl p-5">
+        <aside className="lumina-panel rounded-lg p-5">
           <div className="mb-4 flex items-center gap-2">
             <Stars className="h-5 w-5 text-primary" />
             <h2 className="lumina-title text-2xl font-semibold">Smart collections</h2>
@@ -172,7 +172,7 @@ export function CategoryView({ onOpen, onPlay }: Props) {
         {browse.isLoading ? (
           <GridSkeleton count={10} />
         ) : browse.data?.items.length ? (
-          <div className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 sm:gap-x-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+          <div className="lumina-media-grid">
             {browse.data.items.map((m) => (
               <MediaCard
                 key={m.id}
@@ -185,7 +185,7 @@ export function CategoryView({ onOpen, onPlay }: Props) {
             ))}
           </div>
         ) : (
-          <div className="lumina-panel rounded-xl px-6 py-12 text-center text-sm text-foreground/58">
+          <div className="lumina-panel rounded-lg px-6 py-12 text-center text-sm text-foreground/58">
             No titles found for this category yet.
           </div>
         )}

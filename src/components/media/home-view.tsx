@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { HeroCarousel } from "./hero-carousel";
 import { ContentRow } from "./content-row";
 import { ContinueWatchingCard } from "./continue-watching-card";
+import { HorizontalRail } from "./horizontal-rail";
 import { ContentRowSkeleton, HeroSkeleton } from "./skeletons";
-import { LogoEmblem, LogoLockup } from "./logo";
+import { LogoLockup } from "./logo";
 import {
   AlertCircle,
   ArrowRight,
@@ -75,17 +76,21 @@ export function HomeView({ onOpen, onPlay }: Props) {
           <HeroCarousel items={data.featured} onOpen={onOpen} onPlay={onPlay} />
         </div>
       )}
-      <div className="mt-6 space-y-5">
+      <div className="mt-7 space-y-5">
         {data.continueWatching.length > 0 && (
-          <section className="render-lazy-row py-4">
-            <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight sm:px-6 sm:text-xl lg:px-8">
+          <section className="lumina-page render-lazy-landscape-row py-4">
+            <h2 className="lumina-shelf-heading mb-2 px-4 text-lg font-semibold tracking-[-0.025em] text-white sm:px-6 sm:text-xl lg:px-8">
               Continue Watching
             </h2>
-            <div className="no-scrollbar flex gap-3 overflow-x-auto overflow-y-visible px-4 pb-6 pt-4 sm:gap-4 sm:px-6 lg:px-8">
+            <HorizontalRail
+              itemCount={data.continueWatching.length}
+              label="Continue Watching"
+              viewportClassName="gap-3 px-4 pb-6 pt-4 sm:gap-4 sm:px-6 lg:px-8"
+            >
               {data.continueWatching.map((m: MediaSummary) => (
                 <ContinueWatchingCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} />
               ))}
-            </div>
+            </HorizontalRail>
           </section>
         )}
         {rowsWithItems.map((r) => (
@@ -128,13 +133,9 @@ function EmptyHomeState({
   ];
 
   return (
-    <section className="lumina-page px-4 pb-16 pt-24 sm:px-6 lg:px-8">
-      <div className="lumina-panel film-grain relative isolate overflow-hidden rounded-xl" aria-labelledby="empty-home-title">
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(112deg,rgba(217,170,76,0.16)_0%,rgba(217,170,76,0)_32%),linear-gradient(135deg,rgba(12,26,45,0.92),rgba(3,4,5,0.64)_48%,rgba(3,4,5,0.94))]" />
-        <div className="pointer-events-none absolute -right-12 top-10 opacity-[0.06] sm:right-8 sm:top-8">
-          <LogoEmblem detailed size={360} />
-        </div>
-
+    <section className="lumina-page px-4 pb-16 pt-24 sm:px-6 lg:px-8 min-[2200px]:pt-28">
+      <div className="lumina-panel relative isolate overflow-hidden rounded-lg" aria-labelledby="empty-home-title">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_0%,rgba(232,241,244,0.14),transparent_30%),linear-gradient(135deg,rgba(67,96,109,0.72),rgba(27,48,59,0.82)_58%,rgba(16,32,41,0.92))]" />
         <div className="relative grid gap-8 px-6 py-8 sm:px-9 sm:py-10 lg:min-h-[560px] lg:grid-cols-[minmax(0,1fr)_420px] lg:px-12 lg:py-12">
           <div className="flex max-w-3xl flex-col justify-center">
             <div className="mb-6">

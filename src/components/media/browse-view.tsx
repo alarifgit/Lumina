@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, AlertCircle, Play, Plus, SlidersHorizontal } from "lucide-react";
+import { Loader2, AlertCircle, Play, Plus } from "lucide-react";
 import type { MediaSummary, MediaType } from "@/lib/types";
 import { formatRuntime } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
@@ -52,7 +52,7 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
   const featured = items[0] ?? null;
 
   return (
-    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8">
+    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8 min-[2200px]:pt-24">
       {featured ? (
         <BrowseFeature
           item={featured}
@@ -130,7 +130,7 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 sm:gap-x-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+          <div className="lumina-media-grid">
             {items.map((m) => (
               <MediaCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} variant="grid" className="w-full" />
             ))}
@@ -175,7 +175,7 @@ function BrowseFeature({
   return (
     <section
       data-lumina-frame="true"
-      className="lumina-panel film-grain relative mb-5 min-h-[330px] overflow-hidden rounded-xl"
+      className="lumina-panel relative mb-6 min-h-[330px] overflow-hidden rounded-lg lg:min-h-[clamp(330px,22vw,620px)]"
     >
       <img
         src={backdrop}
@@ -183,13 +183,13 @@ function BrowseFeature({
         className="absolute inset-0 h-full w-full object-cover"
       />
       <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.92)_0%,rgba(0,0,0,0.62)_42%,rgba(0,0,0,0.08)_74%,rgba(0,0,0,0.46)_100%),linear-gradient(180deg,rgba(0,0,0,0.05)_0%,rgba(0,0,0,0.72)_100%)]" />
-      <div className="relative flex min-h-[310px] flex-col justify-end p-5 sm:p-7">
+      <div className="relative flex min-h-[310px] flex-col justify-end p-5 sm:p-7 lg:min-h-[clamp(330px,22vw,620px)]">
         <div className="max-w-2xl">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-primary-foreground">
-              Featured
+            <span className="rounded-md bg-[var(--lumina-ink)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white">
+              Spotlight
             </span>
-            <span className="rounded-md bg-black/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/70 ring-1 ring-white/10">
+            <span className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground/70 ring-1 ring-white/12">
               {total.toLocaleString()} {total === 1 ? "title" : "titles"}
             </span>
           </div>
@@ -249,13 +249,12 @@ function FilterChip({
     <button
       onClick={onClick}
       className={cn(
-        "inline-flex h-9 shrink-0 items-center gap-2 rounded-full border px-3 text-sm font-semibold transition-colors",
+        "inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-4 text-sm font-medium transition-colors",
         active
-          ? "border-primary/55 bg-primary/12 text-primary shadow-[0_0_18px_rgba(245,182,42,0.12)]"
-          : "border-[var(--line-soft)] bg-white/[0.035] text-foreground/72 hover:bg-white/[0.08] hover:text-foreground"
+          ? "border-white/24 bg-white/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]"
+          : "border-white/10 bg-white/[0.065] text-foreground/68 hover:bg-white/[0.12] hover:text-foreground"
       )}
     >
-      <SlidersHorizontal className="h-3.5 w-3.5" />
       {children}
     </button>
   );

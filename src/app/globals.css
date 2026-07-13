@@ -50,58 +50,59 @@
 }
 
 :root {
-  --radius: 0.75rem;
+  --radius: 0.5rem;
 
   /* ── Type stack (design.md §4) ── */
-  --font-ui: "Plus Jakarta Sans", "Aptos", "Segoe UI Variable", "Segoe UI", ui-sans-serif, system-ui,
+  --font-ui: "Aptos", "Segoe UI Variable", "Plus Jakarta Sans", "Segoe UI", ui-sans-serif, system-ui,
     -apple-system, BlinkMacSystemFont, sans-serif;
   --font-display: "Aptos Display", "Segoe UI Variable Display", "Plus Jakarta Sans", "Aptos",
     "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
   /* ── Surfaces (design.md §3, midnight sapphire + porcelain) ── */
-  --lumina-black: #030405;
-  --lumina-void: #06070a;
-  --lumina-midnight: #08111d;
-  --lumina-sapphire: #0c1a2d;
-  --lumina-sapphire-soft: #10223a;
-  --lumina-panel: #0b1422;
-  --lumina-panel-soft: #101a28;
-  --lumina-porcelain: #f6efe3;
-  --lumina-porcelain-soft: #eee3d1;
+  --lumina-black: #182731;
+  --lumina-void: #20333e;
+  --lumina-midnight: #2c4350;
+  --lumina-sapphire: #405b69;
+  --lumina-sapphire-soft: #587281;
+  --lumina-panel: rgba(222, 234, 239, 0.10);
+  --lumina-panel-soft: rgba(230, 239, 243, 0.14);
+  --lumina-porcelain: #f4f7f8;
+  --lumina-porcelain-soft: #dce7eb;
 
-  --background: var(--lumina-black);
-  --foreground: #fff7e8;
+  --background: #1e303b;
+  --foreground: #f5f8f9;
 
   --card: var(--lumina-panel);
   --card-foreground: var(--foreground);
-  --popover: #0a1320;
+  --popover: rgba(24, 39, 49, 0.96);
   --popover-foreground: var(--foreground);
 
-  --secondary: #13233a;
-  --secondary-foreground: #e9dcc0;
+  --secondary: rgba(224, 236, 241, 0.13);
+  --secondary-foreground: #f0f5f7;
 
-  --muted: #121a28;
-  --muted-foreground: #d8c9ad;
+  --muted: rgba(221, 234, 239, 0.09);
+  --muted-foreground: #bdcdd4;
 
-  --accent: #182a45;
-  --accent-foreground: #fff3d6;
+  --accent: rgba(232, 241, 244, 0.18);
+  --accent-foreground: #ffffff;
 
   /* ── Brand gold (design.md gold scale) ── */
-  --primary: #d9aa4c;
-  --primary-foreground: #160d04;
-  --lumina-gold: #d9aa4c;
-  --lumina-gold-bright: #fff8d8;
-  --lumina-gold-soft: #eed184;
-  --lumina-gold-deep: #704315;
-  --lumina-gold-muted: #9a6420;
+  --primary: #f3ab4e;
+  --primary-foreground: #17232a;
+  --lumina-gold: #f3ab4e;
+  --lumina-gold-bright: #fff7e9;
+  --lumina-gold-soft: #f4cc8b;
+  --lumina-gold-deep: #9a6128;
+  --lumina-gold-muted: #be7e38;
+  --lumina-ink: #071720;
 
   /* ── Lines / glass ── */
-  --line-soft: rgba(238, 209, 132, 0.14);
-  --line-bright: rgba(238, 209, 132, 0.28);
+  --line-soft: rgba(240, 247, 249, 0.13);
+  --line-bright: rgba(247, 251, 252, 0.24);
   --border: var(--line-soft);
-  --input: rgba(246, 239, 227, 0.12);
-  --ring: var(--lumina-gold-bright);
+  --input: rgba(244, 249, 250, 0.15);
+  --ring: rgba(255, 255, 255, 0.9);
 
   /* ── Semantic ── */
   --destructive: #ff5f57;
@@ -134,11 +135,12 @@
 
   /* ── Cinematic canvas background (design.md §3 background gradient) ── */
   --app-bg:
-    radial-gradient(ellipse 120% 72% at 50% -24%, rgba(16, 34, 58, 0.92), transparent 58%),
-    linear-gradient(180deg, rgba(246, 239, 227, 0.025) 0%, transparent 18%, rgba(0, 0, 0, 0.34) 100%),
-    linear-gradient(180deg, #07101b 0%, #030405 58%, #010101 100%);
+    radial-gradient(ellipse 80% 56% at 8% -10%, rgba(153, 184, 198, 0.50), transparent 70%),
+    radial-gradient(ellipse 70% 52% at 96% 8%, rgba(199, 178, 158, 0.20), transparent 72%),
+    radial-gradient(ellipse 95% 70% at 52% 105%, rgba(42, 62, 73, 0.82), transparent 68%),
+    linear-gradient(145deg, #587481 0%, #3e5967 36%, #283d49 72%, #1d2d37 100%);
   --lumina-card-bg:
-    linear-gradient(145deg, rgba(16, 34, 58, 0.84), rgba(5, 7, 10, 0.92));
+    linear-gradient(145deg, rgba(231, 240, 243, 0.13), rgba(176, 199, 208, 0.07));
   --lumina-gold-gradient:
     linear-gradient(135deg, #8c5c1f 0%, #d9aa4c 32%, #fff8d8 50%, #d9aa4c 66%, #704315 100%);
   --lumina-porcelain-bg:
@@ -165,9 +167,9 @@
 
   /* Gold focus ring everywhere (design.md §12) */
   :focus-visible {
-    outline: 2px solid var(--lumina-gold-bright);
+    outline: 2px solid rgba(255, 255, 255, 0.92);
     outline-offset: 3px;
-    box-shadow: 0 0 0 5px rgba(245, 182, 42, 0.15);
+    box-shadow: 0 0 0 5px rgba(219, 234, 239, 0.16);
   }
 
   /* Respect reduced-motion (design.md §11) */
@@ -207,21 +209,22 @@
   .lumina-title {
     font-family: var(--font-display);
     letter-spacing: 0;
-    color: #f6efe3;
-    text-shadow: 0 0 22px rgba(238, 209, 132, 0.1);
+    color: #f8fbfc;
+    text-shadow: 0 2px 24px rgba(9, 24, 32, 0.22);
     text-wrap: balance;
   }
 
   .lumina-panel {
     position: relative;
-    border: 1px solid rgba(244, 216, 139, 0.14);
+    border: 1px solid rgba(244, 249, 250, 0.15);
     background:
-      linear-gradient(180deg, rgba(244, 216, 139, 0.035), transparent 34%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 38%),
       var(--lumina-card-bg);
+    backdrop-filter: blur(30px) saturate(112%);
     box-shadow:
-      inset 0 1px 0 rgba(255, 238, 184, 0.08),
-      0 24px 72px rgba(0, 0, 0, 0.42),
-      0 0 0 1px rgba(12, 26, 45, 0.36);
+      inset 0 1px 0 rgba(255, 255, 255, 0.13),
+      inset 0 -1px 0 rgba(13, 31, 40, 0.12),
+      0 24px 72px rgba(13, 30, 39, 0.24);
   }
 
   .lumina-panel::before {
@@ -230,12 +233,13 @@
     inset: 0;
     pointer-events: none;
     border-radius: inherit;
-    box-shadow: inset 0 0 38px rgba(215, 168, 77, 0.04);
+    box-shadow: inset 0 0 38px rgba(238, 246, 249, 0.025);
   }
 
   .lumina-page {
+    width: 100%;
     margin-inline: auto;
-    max-width: 1600px;
+    max-width: 200rem;
   }
 
   .lumina-canvas {
@@ -255,19 +259,17 @@
 
   .lumina-canvas::before {
     background:
-      radial-gradient(ellipse 120% 52% at 110% -16%, transparent 55%, rgba(217, 170, 76, 0.13) 56%, rgba(255, 248, 216, 0.20) 56.7%, rgba(217, 170, 76, 0.08) 57.6%, transparent 59%),
-      radial-gradient(ellipse 92% 38% at 116% -8%, transparent 61%, rgba(238, 209, 132, 0.10) 62%, transparent 63.4%),
-      radial-gradient(ellipse 76% 30% at 116% 0%, transparent 66%, rgba(217, 170, 76, 0.07) 67%, transparent 68.2%),
-      linear-gradient(106deg, transparent 0 58%, rgba(112, 67, 21, 0.03) 62%, rgba(238, 209, 132, 0.075) 66%, transparent 74%),
-      linear-gradient(180deg, rgba(8, 17, 29, 0.18), rgba(3, 4, 5, 0.72));
-    opacity: 0.86;
+      radial-gradient(circle at 18% 10%, rgba(224, 236, 241, 0.18), transparent 32%),
+      radial-gradient(circle at 82% 16%, rgba(245, 184, 111, 0.08), transparent 28%),
+      linear-gradient(180deg, rgba(24, 45, 56, 0.05), rgba(12, 26, 34, 0.42));
+    opacity: 0.9;
   }
 
   .lumina-canvas::after {
     opacity: 0.42;
     background-image:
-      radial-gradient(circle, rgba(238, 209, 132, 0.36) 0 0.75px, transparent 1px),
-      radial-gradient(circle, rgba(246, 239, 227, 0.16) 0 0.6px, transparent 0.9px),
+      radial-gradient(circle, rgba(240, 247, 249, 0.22) 0 0.65px, transparent 0.95px),
+      radial-gradient(circle, rgba(217, 231, 236, 0.12) 0 0.55px, transparent 0.85px),
       linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.34) 100%);
     background-position:
       0 0,
@@ -282,7 +284,71 @@
 
   .render-lazy-row {
     content-visibility: auto;
-    contain-intrinsic-size: 360px;
+    contain-intrinsic-size: auto 28rem;
+  }
+
+  .render-lazy-landscape-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 26rem;
+  }
+
+  @media (min-width: 120rem) {
+    .render-lazy-row {
+      contain-intrinsic-size: auto 48rem;
+    }
+
+    .render-lazy-landscape-row {
+      contain-intrinsic-size: auto 30rem;
+    }
+  }
+
+  .lumina-media-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 1rem;
+    row-gap: 1.75rem;
+  }
+
+  @media (min-width: 64rem) {
+    .lumina-shelf-heading {
+      font-size: clamp(1.25rem, calc(0.5rem + 0.6vw), 1.875rem);
+    }
+  }
+
+  @media (min-width: 40rem) {
+    .lumina-media-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 48rem) {
+    .lumina-media-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .lumina-media-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 80rem) {
+    .lumina-media-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 96rem) {
+    .lumina-media-grid {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 137.5rem) {
+    .lumina-media-grid {
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+    }
   }
 
   .lumina-divider {
@@ -329,24 +395,24 @@
   }
   /* Dark glass panel (design.md lines/glass) */
   .glass {
-    background: rgba(8, 17, 29, 0.72);
-    backdrop-filter: blur(18px);
+    background: rgba(38, 59, 70, 0.62);
+    backdrop-filter: blur(24px) saturate(110%);
   }
   .glass-strong {
-    background: rgba(8, 17, 29, 0.88);
-    backdrop-filter: blur(20px);
+    background: rgba(25, 43, 53, 0.88);
+    backdrop-filter: blur(30px) saturate(112%);
   }
 
   .lumina-button-primary {
-    border: 1px solid rgba(255, 248, 216, 0.45);
-    background: var(--lumina-gold-gradient);
-    color: #120b03;
-    box-shadow: 0 10px 28px rgba(217, 170, 76, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: var(--lumina-ink);
+    color: #ffffff;
+    box-shadow: 0 12px 34px rgba(8, 24, 32, 0.28);
   }
 
   .lumina-button-secondary {
-    border: 1px solid var(--line-bright);
-    background: rgba(246, 239, 227, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.20);
+    background: rgba(239, 247, 249, 0.10);
     color: var(--foreground);
     backdrop-filter: blur(18px);
   }

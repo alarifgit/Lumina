@@ -24,7 +24,7 @@ export function MediaInfoDialog({ mediaId, title, open, onOpenChange }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[82vh] overflow-hidden border-[var(--line-soft)] bg-[#08111d] p-0 text-foreground shadow-[0_24px_90px_rgba(0,0,0,0.7)] sm:max-w-2xl"
+        className="max-h-[82vh] overflow-hidden border-white/14 bg-[#1b303b]/96 p-0 text-foreground shadow-[0_24px_90px_rgba(7,23,32,0.58)] backdrop-blur-2xl sm:max-w-2xl"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") event.stopPropagation();

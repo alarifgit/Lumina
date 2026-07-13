@@ -6,7 +6,6 @@ import { useMediaStore } from "@/store/media-store";
 import { useSearch } from "@/lib/queries";
 import { MediaCard } from "./media-card";
 import { GridSkeleton } from "./skeletons";
-import { LogoEmblem } from "./logo";
 
 interface Props {
   onOpen: (id: string) => void;
@@ -25,8 +24,8 @@ export function SearchView({ onOpen, onPlay }: Props) {
   }, []);
 
   return (
-    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8">
-      <div className="lumina-panel mx-auto mb-7 max-w-3xl rounded-2xl p-3 shadow-[0_32px_90px_rgba(0,0,0,0.38)]">
+    <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8 min-[2200px]:pt-24">
+      <div className="lumina-panel mx-auto mb-7 max-w-3xl rounded-lg p-3">
         <div className="relative">
           <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-foreground/50" />
           <input
@@ -34,7 +33,7 @@ export function SearchView({ onOpen, onPlay }: Props) {
             value={searchQuery}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search titles, shows, episodes, collections..."
-            className="h-14 w-full rounded-xl border border-[var(--line-soft)] bg-[#08111d]/72 pl-12 pr-12 text-base text-foreground placeholder:text-foreground/40 focus:border-[var(--lumina-gold)]/50 focus:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-[rgba(238,209,132,0.18)]"
+            className="h-14 w-full rounded-lg border border-white/12 bg-[var(--lumina-ink)]/72 pl-12 pr-12 text-base text-foreground placeholder:text-foreground/40 focus:border-white/28 focus:bg-[var(--lumina-ink)]/84 focus:outline-none"
             aria-label="Search your library"
           />
           {searchQuery && (
@@ -56,8 +55,10 @@ export function SearchView({ onOpen, onPlay }: Props) {
       </div>
 
       {!q ? (
-        <div className="lumina-panel mx-auto flex max-w-xl flex-col items-center justify-center rounded-xl px-6 py-20 text-center">
-          <LogoEmblem size={82} className="mb-3 opacity-80" />
+        <div className="lumina-panel mx-auto flex max-w-xl flex-col items-center justify-center rounded-lg px-6 py-20 text-center">
+          <span className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/14 bg-[var(--lumina-ink)]/72 text-white/78">
+            <SearchIcon className="h-6 w-6" />
+          </span>
           <h2 className="lumina-title text-3xl font-semibold">Find a title by its light.</h2>
           <p className="mt-1 text-sm text-foreground/60">
             Search across movies, shows, episodes, and collections.
@@ -70,14 +71,14 @@ export function SearchView({ onOpen, onPlay }: Props) {
           <p className="mb-4 text-sm text-foreground/50">
             {data.items.length} result{data.items.length === 1 ? "" : "s"} for “{q}”
           </p>
-          <div className="grid grid-cols-3 gap-x-3 gap-y-5 sm:grid-cols-4 sm:gap-x-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+          <div className="lumina-media-grid">
             {data.items.map((m) => (
               <MediaCard key={m.id} media={m} onOpen={onOpen} onPlay={onPlay} variant="grid" className="w-full" />
             ))}
           </div>
         </>
       ) : (
-        <div className="lumina-panel mx-auto flex max-w-xl flex-col items-center justify-center rounded-xl px-6 py-20 text-center">
+        <div className="lumina-panel mx-auto flex max-w-xl flex-col items-center justify-center rounded-lg px-6 py-20 text-center">
           <SearchIcon className="mb-3 h-12 w-12 text-foreground/30" />
           <p className="text-sm text-foreground/60">
             No matches for “{q}”. Try a different title.
