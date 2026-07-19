@@ -84,7 +84,7 @@ export function HorizontalRail({
   };
 
   const controlClass =
-    "absolute top-1/2 z-30 hidden h-[clamp(3rem,2vw,4rem)] w-[clamp(3rem,2vw,4rem)] -translate-y-1/2 items-center justify-center rounded-full border border-white/18 bg-[var(--lumina-ink)]/94 text-white shadow-[0_16px_38px_rgba(7,23,32,0.42)] backdrop-blur-xl transition-[transform,background-color,border-color] hover:scale-105 hover:border-white/32 hover:bg-[#102a37] active:scale-95 md:flex [&_svg]:h-[clamp(1.5rem,1vw,2rem)] [&_svg]:w-[clamp(1.5rem,1vw,2rem)]";
+    "absolute top-1/2 z-50 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-lg border border-white/20 bg-[var(--lumina-ink)]/96 text-white shadow-[0_16px_38px_rgba(7,23,32,0.48)] backdrop-blur-xl transition-[background-color,border-color,opacity] hover:border-white/36 hover:bg-[#14313f] active:bg-[#0b202b] md:flex [&_svg]:h-6 [&_svg]:w-6";
 
   return (
     <div className={cn("relative", className)}>
@@ -92,7 +92,7 @@ export function HorizontalRail({
         <button
           type="button"
           onClick={() => move(-1)}
-          className={cn(controlClass, "left-3 sm:left-5 lg:left-7")}
+          className={cn(controlClass, "left-2 sm:left-3 lg:left-4")}
           aria-label={`Show previous ${label}`}
         >
           <ChevronLeft />
@@ -115,7 +115,7 @@ export function HorizontalRail({
         <button
           type="button"
           onClick={() => move(1)}
-          className={cn(controlClass, "right-3 sm:right-5 lg:right-7")}
+          className={cn(controlClass, "right-2 sm:right-3 lg:right-4")}
           aria-label={`Show more ${label}`}
         >
           <ChevronRight />

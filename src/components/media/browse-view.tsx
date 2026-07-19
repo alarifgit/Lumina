@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { useBrowseInfinite, useGenres } from "@/lib/queries";
-import { useMediaStore } from "@/store/media-store";
+import {
+  useMediaStore,
+  type BrowsePreferences,
+  type BrowseTarget,
+} from "@/store/media-store";
 import { MediaCard } from "./media-card";
 import { GridSkeleton } from "./skeletons";
 import {
@@ -13,32 +17,51 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, AlertCircle, Play, Plus } from "lucide-react";
-import type { MediaSummary, MediaType } from "@/lib/types";
+import type { BrowseSort, MediaSummary, WatchState } from "@/lib/types";
 import { formatRuntime } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
+import { ProceduralPoster } from "./procedural-poster";
 
 interface Props {
-  type?: MediaType;
-  title: string;
+  target: BrowseTarget;
   onOpen: (id: string) => void;
   onPlay: (mediaId: string, episodeId: string | null, startAt: number) => void;
 }
 
-const SORTS = [
+const SORTS: { value: BrowseSort; label: string }[] = [
   { value: "popular", label: "Most Popular" },
   { value: "rating", label: "Highest Rated" },
   { value: "year", label: "Newest" },
   { value: "title", label: "A–Z" },
 ];
 
-export function BrowseView({ type, title, onOpen, onPlay }: Props) {
-  // Sync local genre with the global store (set when picking from the nav dropdown)
-  const storeGenre = useMediaStore((s) => s.genreFilter);
-  const [genre, setGenre] = useState<string | null>(storeGenre);
-  const [sort, setSort] = useState("popular");
-  const { data: genres } = useGenres();
+const WATCH_STATES: { value: WatchState; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "unwatched", label: "Unwatched" },
+  { value: "in-progress", label: "In progress" },
+  { value: "watched", label: "Watched" },
+];
 
-  const query = useBrowseInfinite({ type, genre, sort, pageSize: 24 });
+export function BrowseView({ target, onOpen, onPlay }: Props) {
+  const storedPreferences = useMediaStore((s) => s.browsePreferences[target.scope]);
+  const updatePreferences = useMediaStore((s) => s.updateBrowsePreferences);
+  const genre = storedPreferences?.genre ?? null;
+  const sort = storedPreferences?.sort ?? (target.preset ? null : "popular");
+  const watchState = storedPreferences?.watchState ?? "all";
+  const { data: genres } = useGenres();
+  const changePreferences = (updates: Partial<BrowsePreferences>) => {
+    updatePreferences(target.scope, updates);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  };
+
+  const query = useBrowseInfinite({
+    type: target.type,
+    preset: target.preset,
+    genre,
+    sort: sort ?? undefined,
+    watchState,
+    pageSize: 24,
+  });
 
   const pages = (query.data?.pages ?? []) as {
     items: MediaSummary[];
@@ -56,16 +79,16 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
       {featured ? (
         <BrowseFeature
           item={featured}
-          title={genre ? genre : title}
+          title={genre ? genre : target.title}
           total={total}
           onOpen={onOpen}
           onPlay={onPlay}
         />
       ) : (
         <div className="mb-5">
-          <p className="label-eyebrow mb-2 text-primary/90">Browse</p>
+          <p className="label-eyebrow mb-2 text-primary/90">{target.eyebrow ?? "Browse"}</p>
           <h1 className="lumina-title text-4xl font-bold sm:text-5xl">
-            {genre ? genre : title}
+            {genre ? genre : target.title}
           </h1>
           <p className="mt-1 text-sm text-foreground/50">
             {total} {total === 1 ? "title" : "titles"}
@@ -74,22 +97,28 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
       )}
 
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
-          <FilterChip active={!genre} onClick={() => setGenre(null)}>
-            All {type === "TV" ? "Shows" : type === "MOVIE" ? "Movies" : "Titles"}
-          </FilterChip>
-          <FilterChip active={sort === "year"} onClick={() => setSort("year")}>
-            New releases
-          </FilterChip>
-          <FilterChip active={sort === "rating"} onClick={() => setSort("rating")}>
-            Critically acclaimed
-          </FilterChip>
-          <FilterChip active={sort === "popular"} onClick={() => setSort("popular")}>
-            Most popular
-          </FilterChip>
+        <div
+          className="no-scrollbar flex gap-2 overflow-x-auto pb-1"
+          role="group"
+          aria-label="Watch state"
+        >
+          {WATCH_STATES.map((state) => (
+            <FilterChip
+              key={state.value}
+              active={watchState === state.value}
+              onClick={() => changePreferences({ watchState: state.value })}
+            >
+              {state.label}
+            </FilterChip>
+          ))}
         </div>
         <div className="flex items-center gap-2">
-          <Select value={genre ?? "all"} onValueChange={(v) => setGenre(v === "all" ? null : v)}>
+          <Select
+            value={genre ?? "all"}
+            onValueChange={(value) =>
+              changePreferences({ genre: value === "all" ? null : value })
+            }
+          >
             <SelectTrigger className="h-9 w-36 sm:w-44">
               <SelectValue placeholder="Genre" />
             </SelectTrigger>
@@ -102,11 +131,19 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
               ))}
             </SelectContent>
           </Select>
-          <Select value={sort} onValueChange={setSort}>
+          <Select
+            value={sort ?? "shelf"}
+            onValueChange={(value) =>
+              changePreferences({
+                sort: value === "shelf" ? null : (value as BrowseSort),
+              })
+            }
+          >
             <SelectTrigger className="h-9 w-36 sm:w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              {target.preset && <SelectItem value="shelf">Shelf order</SelectItem>}
               {SORTS.map((s) => (
                 <SelectItem key={s.value} value={s.value}>
                   {s.label}
@@ -126,7 +163,12 @@ export function BrowseView({ type, title, onOpen, onPlay }: Props) {
         </div>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
-          <p className="text-sm text-foreground/60">No titles found.</p>
+          <p className="text-sm text-foreground/60">
+            No {watchState === "all"
+              ? ""
+              : `${WATCH_STATES.find((state) => state.value === watchState)?.label.toLowerCase()} `}
+            titles found{genre ? ` in ${genre}` : ""}.
+          </p>
         </div>
       ) : (
         <>
@@ -171,19 +213,35 @@ function BrowseFeature({
   onOpen: (id: string) => void;
   onPlay: (mediaId: string, episodeId: string | null, startAt: number) => void;
 }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const backdrop = item.backdropUrl || item.posterUrl || "/brand/hero-1.png";
   return (
     <section
       data-lumina-frame="true"
-      className="lumina-panel relative mb-6 min-h-[330px] overflow-hidden rounded-lg lg:min-h-[clamp(330px,22vw,620px)]"
+      className="lumina-panel lumina-hero-frame film-grain lumina-reveal relative mb-7 min-h-[300px] overflow-hidden rounded-lg border-white/16 lg:min-h-[clamp(300px,19vw,500px)]"
     >
-      <img
-        src={backdrop}
-        alt=""
-        className="absolute inset-0 h-full w-full object-cover"
-      />
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,0.92)_0%,rgba(0,0,0,0.62)_42%,rgba(0,0,0,0.08)_74%,rgba(0,0,0,0.46)_100%),linear-gradient(180deg,rgba(0,0,0,0.05)_0%,rgba(0,0,0,0.72)_100%)]" />
-      <div className="relative flex min-h-[310px] flex-col justify-end p-5 sm:p-7 lg:min-h-[clamp(330px,22vw,620px)]">
+      {!imageFailed ? (
+        <img
+          src={backdrop}
+          alt=""
+          className="absolute inset-0 h-full w-full scale-[1.01] object-cover brightness-[0.9] contrast-[1.03] saturate-[0.8] transition-[transform,filter] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[1.025]"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <ProceduralPoster
+          title={item.title}
+          genres={item.genres}
+          variant="backdrop"
+          className="absolute inset-0 h-full w-full"
+        />
+      )}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_74%_30%,rgba(244,204,139,0.14),transparent_26%),linear-gradient(90deg,rgba(7,23,32,0.96)_0%,rgba(7,23,32,0.7)_41%,rgba(21,49,61,0.12)_73%,rgba(7,23,32,0.5)_100%),linear-gradient(180deg,rgba(81,111,124,0.08)_0%,rgba(7,23,32,0.84)_100%)]" />
+      <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/10" />
+      <div className="pointer-events-none absolute right-5 top-5 z-10 hidden items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-white/48 sm:right-7 sm:top-7 sm:flex">
+        <span>Curated from your library</span>
+        <span className="h-px w-7 bg-primary/55" />
+      </div>
+      <div className="relative flex min-h-[280px] flex-col justify-end p-5 sm:p-7 lg:min-h-[clamp(300px,19vw,500px)]">
         <div className="max-w-2xl">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className="rounded-md bg-[var(--lumina-ink)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white">
@@ -194,7 +252,7 @@ function BrowseFeature({
             </span>
           </div>
           <p className="label-eyebrow mb-2 text-primary/90">{title}</p>
-          <h1 className="lumina-title text-shadow-lg text-5xl font-bold leading-[0.95] sm:text-6xl lg:text-7xl">
+          <h1 className="lumina-title text-shadow-lg text-4xl font-bold leading-[0.95] sm:text-5xl lg:text-6xl">
             {item.title}
           </h1>
           {item.overview && (
@@ -217,14 +275,14 @@ function BrowseFeature({
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
               onClick={() => onPlay(item.id, item.progressEpisodeId ?? null, item.progressPosition ?? 0)}
-              className="lumina-button-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-transform hover:scale-[1.03]"
+              className="lumina-button-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[1.03] active:scale-[0.98]"
             >
               <Play className="h-4 w-4 fill-current" />
               {item.progressPercent ? "Resume" : "Play"}
             </button>
             <button
               onClick={() => onOpen(item.id)}
-              className="lumina-button-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-colors hover:bg-white/[0.12]"
+              className="lumina-button-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-[background-color,transform] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:translate-x-0.5 hover:bg-white/[0.12] active:scale-[0.98]"
             >
               <Plus className="h-4 w-4" />
               More info
@@ -247,7 +305,9 @@ function FilterChip({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border px-4 text-sm font-medium transition-colors",
         active

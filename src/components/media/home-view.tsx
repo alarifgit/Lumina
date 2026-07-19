@@ -19,16 +19,38 @@ import {
   ScanSearch,
   Sparkles,
 } from "lucide-react";
-import type { MediaSummary } from "@/lib/types";
+import type { BrowsePreset, MediaSummary, MediaType } from "@/lib/types";
 
 interface Props {
   onOpen: (id: string) => void;
   onPlay: (mediaId: string, episodeId: string | null, startAt: number) => void;
 }
 
+const ROW_EYEBROWS: Record<string, string> = {
+  "recently-added-episodes": "New episodes",
+  "recently-added-movies": "Fresh arrivals",
+  trending: "Now in focus",
+  "popular-movies": "Film spotlight",
+  "popular-tv": "Series spotlight",
+  "top-rated": "Highest rated",
+  "new-releases": "Recent releases",
+};
+
+const ROW_BROWSE_TARGETS: Partial<
+  Record<string, { preset: BrowsePreset; type?: MediaType }>
+> = {
+  "recently-added-movies": { preset: "recently-added-movies", type: "MOVIE" },
+  trending: { preset: "trending" },
+  "popular-movies": { preset: "popular-movies", type: "MOVIE" },
+  "popular-tv": { preset: "popular-tv", type: "TV" },
+  "top-rated": { preset: "top-rated" },
+  "new-releases": { preset: "new-releases" },
+};
+
 export function HomeView({ onOpen, onPlay }: Props) {
   const { data, isLoading, error } = useHome();
   const setRoute = useMediaStore((s) => s.setRoute);
+  const openBrowse = useMediaStore((s) => s.openBrowse);
 
   if (isLoading) {
     return (
@@ -76,12 +98,20 @@ export function HomeView({ onOpen, onPlay }: Props) {
           <HeroCarousel items={data.featured} onOpen={onOpen} onPlay={onPlay} />
         </div>
       )}
-      <div className="mt-7 space-y-5">
+      <div className="mt-8 space-y-5">
         {data.continueWatching.length > 0 && (
-          <section className="lumina-page render-lazy-landscape-row py-4">
-            <h2 className="lumina-shelf-heading mb-2 px-4 text-lg font-semibold tracking-[-0.025em] text-white sm:px-6 sm:text-xl lg:px-8">
-              Continue Watching
-            </h2>
+          <section className="lumina-page render-lazy-landscape-row lumina-reveal py-5">
+            <div className="mb-1 flex items-end justify-between gap-4 px-4 sm:px-6 lg:px-8">
+              <div>
+                <p className="lumina-shelf-kicker mb-2">Resume</p>
+                <h2 className="lumina-shelf-heading text-lg font-semibold tracking-[-0.035em] text-white sm:text-xl">
+                  Continue Watching
+                </h2>
+              </div>
+              <span className="hidden pb-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/36 tabular-nums sm:block">
+                {data.continueWatching.length} in progress
+              </span>
+            </div>
             <HorizontalRail
               itemCount={data.continueWatching.length}
               label="Continue Watching"
@@ -93,15 +123,30 @@ export function HomeView({ onOpen, onPlay }: Props) {
             </HorizontalRail>
           </section>
         )}
-        {rowsWithItems.map((r) => (
-          <ContentRow
-            key={r.key}
-            title={r.title}
-            items={r.items}
-            onOpen={onOpen}
-            onPlay={onPlay}
-          />
-        ))}
+        {rowsWithItems.map((r) => {
+          const browseTarget = ROW_BROWSE_TARGETS[r.key];
+          return (
+            <ContentRow
+              key={r.key}
+              title={r.title}
+              eyebrow={ROW_EYEBROWS[r.key]}
+              items={r.items}
+              onOpen={onOpen}
+              onPlay={onPlay}
+              onViewAll={
+                browseTarget
+                  ? () =>
+                      openBrowse({
+                        scope: `preset:${browseTarget.preset}`,
+                        title: r.title,
+                        eyebrow: ROW_EYEBROWS[r.key],
+                        ...browseTarget,
+                      })
+                  : undefined
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );

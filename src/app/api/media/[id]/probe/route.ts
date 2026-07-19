@@ -24,6 +24,7 @@ export async function GET(
       reason: null,
       directPlayable: true,
       directPlayReason: null,
+      durationSeconds: null,
     };
     return Response.json(info);
   }

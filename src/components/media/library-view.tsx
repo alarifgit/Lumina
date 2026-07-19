@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useDeferredValue, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import {
   useApplyMetadata,
-  useBrowse,
+  useBrowseInfinite,
   useCreateSection,
   useDeleteSection,
   useLibraryConfig,
@@ -82,6 +82,13 @@ type MatchTarget = {
   year?: number | null;
 };
 
+type PlexPreviewPayload = {
+  url?: string;
+  token?: string;
+  direction: PlexSyncDirection;
+  sectionId: string | null;
+};
+
 export function LibraryView({ mode = "library" }: { mode?: "library" | "settings" }) {
   const isSettings = mode === "settings";
   const { data: stats, isLoading: statsLoading } = useStats();
@@ -107,7 +114,9 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const [sectionResults, setSectionResults] = useState<Record<string, ScanResult>>({});
   const [fetchingId, setFetchingId] = useState<string | null>(null);
   const [inventoryType, setInventoryType] = useState<MediaType | "ALL">("MOVIE");
-  const [inventoryWindow, setInventoryWindow] = useState({ key: "", limit: 100 });
+  const [inventorySearch, setInventorySearch] = useState("");
+  const [inventoryAvailability, setInventoryAvailability] = useState<"available" | "unavailable" | "all">("all");
+  const [inventoryMetadata, setInventoryMetadata] = useState<"matched" | "unmatched" | "all">("all");
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<MediaType>("MOVIE");
@@ -118,6 +127,8 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const [plexDirection, setPlexDirection] = useState<PlexSyncDirection>("pull");
   const [plexSectionId, setPlexSectionId] = useState<string>("all");
   const [plexResult, setPlexResult] = useState<PlexSyncResult | null>(null);
+  const [plexPreviewPayload, setPlexPreviewPayload] = useState<PlexPreviewPayload | null>(null);
+  const [plexReportVersion, setPlexReportVersion] = useState(0);
   const [tmdbEdited, setTmdbEdited] = useState(false);
   const [plexUrlEdited, setPlexUrlEdited] = useState(false);
   const [plexDirectionEdited, setPlexDirectionEdited] = useState(false);
@@ -126,28 +137,35 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   const [matchResults, setMatchResults] = useState<MetadataResult[]>([]);
   const [matchingId, setMatchingId] = useState<string | null>(null);
 
-  const effectiveTmdbKey = tmdbEdited ? globalTmdbKey : config?.tmdbKey ?? "";
+  const effectiveTmdbKey = tmdbEdited ? globalTmdbKey : "";
   const effectivePlexUrl = plexUrlEdited ? plexUrl : config?.plexUrl ?? "";
   const effectivePlexDirection = plexDirectionEdited
     ? plexDirection
     : config?.plexSyncDirection ?? "pull";
 
   const effectiveType = sectionFilter ? sectionFilter.type : inventoryType;
-  const inventoryKey = `${sectionFilter?.id ?? "all"}:${effectiveType}`;
-  const inventoryLimit = inventoryWindow.key === inventoryKey ? inventoryWindow.limit : 100;
+  const deferredInventorySearch = useDeferredValue(inventorySearch.trim());
 
-  const list = useBrowse({
+  const list = useBrowseInfinite({
     type: effectiveType === "ALL" ? undefined : effectiveType,
     sectionId: sectionFilter?.id,
-    page: 1,
-    pageSize: inventoryLimit,
+    pageSize: 100,
     sort: "title",
+    q: deferredInventorySearch || undefined,
+    availability: inventoryAvailability,
+    metadata: inventoryMetadata,
     enabled: !isSettings,
   });
 
   const onSaveTmdbKey = async () => {
+    if (!tmdbEdited) {
+      toast({ title: "No key entered", description: "Enter a replacement key before saving. The stored key remains active." });
+      return;
+    }
     try {
       await saveLibraryConfig.mutateAsync({ tmdbKey: effectiveTmdbKey });
+      setGlobalTmdbKey("");
+      setTmdbEdited(false);
       toast({
         title: "TMDB key saved",
         description: effectiveTmdbKey
@@ -178,6 +196,10 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
 
   const onScanAll = async () => {
     setAllResult(null);
+    toast({
+      title: "Library scan queued",
+      description: "The scan will continue on the server if you leave this view.",
+    });
     try {
       const res = await scanAll.mutateAsync({
         tmdbKey: effectiveTmdbKey || undefined,
@@ -194,10 +216,15 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   };
 
   const onScanSection = async (s: LibrarySectionInfo) => {
-    setSectionResults((p) => ({
-      ...p,
-      [s.id]: { scanned: 0, added: 0, updated: 0, skipped: 0, errors: [], durationMs: 0, sectionId: s.id, sectionName: s.name },
-    }));
+    setSectionResults((previous) => {
+      const next = { ...previous };
+      delete next[s.id];
+      return next;
+    });
+    toast({
+      title: `${s.name} scan queued`,
+      description: "The scan will continue on the server if you leave this view.",
+    });
     try {
       const res = await scanSection.mutateAsync({
         sectionId: s.id,
@@ -319,10 +346,17 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     sectionId: plexSectionId === "all" ? null : plexSectionId,
   });
 
+  const invalidatePlexPreview = () => {
+    setPlexPreviewPayload(null);
+    setPlexResult((current) => current?.mode === "preview" ? null : current);
+  };
+
   const onTestPlex = async () => {
+    setPlexPreviewPayload(null);
     try {
       const result = await testPlex.mutateAsync({ url: effectivePlexUrl || undefined, token: plexToken || undefined });
       setPlexResult(result);
+      setPlexReportVersion((version) => version + 1);
       toast({
         title: "Plex connected",
         description: `${result.serverName ?? "Plex"} · ${result.sections ?? 0} library section(s) found.`,
@@ -333,9 +367,14 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   };
 
   const onPreviewPlexSync = async () => {
+    const payload = plexPayload();
+    setPlexPreviewPayload(null);
+    setPlexResult(null);
     try {
-      const result = await plexSync.mutateAsync({ ...plexPayload(), apply: false });
+      const result = await plexSync.mutateAsync({ ...payload, apply: false });
       setPlexResult(result);
+      setPlexPreviewPayload(payload);
+      setPlexReportVersion((version) => version + 1);
       toast({
         title: "Plex sync preview ready",
         description: `${result.markedLuminaWatched} Lumina update(s) · ${result.markedPlexWatched} Plex update(s).`,
@@ -346,9 +385,18 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   };
 
   const onApplyPlexSync = async () => {
+    if (!plexPreviewPayload || plexResult?.mode !== "preview") {
+      toast({
+        title: "Preview required",
+        description: "Run a fresh preview for the current Plex settings before applying watched changes.",
+      });
+      return;
+    }
     try {
-      const result = await plexSync.mutateAsync({ ...plexPayload(), apply: true });
+      const result = await plexSync.mutateAsync({ ...plexPreviewPayload, apply: true });
       setPlexResult(result);
+      setPlexPreviewPayload(null);
+      setPlexReportVersion((version) => version + 1);
       toast({
         title: "Plex sync applied",
         description: `${result.markedLuminaWatched} marked watched in Lumina · ${result.markedPlexWatched} marked watched in Plex.`,
@@ -358,14 +406,14 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
     }
   };
 
-  const items = list.data?.items ?? [];
-  const totalItems = list.data?.total ?? 0;
+  const items = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const totalItems = list.data?.pages[0]?.total ?? 0;
   const inventoryLabel =
     effectiveType === "MOVIE" ? "movies" : effectiveType === "TV" ? "TV shows" : "titles";
 
   return (
     <div className="lumina-page px-4 pb-10 pt-20 sm:px-6 lg:px-8 min-[2200px]:pt-24">
-      <PageHero isSettings={isSettings} stats={stats} />
+      <PageHero isSettings={isSettings} stats={stats} statsLoading={statsLoading} />
 
       {!isSettings && (
         <>
@@ -383,6 +431,12 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
             sectionFilter={sectionFilter}
             inventoryType={inventoryType}
             setInventoryType={setInventoryType}
+            inventorySearch={inventorySearch}
+            setInventorySearch={setInventorySearch}
+            availability={inventoryAvailability}
+            setAvailability={setInventoryAvailability}
+            metadata={inventoryMetadata}
+            setMetadata={setInventoryMetadata}
             clearSection={() => setLibrarySectionFilter(null)}
             onFetchMetadata={onFetchMetadata}
             onOpenManualMatch={onOpenManualMatch}
@@ -396,20 +450,15 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
             onApplyMatch={onApplyManualMatch}
             onCloseMatch={() => setMatchTarget(null)}
             fetchingId={fetchingId}
-            hasMore={items.length < totalItems}
-            onLoadMore={() =>
-              setInventoryWindow({
-                key: inventoryKey,
-                limit: inventoryLimit + 100,
-              })
-            }
-            loadingMore={list.isFetching && !list.isLoading}
+            hasMore={!!list.hasNextPage}
+            onLoadMore={() => list.fetchNextPage()}
+            loadingMore={list.isFetchingNextPage}
           />
         </>
       )}
 
       {isSettings && (
-        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="grid items-start gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
           <SettingsSidebar />
           <div className="min-w-0 space-y-5">
             <LibraryPathsPanel
@@ -443,7 +492,7 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
               }}
               autoMatch={globalAutoMatch}
               setAutoMatch={setGlobalAutoMatch}
-              saved={!!config?.tmdbKey || !!stats?.tmdbKey}
+              saved={!!config?.tmdbKeyConfigured || !!stats?.tmdbKeyConfigured}
               savePending={saveLibraryConfig.isPending}
               scanPending={scanAll.isPending}
               onSave={onSaveTmdbKey}
@@ -451,20 +500,29 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
               result={allResult}
             />
             <PlexSyncPanel
+              key={plexReportVersion}
               plexUrl={effectivePlexUrl}
               setPlexUrl={(value) => {
+                invalidatePlexPreview();
                 setPlexUrlEdited(true);
                 setPlexUrl(value);
               }}
               plexToken={plexToken}
-              setPlexToken={setPlexToken}
+              setPlexToken={(value) => {
+                invalidatePlexPreview();
+                setPlexToken(value);
+              }}
               direction={effectivePlexDirection}
               setDirection={(value) => {
+                invalidatePlexPreview();
                 setPlexDirectionEdited(true);
                 setPlexDirection(value);
               }}
               sectionId={plexSectionId}
-              setSectionId={setPlexSectionId}
+              setSectionId={(value) => {
+                invalidatePlexPreview();
+                setPlexSectionId(value);
+              }}
               sections={sections ?? []}
               result={plexResult}
               tokenSaved={!!config?.plexTokenSaved}
@@ -474,8 +532,8 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
               onTest={onTestPlex}
               onPreview={onPreviewPlexSync}
               onApply={onApplyPlexSync}
+              applyReady={!!plexPreviewPayload && plexResult?.mode === "preview"}
             />
-            <TranscodingPanel stats={stats} loading={statsLoading} />
           </div>
         </div>
       )}
@@ -483,12 +541,13 @@ export function LibraryView({ mode = "library" }: { mode?: "library" | "settings
   );
 }
 
-function PageHero({ isSettings, stats }: { isSettings: boolean; stats?: { mediaCount?: number } }) {
+function PageHero({ isSettings, stats, statsLoading }: { isSettings: boolean; stats?: any; statsLoading: boolean }) {
   return (
     <section className="lumina-panel relative mb-7 overflow-hidden rounded-lg p-5 sm:p-8">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_84%_0%,rgba(232,241,244,0.13),transparent_30%),linear-gradient(120deg,rgba(39,65,77,0.42),transparent_58%)]" />
-      <div className="relative max-w-3xl">
-        <p className="label-eyebrow mb-2 text-primary/90">
+      <div className="relative grid items-end gap-6 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="max-w-3xl">
+          <p className="label-eyebrow mb-2 text-primary/90">
           {isSettings ? "Server control room" : "Media inventory"}
         </p>
         <h1 className="lumina-title text-5xl font-semibold leading-none sm:text-7xl">
@@ -498,7 +557,22 @@ function PageHero({ isSettings, stats }: { isSettings: boolean; stats?: { mediaC
           {isSettings
             ? "Configure libraries, metadata, scanning, Plex sync, playback, and transcoding."
             : `${(stats?.mediaCount ?? 0).toLocaleString()} scanned titles, organized for discovery and metadata care without exposing raw admin controls.`}
-        </p>
+          </p>
+        </div>
+        {isSettings && (
+          <div id="playback-and-transcoding" className="flex max-w-md items-center gap-3 rounded-lg border border-white/12 bg-[var(--lumina-ink)]/38 px-4 py-3 backdrop-blur-xl">
+            <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary"><Cpu className="h-4 w-4" /></div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold">Playback & transcoding</span>
+                <Badge variant={stats?.transcodeHardware ? "default" : "secondary"} className="text-[10px]">
+                  {statsLoading ? "Checking" : !stats?.transcodeAvailable ? "Unavailable" : stats?.transcodeHardware ? "Hardware" : "CPU"}
+                </Badge>
+              </div>
+              <p className="mt-1 truncate font-mono text-[11px] text-foreground/52">{statsLoading ? "detecting encoder" : stats?.transcodeEncoderKey ?? "direct play / libx264"}</p>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -521,7 +595,7 @@ function SettingsSidebar() {
   const setRoute = useMediaStore((s) => s.setRoute);
 
   return (
-    <aside className="lumina-panel sticky top-20 h-fit rounded-lg p-3">
+    <aside className="lumina-panel h-fit self-start rounded-lg p-3">
       <div className="px-2 pb-3 pt-1">
         <p className="label-eyebrow text-primary/90">Configuration</p>
       </div>
@@ -549,54 +623,6 @@ function SettingsSidebar() {
         })}
       </nav>
     </aside>
-  );
-}
-
-function TranscodingPanel({ stats, loading }: { stats?: any; loading: boolean }) {
-  return (
-    <Card id="playback-and-transcoding" className="p-5 sm:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-start gap-3">
-          <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-            <Cpu className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="lumina-title text-2xl font-semibold">Playback & transcoding</h2>
-              <Badge variant={stats?.transcodeHardware ? "default" : "secondary"}>
-                {loading
-                  ? "Checking"
-                  : !stats?.transcodeAvailable
-                    ? "Unavailable"
-                    : stats?.transcodeHardware
-                      ? "Hardware active"
-                      : "CPU fallback"}
-              </Badge>
-            </div>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-foreground/58">
-              {loading
-                ? "Checking ffmpeg encoder support."
-                : !stats?.transcodeAvailable
-                  ? "Lumina cannot transcode yet because ffmpeg is not available. Direct-play files can still stream normally."
-                  : stats?.transcodeHardware
-                    ? `Lumina is using ${stats.transcodeEncoder} for H.264 transcodes.`
-                    : `Lumina is using ${stats?.transcodeEncoder ?? "CPU transcoding"}. Direct play remains preferred when the browser can handle the file.`}
-            </p>
-            {!loading && stats?.transcodeReason && (
-              <p className="mt-2 max-w-3xl rounded-lg border border-amber-500/18 bg-amber-500/8 px-3 py-2 text-xs leading-5 text-amber-200/78">
-                {stats.transcodeReason}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-background/45 px-4 py-3 text-sm">
-          <div className="text-xs uppercase tracking-[0.12em] text-foreground/42">Active encoder</div>
-          <div className="mt-1 font-mono text-foreground/86">
-            {loading ? "detecting" : stats?.transcodeEncoderKey ?? "libx264"}
-          </div>
-        </div>
-      </div>
-    </Card>
   );
 }
 
@@ -781,7 +807,7 @@ function ScanningPanel({
               type="password"
               value={tmdbKey}
               onChange={(e) => setTmdbKey(e.target.value)}
-              placeholder="Get one free at themoviedb.org/settings/api"
+              placeholder={saved ? "Saved key active — enter a replacement" : "Get one free at themoviedb.org/settings/api"}
               className="font-mono text-sm"
             />
             <Button variant="outline" onClick={onSave} disabled={savePending}>
@@ -803,8 +829,8 @@ function ScanningPanel({
       {result && (
         <div className="mt-4 rounded-lg border border-border/60 bg-[var(--lumina-ink)]/28 p-4 text-sm">
           <div className="mb-2 flex items-center gap-2 font-semibold">
-            <CheckCircle2 className="h-4 w-4 text-primary" />
-            Scan finished in {(result.durationMs / 1000).toFixed(1)}s
+            {result.complete ? <CheckCircle2 className="h-4 w-4 text-primary" /> : <AlertTriangle className="h-4 w-4 text-amber-300" />}
+            {result.complete ? "Scan finished" : "Incomplete scan — availability unchanged"} in {(result.durationMs / 1000).toFixed(1)}s
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <ResultStat label="Scanned" value={result.scanned} />
@@ -815,6 +841,7 @@ function ScanningPanel({
           {result.errors.length > 0 && (
             <p className="mt-3 text-xs text-amber-200/78">{result.errors.length} scan note(s) recorded.</p>
           )}
+          <ScanManifestView result={result} />
         </div>
       )}
     </Card>
@@ -839,6 +866,7 @@ function PlexSyncPanel({
   onTest,
   onPreview,
   onApply,
+  applyReady,
 }: {
   plexUrl: string;
   setPlexUrl: (value: string) => void;
@@ -857,8 +885,22 @@ function PlexSyncPanel({
   onTest: () => void;
   onPreview: () => void;
   onApply: () => void;
+  applyReady: boolean;
 }) {
   const pendingChanges = (result?.markedLuminaWatched ?? 0) + (result?.markedPlexWatched ?? 0);
+  const attentionTotal = result?.attentionTotal ?? (result?.unmatched ?? 0) + pendingChanges;
+  const detailReturned = result?.detailReturned ?? result?.items.length ?? 0;
+  const [itemFilter, setItemFilter] = useState<"attention" | "changes" | "unmatched">("attention");
+  const visibleItems = (result?.items ?? []).filter((item) => {
+    if (itemFilter === "unmatched") return item.action === "unmatched";
+    if (itemFilter === "changes") return item.action === "mark-lumina-watched" || item.action === "mark-plex-watched";
+    return item.action === "unmatched" || item.action === "mark-lumina-watched" || item.action === "mark-plex-watched";
+  });
+  const selectedTotal = itemFilter === "changes"
+    ? pendingChanges
+    : itemFilter === "unmatched"
+      ? result?.unmatched ?? 0
+      : attentionTotal;
   return (
     <Card id="plex-sync" className="p-5 sm:p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -878,6 +920,7 @@ function PlexSyncPanel({
           <Input
             value={plexUrl}
             onChange={(e) => setPlexUrl(e.target.value)}
+            disabled={busy}
             placeholder="http://192.168.1.10:32400"
             className="font-mono text-sm"
           />
@@ -888,6 +931,7 @@ function PlexSyncPanel({
             type="password"
             value={plexToken}
             onChange={(e) => setPlexToken(e.target.value)}
+            disabled={busy}
             placeholder={tokenSaved ? "Saved token active" : "Token from your Plex server"}
             className="font-mono text-sm"
           />
@@ -898,7 +942,7 @@ function PlexSyncPanel({
           </p>
         </Field>
         <Field label="Direction">
-          <Select value={direction} onValueChange={(v) => setDirection(v as PlexSyncDirection)}>
+          <Select value={direction} onValueChange={(v) => setDirection(v as PlexSyncDirection)} disabled={busy}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="pull">Plex to Lumina</SelectItem>
@@ -908,7 +952,7 @@ function PlexSyncPanel({
           </Select>
         </Field>
         <Field label="Scope">
-          <Select value={sectionId} onValueChange={setSectionId}>
+          <Select value={sectionId} onValueChange={setSectionId} disabled={busy}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Lumina libraries</SelectItem>
@@ -924,7 +968,7 @@ function PlexSyncPanel({
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button variant="outline" onClick={onSave} disabled={savePending}>
+        <Button variant="outline" onClick={onSave} disabled={savePending || busy}>
           {savePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
           Save settings
         </Button>
@@ -936,7 +980,7 @@ function PlexSyncPanel({
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
           Preview
         </Button>
-        <Button onClick={onApply} disabled={busy || !result || result.mode === "test" || pendingChanges === 0}>
+        <Button onClick={onApply} disabled={busy || !applyReady || pendingChanges === 0}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
           Apply watched sync
         </Button>
@@ -973,7 +1017,34 @@ function PlexSyncPanel({
           )}
 
           {result.items.length > 0 && (
-            <div className="thin-scrollbar mt-4 max-h-72 overflow-auto rounded-lg border border-border/50">
+            <>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {([
+                  ["attention", "Needs attention", attentionTotal],
+                  ["changes", "Changes", pendingChanges],
+                  ["unmatched", "Unmatched", result.unmatched],
+                ] as const).map(([value, label, count]) => (
+                  <Button
+                    key={value}
+                    variant={itemFilter === value ? "default" : "outline"}
+                    onClick={() => setItemFilter(value)}
+                    className="h-8 px-3 text-xs"
+                  >
+                    {label} · {count.toLocaleString()}
+                  </Button>
+                ))}
+                {(result.alreadySynced > 0 || result.skipped > 0) && (
+                  <span className="text-xs text-foreground/42">
+                    {(result.alreadySynced + result.skipped).toLocaleString()} synced or no-change rows omitted
+                  </span>
+                )}
+              </div>
+              {result.detailTruncated && (
+                <p className="mt-2 text-xs text-amber-200/72">
+                  Showing {detailReturned.toLocaleString()} of {attentionTotal.toLocaleString()} attention rows. Changes are retained before unmatched detail.
+                </p>
+              )}
+              <div className="thin-scrollbar mt-3 max-h-72 overflow-auto rounded-lg border border-border/50">
               <table className="w-full min-w-[720px] text-sm">
                 <thead className="border-b border-border/50 text-left text-xs uppercase tracking-[0.12em] text-foreground/45">
                   <tr>
@@ -985,9 +1056,19 @@ function PlexSyncPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {result.items.map((item, index) => (
+                  {visibleItems.map((item, index) => (
                     <tr key={`${item.plexRatingKey ?? item.title}-${index}`} className="border-b border-border/35 last:border-0">
-                      <td className="px-3 py-2 font-medium">{item.title}</td>
+                      <td className="px-3 py-2 font-medium">
+                        <div>{item.title}</div>
+                        {item.reason && (
+                          <div
+                            className="mt-1 max-w-[360px] text-[11px] font-normal leading-4 text-foreground/44"
+                            title={item.reason}
+                          >
+                            {item.reason}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-foreground/62">
                         {item.type === "TV" && item.seasonNumber != null && item.episodeNumber != null
                           ? `S${item.seasonNumber} E${item.episodeNumber}`
@@ -1012,9 +1093,19 @@ function PlexSyncPanel({
                       </td>
                     </tr>
                   ))}
+                  {visibleItems.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-8 text-center text-foreground/46">
+                        {selectedTotal > 0 && result.detailTruncated
+                          ? `${selectedTotal.toLocaleString()} row(s) match this filter, but their detail falls outside the bounded preview. Changes are retained first.`
+                          : "Nothing in this preview matches the selected filter."}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1069,6 +1160,12 @@ function InventoryTable({
   sectionFilter,
   inventoryType,
   setInventoryType,
+  inventorySearch,
+  setInventorySearch,
+  availability,
+  setAvailability,
+  metadata,
+  setMetadata,
   clearSection,
   onFetchMetadata,
   onOpenManualMatch,
@@ -1093,6 +1190,12 @@ function InventoryTable({
   sectionFilter: { id: string; name: string; type: MediaType } | null;
   inventoryType: MediaType | "ALL";
   setInventoryType: (value: MediaType | "ALL") => void;
+  inventorySearch: string;
+  setInventorySearch: (value: string) => void;
+  availability: "available" | "unavailable" | "all";
+  setAvailability: (value: "available" | "unavailable" | "all") => void;
+  metadata: "matched" | "unmatched" | "all";
+  setMetadata: (value: "matched" | "unmatched" | "all") => void;
   clearSection: () => void;
   onFetchMetadata: (mediaId: string, title: string, type: "MOVIE" | "TV") => void;
   onOpenManualMatch: (media: MatchTarget) => void;
@@ -1110,6 +1213,14 @@ function InventoryTable({
   onLoadMore: () => void;
   loadingMore: boolean;
 }) {
+  const foundLabel = totalItems === 1
+    ? inventoryLabel === "movies"
+      ? "movie"
+      : inventoryLabel === "TV shows"
+        ? "TV show"
+        : "title"
+    : inventoryLabel;
+
   return (
     <Card className="overflow-hidden p-0">
       <div className="flex flex-col gap-4 border-b border-border/60 p-5 lg:flex-row lg:items-center lg:justify-between">
@@ -1117,8 +1228,8 @@ function InventoryTable({
           <h2 className="lumina-title text-2xl font-semibold">Media inventory</h2>
           <p className="mt-1 text-sm text-foreground/50">
             {sectionFilter
-              ? `${sectionFilter.name}: ${totalItems.toLocaleString()} ${inventoryLabel} found. Showing ${items.length.toLocaleString()}.`
-              : `${totalItems.toLocaleString()} ${inventoryLabel} found. Showing ${items.length.toLocaleString()}.`}
+              ? `${sectionFilter.name}: ${totalItems.toLocaleString()} ${foundLabel} found. Showing ${items.length.toLocaleString()}.`
+              : `${totalItems.toLocaleString()} ${foundLabel} found. Showing ${items.length.toLocaleString()}.`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1134,6 +1245,34 @@ function InventoryTable({
           ))}
           <Badge variant="secondary">{items.length} shown</Badge>
         </div>
+      </div>
+      <div className="grid gap-3 border-b border-border/60 bg-white/[0.025] p-4 sm:grid-cols-[minmax(220px,1fr)_190px_190px]">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/42" />
+          <Input
+            value={inventorySearch}
+            onChange={(event) => setInventorySearch(event.target.value)}
+            placeholder="Filter titles…"
+            className="pl-9"
+            aria-label="Filter library titles"
+          />
+        </div>
+        <Select value={availability} onValueChange={(value) => setAvailability(value as "available" | "unavailable" | "all")}>
+          <SelectTrigger aria-label="Filter availability"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All availability</SelectItem>
+            <SelectItem value="available">Available</SelectItem>
+            <SelectItem value="unavailable">Unavailable</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={metadata} onValueChange={(value) => setMetadata(value as "matched" | "unmatched" | "all")}>
+          <SelectTrigger aria-label="Filter metadata"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All metadata</SelectItem>
+            <SelectItem value="matched">TMDB matched</SelectItem>
+            <SelectItem value="unmatched">TMDB unmatched</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       {matchTarget && (
         <div className="border-b border-border/60 bg-white/[0.035] p-5">
@@ -1200,7 +1339,7 @@ function InventoryTable({
         </div>
       )}
       <div className="thin-scrollbar max-h-[68vh] overflow-auto">
-        <table className="w-full min-w-[760px] text-sm">
+        <table className="w-full min-w-[860px] text-sm">
           <thead className="border-b border-border/60 text-left text-xs uppercase tracking-[0.12em] text-foreground/50">
             <tr>
               <th className="px-5 py-3 font-semibold">Title</th>
@@ -1208,30 +1347,40 @@ function InventoryTable({
               <th className="px-3 py-3 font-semibold">Year</th>
               <th className="px-3 py-3 font-semibold">Rating</th>
               <th className="px-3 py-3 font-semibold">Runtime</th>
+              <th className="px-3 py-3 font-semibold">Availability</th>
               <th className="px-3 py-3 font-semibold">Metadata</th>
               <th className="px-5 py-3 text-right font-semibold">Action</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={7} className="px-5 py-10 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></td></tr>
+              <tr><td colSpan={8} className="px-5 py-10 text-center text-foreground/50"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="px-5 py-10 text-center text-foreground/50">No media yet. Add and scan folders from Settings.</td></tr>
+              <tr><td colSpan={8} className="px-5 py-10 text-center text-foreground/50">No media matches these filters.</td></tr>
             ) : (
               items.map((m) => {
-                const hasMeta = !!m.overview || !!m.rating;
+                const available = m.available !== false;
                 return (
                   <tr key={m.id} className="border-b border-border/40 last:border-0 hover:bg-foreground/5">
-                    <td className="px-5 py-3 font-medium">{m.title}</td>
+                    <td className="px-5 py-3 font-medium">
+                      <div>{m.title}</div>
+                      {m.sourcePath && <div className="mt-1 max-w-[420px] truncate font-mono text-[11px] font-normal text-foreground/38" title={m.sourcePath}>{m.sourcePath}</div>}
+                    </td>
                     <td className="px-3 py-3 text-foreground/70">{m.type === "TV" ? "TV" : "Movie"}</td>
                     <td className="px-3 py-3 text-foreground/70">{m.year ?? "-"}</td>
                     <td className="px-3 py-3 text-foreground/70">{m.rating?.toFixed(1) ?? "-"}</td>
                     <td className="px-3 py-3 text-foreground/70">{m.runtime ? formatRuntime(m.runtime) : "-"}</td>
                     <td className="px-3 py-3">
-                      {hasMeta ? (
-                        <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3 text-primary" /> Enriched</Badge>
+                      <Badge variant={available ? "secondary" : "outline"} className={cn("gap-1", !available && "border-amber-400/30 text-amber-200/80")}>
+                        {available ? <CheckCircle2 className="h-3 w-3 text-[var(--success)]" /> : <AlertTriangle className="h-3 w-3" />}
+                        {available ? "Available" : "Unavailable"}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-3">
+                      {m.metadataMatched ? (
+                        <Badge variant="secondary" className="gap-1"><CheckCircle2 className="h-3 w-3 text-primary" /> TMDB matched</Badge>
                       ) : (
-                        <Badge variant="outline" className="gap-1 text-foreground/50"><AlertTriangle className="h-3 w-3" /> Stub</Badge>
+                        <Badge variant="outline" className="gap-1 text-foreground/50"><AlertTriangle className="h-3 w-3" /> Unmatched</Badge>
                       )}
                     </td>
                     <td className="px-5 py-3 text-right">
@@ -1294,9 +1443,27 @@ function LibraryPathRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [dir, setDir] = useState(section.mediaDir);
+  const [retainedResult, setRetainedResult] = useState<ScanResult | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const shownResult = result ?? retainedResult;
   const saveDir = () => {
     if (dir !== section.mediaDir) onUpdate(dir);
     setEditing(false);
+  };
+  const loadLastReport = async () => {
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const response = await fetch(`/api/sections/scan?sectionId=${encodeURIComponent(section.id)}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error ?? "Could not load the last scan report.");
+      setRetainedResult(payload as ScanResult);
+    } catch (error) {
+      setReportError((error as Error).message);
+    } finally {
+      setReportLoading(false);
+    }
   };
 
   return (
@@ -1319,7 +1486,22 @@ function LibraryPathRow({
         <span className="inline-flex items-center gap-1.5 text-xs text-[var(--success)]">
           <CheckCircle2 className="h-3.5 w-3.5" /> Active
         </span>
-        {result && <div className="mt-1 text-[11px] text-foreground/46">{result.added} added · {result.updated} updated</div>}
+        {!shownResult && section.scanCount > 0 && (
+          <button type="button" onClick={loadLastReport} disabled={reportLoading} className="mt-1 flex items-center gap-1 text-[11px] text-foreground/50 hover:text-foreground disabled:opacity-50">
+            {reportLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ScanLine className="h-3 w-3" />}
+            Last scan report
+          </button>
+        )}
+        {reportError && <div className="mt-1 max-w-xs text-[11px] leading-4 text-amber-200/72">{reportError}</div>}
+        {shownResult && (
+          <div className="max-w-md">
+            <div className="mt-1 text-[11px] text-foreground/46">
+              {shownResult.added} added · {shownResult.updated} updated · {(shownResult.manifest.entryCount ?? shownResult.manifest.entries.length).toLocaleString()} manifest entries
+              {!shownResult.complete && <span className="block text-amber-200/80">Incomplete; availability unchanged</span>}
+            </div>
+            <ScanManifestView result={shownResult} />
+          </div>
+        )}
       </td>
       <td className="px-3 py-3 text-foreground/70 tabular-nums">{section.mediaCount.toLocaleString()}</td>
       <td className="px-5 py-3">
@@ -1365,5 +1547,70 @@ function ResultStat({ label, value }: { label: string; value: number }) {
       <div className="text-lg font-bold tabular-nums">{value}</div>
       <div className="text-xs text-foreground/50">{label}</div>
     </div>
+  );
+}
+
+function ScanManifestView({ result }: { result: ScanResult }) {
+  const reportKey = result.reportUrl ?? `${result.sectionId ?? "all"}:${result.durationMs}`;
+  const [loadedReport, setLoadedReport] = useState<{ key: string; result: ScanResult } | null>(null);
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ key: string; message: string } | null>(null);
+  const [visible, setVisible] = useState<{ key: string; count: number } | null>(null);
+  const fullResult = loadedReport?.key === reportKey ? loadedReport.result : null;
+  const loading = loadingKey === reportKey;
+  const error = loadError?.key === reportKey ? loadError.message : null;
+  const visibleCount = visible?.key === reportKey ? visible.count : 200;
+  const shown = fullResult ?? result;
+  const counts = shown.manifest.counts ?? shown.manifest.entries.reduce<Record<string, number>>((all, entry) => {
+    all[entry.kind] = (all[entry.kind] ?? 0) + 1;
+    return all;
+  }, {});
+  const entryCount = shown.manifest.entryCount ?? shown.manifest.entries.length;
+
+  const loadFullReport = async () => {
+    if (!result.reportUrl || fullResult || loading) return;
+    setLoadingKey(reportKey);
+    setLoadError(null);
+    try {
+      const response = await fetch(result.reportUrl, { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error ?? "Could not load the full scan report.");
+      const loaded = (payload?.result ?? payload) as ScanResult;
+      setLoadedReport({ key: reportKey, result: loaded });
+    } catch (loadError) {
+      setLoadError({ key: reportKey, message: (loadError as Error).message });
+    } finally {
+      setLoadingKey(null);
+    }
+  };
+
+  return (
+    <details
+      className="mt-3 border-t border-white/10 pt-3"
+      onToggle={(event) => {
+        if (event.currentTarget.open && result.manifest.entriesTruncated) void loadFullReport();
+      }}
+    >
+      <summary className="cursor-pointer text-xs font-semibold text-foreground/70">Path manifest · {entryCount} entries</summary>
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground/55">
+        {Object.entries(counts).map(([kind, count]) => <span key={kind} className="rounded bg-white/6 px-2 py-1">{kind}: {count}</span>)}
+      </div>
+      {loading && <div className="mt-2 flex items-center gap-2 text-xs text-foreground/52"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading full path report…</div>}
+      {error && <div className="mt-2 text-xs text-amber-200/78">{error}</div>}
+      {!loading && shown.manifest.entries.length > 0 && (
+        <div className="thin-scrollbar mt-2 max-h-64 overflow-auto rounded bg-black/20 p-2 font-mono text-[11px] leading-5">
+        {shown.manifest.entries.slice(0, visibleCount).map((entry, index) => (
+          <div key={`${entry.kind}-${entry.path}-${index}`} className="break-all text-foreground/62">
+            <span className="text-primary/80">[{entry.kind}]</span> {entry.path}{entry.title ? ` → ${entry.title}${entry.year ? ` (${entry.year})` : ""}` : ""}{entry.reason ? ` — ${entry.reason}` : ""}
+          </div>
+        ))}
+        {visibleCount < shown.manifest.entries.length && (
+          <button type="button" onClick={() => setVisible({ key: reportKey, count: visibleCount + 200 })} className="mt-2 text-primary hover:text-primary/80">
+            Show 200 more · {(shown.manifest.entries.length - visibleCount).toLocaleString()} remaining
+          </button>
+        )}
+        </div>
+      )}
+    </details>
   );
 }

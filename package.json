@@ -8,6 +8,7 @@
     "build:docker": "next build",
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
+    "test": "node --import ./tests/register-alias.mjs --test tests/scanner.test.ts tests/search.test.ts tests/browse.test.ts tests/tmdb-match.test.ts tests/playback-progress.test.ts tests/plex-scope.test.ts tests/plex-sync.test.ts tests/scan-jobs.test.ts tests/watcher-policy.test.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",

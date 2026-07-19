@@ -14,6 +14,23 @@ export interface DiscoveredSubtitle {
   isDefault: boolean;
 }
 
+export interface SubtitleDiscoveryIssue {
+  source: "sidecar" | "embedded";
+  path: string;
+  message: string;
+  /** A filesystem traversal failure makes missing-path reconciliation unsafe. */
+  traversal: boolean;
+}
+
+export interface SubtitleDiscoveryResult {
+  subtitles: DiscoveredSubtitle[];
+  complete: boolean;
+  sidecarComplete: boolean;
+  /** False when embedded discovery was skipped or failed. */
+  embeddedComplete: boolean;
+  issues: SubtitleDiscoveryIssue[];
+}
+
 /** Detect subtitle format from a filename extension. */
 export function subtitleFormat(filePath: string): "vtt" | "srt" | "ass" | "ssa" | "sub" {
   const ext = path.extname(filePath).toLowerCase();
@@ -82,22 +99,44 @@ export function parseSubtitleLang(fileName: string): { language: string; label: 
  */
 export async function findSubtitlesForVideo(
   videoPath: string,
-  readdir: (p: string) => Promise<string[]>
-): Promise<DiscoveredSubtitle[]> {
+  readdir: (p: string) => Promise<string[]>,
+  options: { includeEmbedded?: boolean } = {}
+): Promise<SubtitleDiscoveryResult> {
   const dir = path.dirname(videoPath);
   const videoBase = path.basename(videoPath, path.extname(videoPath));
+  const issues: SubtitleDiscoveryIssue[] = [];
+  let sidecarComplete = true;
   let entries: string[];
   try {
     entries = await readdir(dir);
-  } catch {
-    return [];
+  } catch (error) {
+    issues.push({
+      source: "sidecar",
+      path: dir,
+      message: error instanceof Error ? error.message : String(error),
+      traversal: true,
+    });
+    sidecarComplete = false;
+    entries = [];
   }
   const subs: DiscoveredSubtitle[] = [];
   const videoCount = entries.filter(isLikelyVideo).length;
   const locations = [{ directory: dir, entries }];
   for (const folder of ["Subs", "Subtitles", "subs", "subtitles"]) {
     const directory = path.join(/* turbopackIgnore: true */ dir, folder);
-    const nested = await readdir(directory).catch(() => null);
+    const nested = await readdir(directory).catch((error: unknown) => {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        sidecarComplete = false;
+        issues.push({
+          source: "sidecar",
+          path: directory,
+          message: error instanceof Error ? error.message : String(error),
+          traversal: true,
+        });
+      }
+      return null;
+    });
     if (nested) locations.push({ directory, entries: nested });
   }
 
@@ -132,7 +171,25 @@ export async function findSubtitlesForVideo(
       });
     }
   }
-  return [...subs, ...await findEmbeddedSubtitles(videoPath)];
+  if (options.includeEmbedded === false) {
+    return {
+      subtitles: subs,
+      complete: sidecarComplete,
+      sidecarComplete,
+      embeddedComplete: false,
+      issues,
+    };
+  }
+
+  const embedded = await findEmbeddedSubtitles(videoPath);
+  if (embedded.issue) issues.push(embedded.issue);
+  return {
+    subtitles: [...subs, ...embedded.subtitles],
+    complete: sidecarComplete && !embedded.issue,
+    sidecarComplete,
+    embeddedComplete: !embedded.issue,
+    issues,
+  };
 }
 
 function isLikelyVideo(fileName: string) {
@@ -148,10 +205,14 @@ export function isTextSubtitleCodec(codec: string | null | undefined) {
   return TEXT_SUBTITLE_CODECS.has(String(codec ?? "").toLowerCase());
 }
 
-async function findEmbeddedSubtitles(videoPath: string): Promise<DiscoveredSubtitle[]> {
+async function findEmbeddedSubtitles(videoPath: string): Promise<{
+  subtitles: DiscoveredSubtitle[];
+  issue: SubtitleDiscoveryIssue | null;
+}> {
   try {
     const data = await runFfprobe(videoPath);
-    return (data.streams ?? [])
+    return {
+      subtitles: (data.streams ?? [])
       .filter((stream: any) => Number.isInteger(Number(stream.index)))
       .map((stream: any) => {
         const languageTag = String(stream.tags?.language ?? "und").toLowerCase();
@@ -173,9 +234,19 @@ async function findEmbeddedSubtitles(videoPath: string): Promise<DiscoveredSubti
           codec: String(stream.codec_name ?? ""),
           isDefault: stream.disposition?.default === 1 || forced,
         };
-      });
-  } catch {
-    return [];
+      }),
+      issue: null,
+    };
+  } catch (error) {
+    return {
+      subtitles: [],
+      issue: {
+        source: "embedded",
+        path: videoPath,
+        message: error instanceof Error ? error.message : String(error),
+        traversal: false,
+      },
+    };
   }
 }
 

@@ -3,6 +3,8 @@ import { getTranscodeStatus } from "@/lib/transcoder";
 import { isTextSubtitleCodec } from "@/lib/subtitles";
 import { Prisma } from "@prisma/client";
 import type {
+  BrowsePreset,
+  BrowseSort,
   MediaSummary,
   MediaDetail,
   Episode,
@@ -12,8 +14,11 @@ import type {
   LibraryStats,
   LibrarySectionInfo,
   MediaType,
+  SearchEpisodeResult,
+  SearchResults,
   Subtitle,
   PlexSyncDirection,
+  WatchState,
 } from "@/lib/types";
 
 type SubtitleRow = {
@@ -48,6 +53,10 @@ function serializeSubtitles(rows: SubtitleRow[]): Subtitle[] {
 
 const MY_LIST_SLUG = "my-list";
 
+const playableEpisodeWhere: Prisma.EpisodeWhereInput = {
+  OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
+};
+
 const playableMediaWhere: Prisma.MediaWhereInput = {
   OR: [
     {
@@ -57,9 +66,7 @@ const playableMediaWhere: Prisma.MediaWhereInput = {
     {
       type: "TV",
       episodes: {
-        some: {
-          OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
-        },
+        some: playableEpisodeWhere,
       },
     },
   ],
@@ -69,14 +76,156 @@ function locallyAvailable(where: Prisma.MediaWhereInput = {}): Prisma.MediaWhere
   return { AND: [where, playableMediaWhere] };
 }
 
-export async function getMyListCollection() {
-  let col = await db.collection.findUnique({ where: { slug: MY_LIST_SLUG } });
-  if (!col) {
-    col = await db.collection.create({
-      data: { name: "My List", slug: MY_LIST_SLUG },
-    });
+type BrowseDefinition = {
+  where: Prisma.MediaWhereInput;
+  orderBy: Prisma.MediaOrderByWithRelationInput[];
+};
+
+function browsePresetDefinition(preset: BrowsePreset): BrowseDefinition {
+  switch (preset) {
+    case "recently-added-movies":
+      return {
+        where: { type: "MOVIE" },
+        orderBy: [
+          { sourceModifiedAt: "desc" },
+          { createdAt: "desc" },
+          { title: "asc" },
+          { id: "asc" },
+        ],
+      };
+    case "trending":
+      return {
+        where: {},
+        orderBy: [
+          { trending: "desc" },
+          { popularity: "desc" },
+          { title: "asc" },
+          { id: "asc" },
+        ],
+      };
+    case "popular-movies":
+      return {
+        where: { type: "MOVIE" },
+        orderBy: [{ popularity: "desc" }, { title: "asc" }, { id: "asc" }],
+      };
+    case "popular-tv":
+      return {
+        where: { type: "TV" },
+        orderBy: [{ popularity: "desc" }, { title: "asc" }, { id: "asc" }],
+      };
+    case "top-rated":
+      return {
+        where: { rating: { not: null } },
+        orderBy: [
+          { rating: "desc" },
+          { popularity: "desc" },
+          { title: "asc" },
+          { id: "asc" },
+        ],
+      };
+    case "new-releases":
+      return {
+        where: { year: { not: null } },
+        orderBy: [
+          { year: "desc" },
+          { popularity: "desc" },
+          { title: "asc" },
+          { id: "asc" },
+        ],
+      };
   }
-  return col;
+}
+
+function browseSortOrder(sort: BrowseSort): Prisma.MediaOrderByWithRelationInput[] {
+  if (sort === "rating") {
+    return [{ rating: "desc" }, { popularity: "desc" }, { title: "asc" }, { id: "asc" }];
+  }
+  if (sort === "year") {
+    return [{ year: "desc" }, { popularity: "desc" }, { title: "asc" }, { id: "asc" }];
+  }
+  if (sort === "title") return [{ title: "asc" }, { id: "asc" }];
+  return [{ popularity: "desc" }, { title: "asc" }, { id: "asc" }];
+}
+
+const progressActivityWhere: Prisma.WatchProgressWhereInput = {
+  OR: [{ completed: true }, { position: { gt: 0 } }],
+};
+
+const playableEpisodeWithoutCompletedProgress: Prisma.EpisodeWhereInput = {
+  AND: [playableEpisodeWhere, { progress: { none: { completed: true } } }],
+};
+
+/**
+ * Browse watch states are deliberately disjoint. A TV title is only watched
+ * when every locally playable episode is complete; completing a single episode
+ * makes a partially watched series in-progress instead.
+ */
+function watchStateWhere(watchState: WatchState): Prisma.MediaWhereInput {
+  if (watchState === "all") return {};
+
+  if (watchState === "watched") {
+    return {
+      OR: [
+        {
+          type: "MOVIE",
+          progress: { some: { episodeId: null, completed: true } },
+        },
+        {
+          type: "TV",
+          AND: [
+            { episodes: { some: playableEpisodeWhere } },
+            { episodes: { none: playableEpisodeWithoutCompletedProgress } },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (watchState === "in-progress") {
+    return {
+      OR: [
+        {
+          type: "MOVIE",
+          AND: [
+            {
+              progress: {
+                some: { episodeId: null, completed: false, position: { gt: 0 } },
+              },
+            },
+            { progress: { none: { episodeId: null, completed: true } } },
+          ],
+        },
+        {
+          type: "TV",
+          AND: [
+            { episodes: { some: { progress: { some: progressActivityWhere } } } },
+            { episodes: { some: playableEpisodeWithoutCompletedProgress } },
+          ],
+        },
+      ],
+    };
+  }
+
+  return {
+    OR: [
+      {
+        type: "MOVIE",
+        progress: { none: { episodeId: null, ...progressActivityWhere } },
+      },
+      {
+        type: "TV",
+        episodes: { none: { progress: { some: progressActivityWhere } } },
+      },
+    ],
+  };
+}
+
+export async function getMyListCollection() {
+  return db.collection.upsert({
+    where: { slug: MY_LIST_SLUG },
+    update: {},
+    create: { name: "My List", slug: MY_LIST_SLUG },
+  });
 }
 
 type MediaRow = Prisma.MediaGetPayload<{
@@ -160,22 +309,34 @@ export async function attachSummaryData(
     orderBy: { updatedAt: "desc" },
     include: { episode: true },
   });
+  const itemById = new Map(items.map((item) => [item.id, item]));
   const progressMap = new Map<string, ProgressInfo>();
+  const seenProgressTargets = new Set<string>();
   for (const p of progressRows) {
-    if (!progressMap.has(p.mediaId)) {
-      progressMap.set(p.mediaId, {
-        position: p.position,
-        duration: p.duration,
-        episodeId: p.episodeId,
-        episode: p.episode
-          ? {
-              seasonNumber: p.episode.seasonNumber,
-              episodeNumber: p.episode.episodeNumber,
-            }
-          : null,
-        updatedAt: p.updatedAt,
-      });
-    }
+    const targetKey = `${p.mediaId}:${p.episodeId ?? "movie"}`;
+    if (seenProgressTargets.has(targetKey)) continue;
+    seenProgressTargets.add(targetKey);
+    if (progressMap.has(p.mediaId) || p.completed || p.position <= 0) continue;
+
+    const media = itemById.get(p.mediaId);
+    const hasPlayableTarget =
+      media?.type === "MOVIE"
+        ? p.episodeId == null && !!(media.filePath || media.streamUrl)
+        : !!p.episode && !!(p.episode.filePath || p.episode.streamUrl);
+    if (!hasPlayableTarget) continue;
+
+    progressMap.set(p.mediaId, {
+      position: p.position,
+      duration: p.duration,
+      episodeId: p.episodeId,
+      episode: p.episode
+        ? {
+            seasonNumber: p.episode.seasonNumber,
+            episodeNumber: p.episode.episodeNumber,
+          }
+        : null,
+      updatedAt: p.updatedAt,
+    });
   }
   return items.map((m) =>
     toSummary(m, myListSet.has(m.id), progressMap.get(m.id))
@@ -183,11 +344,42 @@ export async function attachSummaryData(
 }
 
 const mediaInclude = { genres: { include: { genre: true } } } as const;
+const searchEpisodeInclude = {
+  media: {
+    select: {
+      id: true,
+      title: true,
+      posterUrl: true,
+      backdropUrl: true,
+      year: true,
+    },
+  },
+  progress: { orderBy: { updatedAt: "desc" }, take: 1 },
+} as const;
+
+async function getPresetMedia(
+  preset: BrowsePreset,
+  limit: number
+): Promise<MediaSummary[]> {
+  const definition = browsePresetDefinition(preset);
+  const items = await db.media.findMany({
+    where: locallyAvailable(definition.where),
+    orderBy: definition.orderBy,
+    take: limit,
+    include: mediaInclude,
+  });
+  return attachSummaryData(items);
+}
 
 export async function getFeatured(limit = 6): Promise<MediaSummary[]> {
   const items = await db.media.findMany({
-    where: { OR: [{ featured: true }, { backdropUrl: { not: null } }] },
-    orderBy: [{ featured: "desc" }, { popularity: "desc" }],
+    where: locallyAvailable({ OR: [{ featured: true }, { backdropUrl: { not: null } }] }),
+    orderBy: [
+      { featured: "desc" },
+      { popularity: "desc" },
+      { title: "asc" },
+      { id: "asc" },
+    ],
     take: limit,
     include: mediaInclude,
   });
@@ -195,52 +387,23 @@ export async function getFeatured(limit = 6): Promise<MediaSummary[]> {
 }
 
 export async function getTrending(limit = 20): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    orderBy: [{ trending: "desc" }, { popularity: "desc" }],
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return getPresetMedia("trending", limit);
 }
 
 export async function getPopularMovies(limit = 20): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    where: { type: "MOVIE" },
-    orderBy: { popularity: "desc" },
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return getPresetMedia("popular-movies", limit);
 }
 
 export async function getPopularTV(limit = 20): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    where: { type: "TV" },
-    orderBy: { popularity: "desc" },
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return getPresetMedia("popular-tv", limit);
 }
 
 export async function getTopRated(limit = 20): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    where: { rating: { not: null } },
-    orderBy: { rating: "desc" },
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return getPresetMedia("top-rated", limit);
 }
 
 export async function getNewReleases(limit = 20): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    where: { year: { not: null } },
-    orderBy: { year: "desc" },
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return getPresetMedia("new-releases", limit);
 }
 
 export async function getByGenre(
@@ -248,8 +411,8 @@ export async function getByGenre(
   limit = 20
 ): Promise<MediaSummary[]> {
   const items = await db.media.findMany({
-    where: { genres: { some: { genre: { name: genre } } } },
-    orderBy: { popularity: "desc" },
+    where: locallyAvailable({ genres: { some: { genre: { name: genre } } } }),
+    orderBy: [{ popularity: "desc" }, { title: "asc" }, { id: "asc" }],
     take: limit,
     include: mediaInclude,
   });
@@ -261,13 +424,7 @@ export async function getByGenre(
  * row creation time until the next scan backfills source timestamps.
  */
 export async function getRecentlyAddedMovies(limit = 20): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    where: { type: "MOVIE" },
-    orderBy: [{ sourceModifiedAt: "desc" }, { createdAt: "desc" }],
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return getPresetMedia("recently-added-movies", limit);
 }
 
 /**
@@ -278,7 +435,8 @@ export async function getRecentlyAddedMovies(limit = 20): Promise<MediaSummary[]
 export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary[]> {
   // Fetch the newest episodes, grouped by show
   const episodes = await db.episode.findMany({
-    orderBy: [{ sourceModifiedAt: "desc" }, { createdAt: "desc" }],
+    where: playableEpisodeWhere,
+    orderBy: [{ sourceModifiedAt: "desc" }, { createdAt: "desc" }, { id: "asc" }],
     take: limit * 5, // over-fetch to dedupe by show
     include: { media: { include: mediaInclude } },
   });
@@ -331,7 +489,21 @@ export async function getContinueWatching(
   const maxNextEpisodeAgeMs = Math.max(1, maxNextEpisodeAgeDays) * 24 * 60 * 60 * 1000;
 
   const inProgressRows = await db.watchProgress.findMany({
-    where: { completed: false, hiddenFromContinueWatching: false },
+    where: {
+      completed: false,
+      hiddenFromContinueWatching: false,
+      position: { gt: 0 },
+      OR: [
+        {
+          episodeId: null,
+          media: {
+            type: "MOVIE",
+            OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
+          },
+        },
+        { episode: { is: playableEpisodeWhere } },
+      ],
+    },
     orderBy: { updatedAt: "desc" },
     take: limit * 3,
     include: { media: { include: mediaInclude }, episode: true },
@@ -617,30 +789,53 @@ export async function browseMedia(params: {
   type?: MediaType;
   genre?: string;
   category?: string;
+  preset?: BrowsePreset;
+  watchState?: WatchState;
   sectionId?: string;
   q?: string;
-  sort?: string;
+  sort?: BrowseSort | null;
   page?: number;
   pageSize?: number;
+  availability?: "available" | "unavailable" | "all";
+  metadata?: "matched" | "unmatched" | "all";
 }) {
-  const { type, genre, category, sectionId, q, sort = "popular", page = 1, pageSize = 24 } = params;
+  const {
+    type,
+    genre,
+    category,
+    preset,
+    watchState = "all",
+    sectionId,
+    q,
+    sort,
+    page = 1,
+    pageSize = 24,
+    availability = "available",
+    metadata = "all",
+  } = params;
   const where: Prisma.MediaWhereInput = {};
   if (type) where.type = type;
   if (category) where.category = category;
   if (sectionId) where.sectionId = sectionId;
-  if (q) where.title = { contains: q };
+  if (q) where.OR = [{ title: { contains: q } }, { filePath: { contains: q } }];
   if (genre) where.genres = { some: { genre: { name: genre } } };
+  if (metadata === "matched") where.tmdbId = { not: null };
+  if (metadata === "unmatched") where.tmdbId = null;
 
-  const orderBy: Prisma.MediaOrderByWithRelationInput =
-    sort === "rating"
-      ? { rating: "desc" }
-      : sort === "year"
-        ? { year: "desc" }
-        : sort === "title"
-          ? { title: "asc" }
-          : { popularity: "desc" };
+  const presetDefinition = preset ? browsePresetDefinition(preset) : null;
+  const filteredWhere: Prisma.MediaWhereInput = {
+    AND: [where, presetDefinition?.where ?? {}, watchStateWhere(watchState)],
+  };
+  const orderBy = sort
+    ? browseSortOrder(sort)
+    : presetDefinition?.orderBy ?? browseSortOrder("popular");
 
-  const visibleWhere = locallyAvailable(where);
+  const visibleWhere: Prisma.MediaWhereInput =
+    availability === "all"
+      ? filteredWhere
+      : availability === "unavailable"
+        ? { AND: [filteredWhere, { NOT: playableMediaWhere }] }
+        : locallyAvailable(filteredWhere);
   const [total, items] = await Promise.all([
     db.media.count({ where: visibleWhere }),
     db.media.findMany({
@@ -652,20 +847,152 @@ export async function browseMedia(params: {
     }),
   ]);
   const summaries = await attachSummaryData(items);
+  const availableIds = items.length
+    ? new Set(
+        (
+          await db.media.findMany({
+            where: { AND: [{ id: { in: items.map((item) => item.id) } }, playableMediaWhere] },
+            select: { id: true },
+          })
+        ).map((item) => item.id)
+      )
+    : new Set<string>();
+  const inventoryItems = summaries.map((summary, index) => ({
+    ...summary,
+    available: availableIds.has(summary.id),
+    metadataMatched: items[index].tmdbId != null,
+    sourcePath: items[index].filePath,
+  }));
   const genres = await getAllGenres();
-  return { items: summaries, total, page, pageSize, genres };
+  return { items: inventoryItems, total, page, pageSize, genres };
 }
 
-export async function searchMedia(q: string, limit = 30) {
+export async function searchMedia(q: string, limit = 10): Promise<SearchResults> {
   const trimmed = q.trim();
-  if (!trimmed) return { items: [], query: q };
-  const items = await db.media.findMany({
-    where: locallyAvailable({ title: { contains: trimmed } }),
-    take: limit,
-    orderBy: { popularity: "desc" },
-    include: mediaInclude,
+  const empty: SearchResults = {
+    query: q,
+    groups: {
+      movies: { items: [], total: 0 },
+      shows: { items: [], total: 0 },
+      episodes: { items: [], total: 0 },
+    },
+    total: 0,
+  };
+  if (!trimmed) return empty;
+
+  const groupLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(50, Math.trunc(limit)))
+    : 10;
+  const titleMatch = { title: { contains: trimmed } };
+  const moviesWhere = locallyAvailable({ type: "MOVIE", ...titleMatch });
+  const showsWhere = locallyAvailable({ type: "TV", ...titleMatch });
+  const playableEpisodeWhere: Prisma.EpisodeWhereInput = {
+    OR: [{ filePath: { not: null } }, { streamUrl: { not: null } }],
+  };
+  const episodeTitleWhere: Prisma.EpisodeWhereInput = {
+    AND: [titleMatch, playableEpisodeWhere],
+  };
+  const parentShowEpisodeWhere: Prisma.EpisodeWhereInput = {
+    AND: [
+      { NOT: titleMatch },
+      { media: { title: { contains: trimmed } } },
+      playableEpisodeWhere,
+    ],
+  };
+  const episodesWhere: Prisma.EpisodeWhereInput = {
+    OR: [episodeTitleWhere, parentShowEpisodeWhere],
+  };
+
+  const [movieTotal, showTotal, episodeTotal, movies, shows, titleEpisodes] =
+    await Promise.all([
+      db.media.count({ where: moviesWhere }),
+      db.media.count({ where: showsWhere }),
+      db.episode.count({ where: episodesWhere }),
+      db.media.findMany({
+        where: moviesWhere,
+        take: groupLimit,
+        orderBy: [{ popularity: "desc" }, { title: "asc" }],
+        include: mediaInclude,
+      }),
+      db.media.findMany({
+        where: showsWhere,
+        take: groupLimit,
+        orderBy: [{ popularity: "desc" }, { title: "asc" }],
+        include: mediaInclude,
+      }),
+      db.episode.findMany({
+        where: episodeTitleWhere,
+        take: groupLimit,
+        orderBy: [
+          { title: "asc" },
+          { media: { popularity: "desc" } },
+          { media: { title: "asc" } },
+          { seasonNumber: "asc" },
+          { episodeNumber: "asc" },
+        ],
+        include: searchEpisodeInclude,
+      }),
+    ]);
+
+  const parentEpisodes =
+    titleEpisodes.length < groupLimit
+      ? await db.episode.findMany({
+          where: parentShowEpisodeWhere,
+          take: groupLimit - titleEpisodes.length,
+          orderBy: [
+            { media: { popularity: "desc" } },
+            { media: { title: "asc" } },
+            { seasonNumber: "asc" },
+            { episodeNumber: "asc" },
+          ],
+          include: searchEpisodeInclude,
+        })
+      : [];
+  const episodes = [...titleEpisodes, ...parentEpisodes];
+
+  const mediaSummaries = await attachSummaryData([...movies, ...shows]);
+  const movieItems = mediaSummaries.slice(0, movies.length);
+  const showItems = mediaSummaries.slice(movies.length);
+  const episodeItems: SearchEpisodeResult[] = episodes.map((episode) => {
+    const progress = episode.progress[0];
+    return {
+      type: "EPISODE",
+      id: episode.id,
+      mediaId: episode.mediaId,
+      showTitle: episode.media.title,
+      title: episode.title,
+      seasonNumber: episode.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      stillUrl: episode.stillUrl,
+      posterUrl: episode.media.posterUrl,
+      backdropUrl: episode.media.backdropUrl,
+      overview: episode.overview,
+      airDate: episode.airDate?.toISOString() ?? null,
+      year: episode.media.year,
+      runtime: episode.runtime,
+      ...(progress
+        ? {
+            progressPercent:
+              progress.duration > 0
+                ? (progress.position / progress.duration) * 100
+                : undefined,
+            progressPosition: progress.position,
+            progressDuration: progress.duration,
+          }
+        : {}),
+      completed: progress?.completed ?? false,
+    };
   });
-  return { items: await attachSummaryData(items), query: q };
+
+  return {
+    query: q,
+    groups: {
+      movies: { items: movieItems, total: movieTotal },
+      shows: { items: showItems, total: showTotal },
+      episodes: { items: episodeItems, total: episodeTotal },
+    },
+    total: movieTotal + showTotal + episodeTotal,
+  };
 }
 
 export async function getMyList(): Promise<MediaSummary[]> {
@@ -704,7 +1031,7 @@ export async function getLibraryConfig() {
     create: { id: "default" },
   });
   return {
-    tmdbKey: config.tmdbKey ?? process.env.TMDB_API_KEY ?? "",
+    tmdbKeyConfigured: !!(config.tmdbKey || process.env.TMDB_API_KEY),
     plexUrl: config.plexUrl ?? process.env.PLEX_URL ?? process.env.LUMINA_PLEX_URL ?? "",
     plexTokenSaved: !!(config.plexToken || process.env.PLEX_TOKEN || process.env.LUMINA_PLEX_TOKEN),
     plexSyncDirection: (config.plexSyncDirection || "pull") as PlexSyncDirection,
@@ -736,7 +1063,7 @@ export async function getStats(): Promise<LibraryStats> {
     lastScan: config?.lastScan?.toISOString() ?? null,
     scanCount: config?.scanCount ?? 0,
     mediaDir: config?.mediaDir ?? "/media",
-    tmdbKey: config?.tmdbKey ?? null,
+    tmdbKeyConfigured: !!(config?.tmdbKey || process.env.TMDB_API_KEY),
     ...getTranscodeStatus(),
   };
 }
@@ -868,7 +1195,7 @@ export async function getSections(): Promise<LibrarySectionInfo[]> {
     type: s.type as MediaType,
     category: s.category,
     mediaDir: s.mediaDir,
-    tmdbKey: s.tmdbKey,
+    tmdbKeyConfigured: !!s.tmdbKey,
     autoMatch: s.autoMatch,
     lastScan: s.lastScan?.toISOString() ?? null,
     scanCount: s.scanCount,
@@ -900,7 +1227,7 @@ export async function createSection(input: {
     type: s.type as MediaType,
     category: s.category,
     mediaDir: s.mediaDir,
-    tmdbKey: s.tmdbKey,
+    tmdbKeyConfigured: !!s.tmdbKey,
     autoMatch: s.autoMatch,
     lastScan: s.lastScan?.toISOString() ?? null,
     scanCount: s.scanCount,

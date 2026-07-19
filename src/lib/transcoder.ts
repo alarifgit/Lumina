@@ -10,6 +10,7 @@ export interface CodecInfo {
   reason: string | null;
   directPlayable: boolean;
   directPlayReason: string | null;
+  durationSeconds: number | null;
 }
 
 // Codecs the browser can decode natively (Chromium/Firefox/Safari)
@@ -179,6 +180,13 @@ export async function probeCodecs(filePath: string): Promise<CodecInfo> {
     const videoCodec = v?.codec_name ?? null;
     const audioCodec = a?.codec_name ?? null;
     const container = data.format?.format_name?.split(",")[0] ?? null;
+    const formatDuration = Number(data.format?.duration);
+    const streamDuration = Number(v?.duration);
+    const durationSeconds = Number.isFinite(formatDuration) && formatDuration > 0
+      ? formatDuration
+      : Number.isFinite(streamDuration) && streamDuration > 0
+        ? streamDuration
+        : null;
 
     let reason: string | null = null;
     if (audioCodec && !BROWSER_AUDIO_CODECS.has(audioCodec)) {
@@ -195,6 +203,7 @@ export async function probeCodecs(filePath: string): Promise<CodecInfo> {
       reason,
       directPlayable: browserCompatible,
       directPlayReason: reason,
+      durationSeconds,
     };
   } catch {
     return {
@@ -205,6 +214,7 @@ export async function probeCodecs(filePath: string): Promise<CodecInfo> {
       reason: null,
       directPlayable: true,
       directPlayReason: null,
+      durationSeconds: null,
     };
   }
 }

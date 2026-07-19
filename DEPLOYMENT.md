@@ -258,6 +258,12 @@ Preserve existing TMDB/Plex/transcoding environment values if present,
 preferably through a root-readable environment file instead of shell history.
 Do not supply `DATABASE_URL`; the image sets the production path.
 
+Filesystem watching uses polling by default because NAS mounts do not always
+emit reliable native change events. The default interval is 10 seconds. Set
+`LUMINA_WATCH_POLL_INTERVAL_MS` to another value of at least `1000`, or set
+`LUMINA_WATCH_USE_POLLING=false` only when the mounted filesystem is known to
+deliver reliable native events.
+
 ## 6. Verify Startup Before Scanning
 
 Check for restart loops and inspect the startup sequence:

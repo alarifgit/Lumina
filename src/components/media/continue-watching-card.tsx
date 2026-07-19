@@ -26,7 +26,7 @@ export function ContinueWatchingCard({ media, onOpen, onPlay }: Props) {
 
   return (
     <div
-      className="group/card relative z-[1] w-[clamp(260px,72vw,320px)] shrink-0 snap-start cursor-pointer transition-none hover:z-30 sm:w-[clamp(320px,19vw,640px)]"
+      className="group/card relative z-[1] w-[clamp(250px,70vw,306px)] shrink-0 snap-start cursor-pointer transition-none hover:z-30 sm:w-[clamp(300px,17vw,500px)]"
       onClick={() => onPlay(media.id, media.progressEpisodeId ?? null, media.progressPosition ?? 0)}
       role="button"
       tabIndex={0}
@@ -39,14 +39,14 @@ export function ContinueWatchingCard({ media, onOpen, onPlay }: Props) {
       aria-label={`Resume ${media.title}`}
     >
       <div
-        className="relative aspect-video overflow-hidden rounded-lg bg-card ring-1 ring-white/12 transition-[transform,box-shadow,ring-color] duration-200 ease-out will-change-transform group-hover/card:-translate-y-1 group-hover/card:scale-[1.015] group-hover/card:ring-white/28 group-hover/card:shadow-[0_20px_42px_-18px_rgba(13,31,40,0.72)]"
+        className="relative aspect-video overflow-hidden rounded-lg bg-card ring-1 ring-white/12 transition-[transform,box-shadow,ring-color] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-transform group-hover/card:-translate-y-1 group-hover/card:scale-[1.012] group-hover/card:ring-white/28 group-hover/card:shadow-[0_22px_46px_-18px_rgba(7,23,32,0.8)]"
       >
         {showImg ? (
           <img
             src={media.backdropUrl!}
             alt={media.title}
             loading="lazy"
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover transition-[transform,filter] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/card:scale-[1.03] group-hover/card:brightness-[0.94] group-hover/card:saturate-[1.04]"
             onError={() => setImgError(true)}
           />
         ) : (
@@ -57,8 +57,9 @@ export function ContinueWatchingCard({ media, onOpen, onPlay }: Props) {
             className="h-full w-full"
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-200 group-hover/card:opacity-100">
+        <div className="absolute inset-0 bg-gradient-to-t from-[#071720]/92 via-[#071720]/8 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/36 to-transparent opacity-50" />
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/card:opacity-100">
           <span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/12 bg-[var(--lumina-ink)] text-white shadow-[0_12px_28px_rgba(7,23,32,0.32)] min-[2200px]:h-14 min-[2200px]:w-14 min-[2800px]:h-16 min-[2800px]:w-16">
             <Play className="ml-0.5 h-5 w-5 fill-current min-[2200px]:h-6 min-[2200px]:w-6 min-[2800px]:h-7 min-[2800px]:w-7" />
           </span>

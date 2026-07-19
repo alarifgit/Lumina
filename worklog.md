@@ -2,7 +2,7 @@
 
 ## Current Handoff
 
-Updated: 2026-07-13. This section,
+Updated: 2026-07-19. This section,
 [Detailed Current Handoff](#detailed-current-handoff), and
 [Prioritized Roadmap](#prioritized-roadmap) are authoritative. Every task log
 or old design/API specification is historical context only.
@@ -14,37 +14,265 @@ or old design/API specification is historical context only.
    `git status`, `git diff --stat`, and the complete diff. Never reset or
    discard the current working tree.
 2. Do not begin another broad visual redesign. The user likes the current
-   direction; the uncommitted responsive pass needs real-library verification.
-3. Before any production rescan, implement the P0 scanner safety and diagnostic
-   gate in [Prioritized Roadmap](#prioritized-roadmap). The audit found
-   confirmed destructive and path-collision risks in the current scanner.
+   direction; continue the targeted Lumina-signature polish and verify it
+   against real artwork rather than replacing the smoked-glass system.
+3. Before any production rescan, use the implemented P0 scanner safety and
+   diagnostic gate in [Prioritized Roadmap](#prioritized-roadmap), retain every
+   manifest, and require complete traversal before reconciliation.
 4. Build on the capable host, transfer/import the image, preserve the exact NAS
    `/data` and media mounts, and follow `DEPLOYMENT.md` for verification and
    rollback.
 
 ### Current State
 
-- Branch: `main`; last commit: `853e156`, also present at `origin/main`.
-- The working tree contains substantial intentional, locally validated
-  redesign work plus documentation changes. `scripts/seed.ts` appears modified
-  because of line-ending/index state but currently has no content diff; do not
-  fold an accidental normalization into the feature commit.
-- The local tree contains the artwork-led smoked-glass redesign and responsive
-  follow-up: a fluid 3200px shell, proportional ultrawide cards/heroes, aligned
-  full-width scrolled navigation, persistent shelf controls, stable detail
-  scrolling, and the redesigned player.
-- The currently deployed service is `http://10.41.6.100:3422`; that image
-  predates the local responsive follow-up.
-- The last reported deployed counts were 475 Lumina movies vs 478 NAS movies,
-  and 181 Lumina TV shows vs 180 NAS TV directories. Both anime counts matched.
-  Those differences are unresolved, not proof that the local scanner fixes
-  them.
+- P0-A, **Make Production Scans Safe And Explainable**, is implemented in the
+  working tree on top of clean baseline `144c976`. It is compile-validated and
+  fixture-test-validated. The user rebuilt the live service with the scanner,
+  parser, inventory, credential-redaction, progress, grouped-search, and shelf-
+  browse work, but the scanner has still not been verified by a controlled
+  production section scan with a retained manifest. The later parent-show Plex
+  identity, apply-safe preview, collision-safe TMDB auto-match, and scan-request/
+  watcher reliability fixes described below remain local.
+- Section scans now serialize through one per-section queue shared by manual
+  API calls and watcher scans. Reconciliation uses normalized exact paths
+  first; title/year reuse is limited to rows with no path or a path proven
+  absent, and live path/TMDB collisions remain distinct and are reported.
+- Every scan returns a path manifest containing discoveries, parser results,
+  ignored/unsupported paths and reasons, traversal errors, identity
+  collisions, and rows proposed as unavailable. Any relevant traversal error
+  marks the scan incomplete and suppresses all media/episode unavailable
+  reconciliation for that section.
+- Missing episodes are retained with a null `filePath`; metadata refresh no
+  longer deletes unavailable episode rows, preserving metadata, subtitles, and
+  watch progress. Settings exposes manifest counts and expandable path detail
+  for all-section and individual-section scans without changing its design.
+- TV folders are now prevalidated against stat-able, supported `SxxExx` video
+  files before a show row or TMDB match can be created. Empty folders, empty
+  season folders, and sidecar-only folders are explained as ignored; a legacy
+  row pointing at one becomes unavailable while its metadata and progress are
+  retained. Episode identity now trusts the filename for Specials and
+  conflicting folder labels and accepts three/four-digit episode numbers such
+  as `E100`.
+- `npm test` now runs 63 Node test cases against temporary media trees and a
+  fresh isolated SQLite database. Coverage includes numeric titles, dotted
+  folder names, common release tags, AppleDouble sidecars, recursive
+  collections, extras filtering, empty/sidecar-only folders, Specials and
+  three-digit episodes, same-title live paths, rename recovery,
+  partial traversal, episode/history preservation, idempotent rescans,
+  deep-recursion gating, normalized rename recovery, subtitle-discovery
+  failure preservation, per-section serialization, grouped playable search,
+  shelf ordering and pagination, disjoint movie/full-series watch states,
+  exact playable resume targets, Plex section scoping and parent-show identity,
+  collision-safe TMDB auto-match decisions, and direct/transcoded progress
+  timelines.
+- A production-diagnostic parser follow-up now treats a suffix as an extension
+  only when it is a supported video extension, ignores filesystem metadata
+  such as `._*`, `.DS_Store`, `@eaDir`, and `#recycle`, and trims release tags
+  without losing the real title/year. Regression fixtures keep `1917` and
+  `Casino Royale` available across idempotent rescans. These fixtures explain
+  credible failure modes from the reported library, but do not replace an
+  itemized NAS manifest.
+- Library Management now searches titles server-side, filters by availability
+  and TMDB match state, labels both states in the table, and appends genuine
+  100-row pages instead of refetching page one with a larger limit. Plex preview
+  retains proposed changes before unmatched detail, omits already-synced and
+  no-change detail from the bounded response, and exposes Needs attention,
+  Changes, and Unmatched filters.
+- Transcoded playback progress now uses one absolute timeline: the FFmpeg
+  segment offset is added to the browser clock and total duration prefers the
+  probed source duration, then metadata runtime, then a finite browser duration.
+  Stop preserves the current position rather than resetting the element first,
+  and progress writes use `keepalive`. This is automated-test-validated but
+  still needs named real-media playback/resume verification after deployment.
+- Public library/config/section responses now expose only whether a TMDB key is
+  configured, never the credential itself. The Settings replacement-key flow
+  preserves the stored key when the field is untouched. A fixture-only first
+  load also exposed a concurrent “My List” creation race; creation is now an
+  atomic upsert.
+- A 2026-07-14 read-only live audit proved that aggregate counts are not enough:
+  an earlier deployed Movies section reported 478 playable rows while `1917`
+  and `Casino Royale` were absent even with inventory availability set to
+  `all`. Both titles are present again in the latest rebuilt service. No
+  retained itemized Movies manifest exists for the intervening scan, so the
+  original disappearance is operationally recovered but not path-level
+  explained.
+- The same audit explained the Anime movie drop from 21 to 19. The previously
+  supplied manifest contains 19 real feature files and two `._` AppleDouble
+  sidecars; the corrected scanner now excludes those sidecars, so 19 is the
+  evidence-backed playable total rather than a regression.
+- A Plex scope follow-up is now local: selecting a Movies section filters Plex
+  preview input to movies, and selecting TV filters it to episodes. Before this
+  fix, a Movies-only preview scanned all 6,553 Plex items and produced 6,086
+  mostly false unmatched rows from TV episodes. The latest per-section scan
+  result is also retained for the current server session and can be reopened
+  from Settings after navigating away. Library Management title search now
+  also searches local source paths and displays the path beneath each title.
+- A focused responsive refinement is also present in the same uncommitted
+  tree: shelf arrows use a stable higher stacking layer and fixed control
+  geometry; Home shows up to three stronger featured tiles; Home and browse
+  poster sizing is reduced at desktop/ultrawide widths; and browse spotlight
+  artwork is restrained with the established steel-blue grade.
+- A subsequent targeted Lumina-signature pass strengthens the same design
+  without restructuring it: Home feature tiles now carry restrained editorial
+  numbering, artwork receives warmer image-led grading and machined edge
+  highlights, shelves have descriptive micro-hierarchy and title counts, and
+  cards/heroes use slower custom motion curves. Browse spotlights gained an
+  explicit failed-artwork fallback and a quiet library-curation marker. The
+  8px geometry, Lucide controls, card density, navigation, Settings structure,
+  and player layout remain intact.
+- Settings now aligns its Configuration and Library Paths panels at the same
+  top edge, and playback/transcoding status is condensed into the Settings
+  header. Local browser geometry at 1694px and 3440px measured a 0px panel-top
+  delta and no document-level horizontal overflow.
+- The windowed player can grow to 2400px wide / 1240px tall, text subtitle cues
+  are lifted farther above visible transport controls, and progress writes use
+  `keepalive`. Show-level TV playback now saves against the resolved local
+  episode instead of a null episode ID. These player changes remain real-media
+  and deployment verification items.
+- Search is now truthful and grouped. `/api/search` independently counts and
+  caps playable Movies, TV Shows, and Episodes; episode rows include the exact
+  local episode ID, artwork, and latest progress. The Search view exposes real
+  count-bearing scopes, compact artwork-led results, exact episode play/resume,
+  explicit loading/refresh/error/empty states, arrow-key result navigation, and
+  `/` plus Ctrl/Cmd+K entry. Clearing the query remains in Search; Escape from
+  an empty Search returns to the originating client-side view.
+- Six Home shelves now have truthful `View all` destinations backed by the
+  same typed predicates and stable ordering used for their previews: Recently
+  Added Movies, Trending, Popular Movies, Popular Series, Top Rated, and New
+  Releases. Continue Watching and Recently Added Episodes intentionally remain
+  without `View all` until dedicated paginated contracts can reproduce their
+  next-episode/deduplication semantics.
+- Movies, TV, and shelf browse destinations now expose server-side All,
+  Unwatched, In progress, and Watched states. TV is only watched when every
+  locally playable episode is complete; partial series remain in progress and
+  zero-position dismissal sentinels remain unwatched. Genre, sort, watch state,
+  loaded React Query pages, and logical-view scroll positions persist per
+  browse scope; changing a filter resets that scope to the top.
+- Browse/search/Home previews now share playable-media filtering and stable
+  pagination tie-breakers. Continue Watching requires a positive position and
+  the exact movie or episode target to be playable. Shared media summaries only
+  expose resume context for the newest incomplete playable target, so completed
+  or unavailable episode history is preserved without creating a broken card
+  CTA.
+- Read-only deployment acceptance on 2026-07-14 confirms the latest grouped
+  search and shelf-browse contracts are live. The service reports 706 playable
+  titles: Movies 478, Movies (Anime) 19, TV Shows 179, and TV Shows (Anime) 30;
+  6,033 locally playable episodes; 24 genres; and approximately 4,419 runtime
+  hours. Search finds `1917` (2019) and `Casino Royale` (2006), watch-state
+  totals partition exactly as 394 unwatched, 23 in progress, and 289 watched,
+  and public configuration responses remain credential-redacted.
+- A new preview-only Plex reproduction inspected 6,554 items and reported
+  5,551 matches plus 1,003 unmatched rows. `Animal Kingdom (2016)` accounted
+  for a repeated false-negative family: Plex includes the bracketed premiere
+  year in `grandparentTitle`, while Lumina stores title `Animal Kingdom` and
+  year `2016` separately. The local matcher now treats only a bracketed trailing
+  year as an identity hint, excludes episode GUIDs from show identity, refuses
+  ambiguous title fallbacks, preserves numeric titles, and distinguishes a
+  missing show from a matched show with a missing exact episode. Settings shows
+  that reason beneath unmatched preview rows. The preview used `apply: false`;
+  no watched state changed.
+- A later 2026-07-15 preview-only reproduction against the rebuilt service
+  inspected 6,554 Plex items: 6,142 matched, 412 remained unmatched, 3,012 were
+  already synced, and 61 Lumina changes were proposed. The attached 200-row
+  attention window proved repeated false misses for locally present shows such
+  as `Hell's Kitchen (US)`, both `Next Level Chef` regions, `Star Trek`,
+  `PLUR1BUS`, and `Kitchen Nightmares (US)`. Plex episode `year` is the air
+  year, not the series premiere year; title-only matching also selected the UK
+  `Next Level Chef` row for US season 2. The local matcher now bulk-fetches each
+  Plex TV section's parent shows, joins real parent identities, and uses
+  collision-aware exact local source aliases. No Plex apply was run.
+- The same evidence exposed two sticky historical metadata errors: the local
+  `/media/tv/Mr. & Mrs. Smith (2024)` row is labelled `Mr. & Mrs. North`
+  (1952), and `/media/movies/Run (2020)` is labelled `Chicken Run` (2000).
+  Automatic TMDB matching is now conservative: one exact normalized title is
+  required, source year must match when known, and auto scans never retry
+  without the year. Existing TMDB IDs are not silently replaced; source-alias
+  Plex reasons expose the resolved Lumina title so these rows can be corrected
+  through explicit Fix Match.
+- Manual scan reliability is now fixed locally. Scan POSTs return an immediate
+  background job and the browser polls compact status responses; full manifests
+  load lazily in 200-entry increments. Duplicate clicks attach to the same
+  active scope. Watchers preserve dotted media directories, default to bounded
+  polling for remote mounts, handle additions/changes/removals and subtitle
+  events, refresh section registrations, and use the serialized scanner path.
+  Unchanged videos still enumerate external subtitle sidecars but skip embedded
+  `ffprobe`; watcher scans skip broad existing-metadata refresh. Home revalidates
+  in the foreground so server-discovered media appears without a reload.
+- Subtitle reconciliation now has independent sidecar and embedded completeness.
+  A non-absence sidecar-directory read failure is a traversal manifest error
+  and suppresses missing-path reconciliation; an embedded `ffprobe` failure is
+  reported without pretending path traversal failed. Either uncertain source
+  preserves its existing subtitle rows while a successfully discovered source
+  can reconcile transactionally.
+
+- Read-only live verification on 2026-07-13 confirmed the deployed responsive
+  build at `http://10.41.6.100:3422`: Home rendered three featured titles; the
+  Continue Watching rail exposed the correct reverse control after advancing
+  and returned to its initial position; Settings rendered the compact
+  playback/transcoding status in its header; and Configuration and Library
+  Paths had a measured 0px top-edge delta at 1280x720 with no document-level
+  horizontal overflow. No scan, playback, cleanup, or data mutation was run.
+- That 2026-07-13 snapshot (704 titles; regular Movies 475; regular TV 178) is
+  superseded by the 2026-07-14 706-title snapshot above. It remains historical
+  evidence only. CPU/libx264 fallback was available; VAAPI initialization on
+  `/dev/dri/renderD128` was not.
+
+- Branch: `main`; last commit: `144c976`, also present at `origin/main`.
+- The working tree contains the intentional P0-A scanner, responsive UI,
+  player, test, and documentation changes described here. Do not discard or
+  reset them.
+- The currently deployed service is `http://10.41.6.100:3422`; read-only API
+  markers on 2026-07-14 confirm that it contains the parser, inventory,
+  credential-redaction, absolute-timeline progress code, grouped-search, and
+  shelf-browse work. A 2026-07-19 read-only check also confirmed the background
+  scan-job GET contract is deployed, correcting the older deployment marker.
+  The service still lacks the later parent-show Plex/report contract; watcher
+  runtime details and named real-media transcoded resume are not yet verified.
+- The current live sections report 478 regular movies and 179 regular TV shows
+  against the later-verification NAS references of 478 movie files and 180 TV
+  directories. Matching aggregate movie totals are not an itemized proof, and
+  the TV counting-definition difference remains unresolved.
 - Lint, TypeScript, Prisma validation/generation, and `build:docker` passed on
   2026-07-13 against the current code tree. Local fixture-browser checks passed
   at 390px, 1024px, 1694px, and 3440px.
+- After the signature-polish pass, lint, TypeScript, Prisma validation and
+  generation, all eight scanner tests, `build:docker`, and `git diff --check`
+  passed again. A temporary 81-title fixture sourced read-only from the live
+  Home response was inspected locally at 1280x800 on Home and Movies. A 390px
+  viewport measured 390px inner width with 375px document width; the refreshed
+  mobile screenshot could not be retained, so mobile visual acceptance of the
+  new decorative details remains a deployment check.
+- After the scanner/parser, inventory, Plex-preview, and transcoded-progress
+  follow-up, `npm run lint`, `npx tsc --noEmit`, `npx prisma validate`,
+  `npx prisma generate`, all 14 tests, `npm run build:docker`, and
+  `git diff --check` passed. A disposable 205-movie SQLite fixture was checked
+  locally in the browser: page two appended from 100 to 200 rows without a
+  top-of-page reset, title search isolated `1917`, availability isolated 12
+  unavailable rows, and metadata filtering isolated 18 unmatched rows. The
+  fixture database and helper were removed afterward.
+- The 2026-07-14 diagnostic follow-up passes lint, TypeScript, Prisma
+  validation/generation, 17/17 tests, `build:docker`, and `git diff --check`.
+  No production scan, deployment, commit, push, or watched-state mutation was
+  performed. The Plex request used preview mode (`apply: false`).
+- The grouped discovery plus Plex identity and scan/watcher reliability tree
+  now has 60/60 fixture tests. Scan jobs, dotted watcher paths, remote polling
+  policy, add/change/remove events, year-suffixed Plex shows, ambiguous title
+  fallbacks, numeric titles, deep traversal, normalized rename recovery,
+  subtitle discovery failures, unchanged-video/external-sidecar analysis,
+  parent-show Plex identities, preview/apply mutation boundaries, and
+  conservative TMDB auto-match decisions are covered. Final validation
+  evidence for this exact combined tree is recorded in Detailed Current
+  Handoff below.
 - Docker and FFmpeg are unavailable on this development host. Container
   startup, production scanning, hardware acceleration, embedded subtitle
   extraction, and bitmap subtitle burn-in remain unverified here.
+- A 2026-07-19 cold audit found additional no-go items before a controlled
+  production scan: startup/manual TMDB merge paths can still collapse distinct
+  playable sources, missing-path reconciliation is not atomic, watcher scans
+  need an empty-mount/mass-removal gate, duplicate episode identities need a
+  collision policy, and progress writes need ownership, uniqueness, and
+  ordering guarantees. The empty-folder/parser slice above is fixed locally;
+  the remaining items stay prioritized below.
 
 ### Verification Vocabulary
 
@@ -172,20 +400,28 @@ AppShell, TopNav, Logo, Footer, HeroCarousel, ContentRow, MediaCard, ContinueWat
 
 ## Detailed Current Handoff
 
-Updated: 2026-07-13
+Updated: 2026-07-19
 
 This section is authoritative for the next Codex task. Historical entries below
 describe how Lumina evolved and can be stale or contradictory.
 
 ### Repository State
 
+- Current continuation baseline is `144c976` on `main`, matching
+  `origin/main`; all P0-A and follow-up changes remain intentionally
+  uncommitted in the working tree. The NAS has the parser/inventory/player
+  corrective build plus grouped search and shelf browsing. The newer
+  parent-show Plex identity, collision-safe TMDB auto-match, apply-safe preview,
+  and background scan/watcher reliability slice remain local. Older states
+  below are retained as historical context only.
+
 - Primary branch: `main`.
 - The working tree contains intentional, uncommitted visual-system and player
   changes alongside documentation updates. Do not discard or reset them;
   inspect `git status` and the complete diff before editing.
-- Last committed revision at this handoff: `853e156` (“Rework media browsing
-  and playback state management”).
-- Commit `853e156` is present on both local `main` and `origin/main`.
+- Last committed revision at this handoff: `144c976` (“Refine media browsing
+  and playback state handling”).
+- Commit `144c976` is present on both local `main` and `origin/main`.
 
 ### Current Architecture
 
@@ -211,8 +447,8 @@ describe how Lumina evolved and can be stale or contradictory.
   ratings/progress/selection/focus.
 - Replaced the image wordmark in application chrome with a compact typographic
   `Lumina.` lockup and centered the primary navigation inside an ink capsule.
-- Reworked the Home feature carousel into an asymmetric two-title artwork deck
-  and aligned all shelves to the same bounded page width.
+- Reworked the Home feature carousel into an asymmetric artwork deck with up
+  to three featured titles and aligned all shelves to the same page boundary.
 - Made that shared page frame fluid through 3200px, kept one 16/24/32px gutter
   system across navigation, hero, shelves, grids, and footer, and moved the
   scrolled glass treatment to the full-width header so its edges stay
@@ -237,6 +473,17 @@ describe how Lumina evolved and can be stale or contradictory.
 - Replaced the detail dialog's viewport-width-derived scroll height with a
   bounded flex layout, preventing ultrawide windows from collapsing its
   scrollable content body.
+- Refined the Home feature deck into a more authored editorial composition
+  with quiet 01–03 indexing on desktop, warmer artwork illumination, nested
+  edge highlights, and weighted CTA motion. Mobile hides desktop-only feature
+  counters rather than implying inaccessible slides.
+- Added descriptive shelf kickers and item counts so Home no longer reads as a
+  stack of equal anonymous rows. Poster and Continue Watching cards now use
+  slower custom easing, restrained image movement, exposure changes, and
+  porcelain edge highlights instead of stronger glow or larger geometry.
+- Refined browse spotlights with the same image-led grade, an unobtrusive
+  curation mark, custom CTA motion, and a procedural-art fallback when remote
+  artwork fails.
 
 - Removed obsolete generator scripts, examples, local database, upload scratch
   files, unused Caddy configuration, and the unused logo-review component.
@@ -244,9 +491,9 @@ describe how Lumina evolved and can be stale or contradictory.
   duplication.
 - Added safe startup repair for duplicate TMDB identities.
 - Introduced path-aware rescans, same-path row merging, media-row availability,
-  recursive movie collection scanning, and common-extras filtering. The audit
-  below identifies incomplete title-fallback, traversal, and episode-history
-  safety in that implementation.
+  recursive movie collection scanning, and common-extras filtering. The
+  current P0-A implementation completes normalized fallback, traversal, and
+  episode-history safety around that foundation.
 - Aligned library statistics, section counts, browse, and search with locally
   playable media.
 - Fixed player settings/caption menu positioning. The shared `lumina-panel`
@@ -260,28 +507,103 @@ describe how Lumina evolved and can be stale or contradictory.
   embedded bitmap tracks such as PGS/DVD subtitles through burn-in transcoding.
 - Added `Subtitle.streamIndex` and `Subtitle.codec`; startup `db push` applies
   these additive columns on deployment.
+- Hardened production filename handling for numeric titles, dotted directory
+  names, release-tag suffixes, and filesystem metadata sidecars. Added
+  inventory availability/TMDB filters and true incremental paging, prioritised
+  Plex preview detail, redacted TMDB credentials from public API payloads, and
+  restored absolute progress accounting for segmented transcodes.
+- Scoped Plex previews to the selected Lumina section's media type, retained
+  the latest scan manifest in process so Settings can reopen it, and made
+  Library Management search and display local source paths for mismatched-title
+  diagnosis.
+- Replaced the misleading flat title-only search contract with grouped,
+  playable Movie, TV Show, and Episode results. Search scopes are functional,
+  individual episodes carry exact playback IDs and progress, the top-nav field
+  is now a stable search launcher, and keyboard/error/loading/empty behaviour
+  is explicit rather than inferred from a poster mega-grid.
+- Added an internal preset-aware browse destination for six reproducible Home
+  shelves, server-side movie/full-series watch-state filters, stable page
+  ordering, per-scope filter persistence, and logical-view scroll restoration.
+  Continue Watching and Recently Added Episodes deliberately have no fake
+  full-list destination.
+- Tightened shared discovery resume context so completed progress replays from
+  the normal start/next-episode path and history for a missing episode cannot
+  become a playable card action. Continue Watching likewise requires its exact
+  saved target to remain locally playable.
+- Corrected Plex show/episode fallback identity for titles formatted as
+  `Title (Year)`: only a bracketed trailing year is separated, numeric titles
+  remain literal, episode GUIDs are not mistaken for parent-show identity, and
+  ambiguous normalized title/year keys refuse fallback instead of selecting an
+  arbitrary Lumina row. Preview reasons now distinguish a missing show from a
+  matched show with no exact local season/episode and are visible in Settings.
+- Extended Plex TV matching to bulk-load real type-2 parent shows beside each
+  type-4 episode inventory, join them by rating key/GUID/metadata key, and use
+  the parent's TMDB/IMDb identity, title, and premiere year. Episode air years
+  and episode GUIDs are never treated as show identity. Exact source-folder and
+  source-title aliases recover regional/stylized names without fuzzy character
+  replacement; ambiguous or contradictory identities refuse safely. A unique
+  parent external ID may disambiguate a shared alias. Movie source-title aliases
+  likewise explain metadata-retitled rows such as local `Run`/`Chicken Run`.
+- Reworked Plex report detail into a bounded 2,000-row attention window with
+  proposed changes retained before unmatched rows. Already-synced and skipped
+  rows remain in aggregate counts but are omitted from response detail. Settings
+  shows match reasons and truncation, resets filters per report, and binds Apply
+  to the exact URL/token/direction/scope payload used for that preview; changing
+  an input invalidates the preview.
+- Added conservative automatic TMDB selection. Auto scans disable the yearless
+  retry and apply metadata only for one exact normalized localized/original
+  title candidate whose year also matches when the source year is known.
+  Wrong, ambiguous, or year-mismatched candidates remain unchanged and add an
+  explanatory identity-collision manifest entry. Manual Fix Match retains the
+  broader search; existing TMDB IDs are never silently remapped.
+- Detached manual scans from the initiating HTTP response. Scan POSTs now
+  enqueue an in-process job, return `202`, and expose compact polling state;
+  full path manifests load only when expanded and render in 200-entry chunks.
+  Repeated clicks for the same scope attach to its active job, while the
+  scanner's existing section queue remains the reconciliation authority.
+- Made the watcher suitable for remote mounts: dotted directories are not
+  rejected as files, additions/changes/removals and subtitle events schedule
+  scans, registrations reconcile with section edits, and polling defaults to a
+  bounded 10-second interval. Home revalidates while visible so watcher-added
+  media appears without a page reload.
+- Reduced unchanged-rescan analysis cost without hiding sidecar changes:
+  unchanged video files skip embedded-subtitle probing but still enumerate and
+  diff external subtitle files. A changed/new file probes embedded streams.
+  Sidecar traversal and embedded-probe completeness are tracked separately so
+  transient discovery failures cannot erase cached subtitle metadata.
+- Prevalidated TV directory contents before creating or refreshing a show.
+  Empty, empty-season, and sidecar-only folders now remain out of the playable
+  library and receive path-level ignored reasons. Previously created empty-show
+  rows are marked unavailable without deleting metadata or progress. Filename
+  `SxxExxx` identity now handles Specials and `E100` and overrides a conflicting
+  containing-directory label with an explicit collision explanation.
 
 ### Uncommitted Change Map
 
-- Visual tokens and shared surfaces: `src/app/globals.css` and
-  `src/components/ui/card.tsx`.
-- Shell and identity: `top-nav.tsx`, `logo.tsx`, and `footer.tsx`.
-- Home composition and responsive shelves: `home-view.tsx`,
-  `hero-carousel.tsx`, `content-row.tsx`, `continue-watching-card.tsx`, and the
-  new `horizontal-rail.tsx`.
-- Poster/browse surfaces: `media-card.tsx`, `browse-view.tsx`,
-  `category-view.tsx`, `search-view.tsx`, `my-list-view.tsx`, and
-  `skeletons.tsx`.
-- Settings and action/dialog surfaces: `library-view.tsx`,
-  `media-actions-menu.tsx`, `media-info-dialog.tsx`, and
-  `media-match-dialog.tsx`.
-- Playback surfaces: `detail-overlay.tsx` and `video-player.tsx`.
+- Visual/chrome/discovery surfaces: `src/app/globals.css`, `app-shell.tsx`,
+  `top-nav.tsx`, `home-view.tsx`, `hero-carousel.tsx`, `content-row.tsx`,
+  `horizontal-rail.tsx`, `continue-watching-card.tsx`, `media-card.tsx`,
+  `browse-view.tsx`, `search-view.tsx`, and the new
+  `search-result-card.tsx`.
+- Settings, inventory, scan, and Plex report UI: `library-view.tsx`.
+- Playback UI and request accounting: `video-player.tsx`, both media/episode
+  probe routes, `src/lib/transcoder.ts`, and the new
+  `src/lib/playback-progress.ts`.
+- Discovery/query state: `src/lib/media-queries.ts`, `src/lib/queries.ts`, the
+  browse route, `src/lib/types.ts`, and `src/store/media-store.ts`.
+- Scanner/subtitle/watcher runtime: `src/lib/scanner.ts`,
+  `src/lib/subtitles.ts`, `src/lib/watcher.ts`, both scan routes, and the new
+  `src/lib/scan-jobs.ts` and `src/lib/watcher-policy.ts`.
+- Plex and metadata correctness: `src/lib/plex-sync.ts`,
+  `src/lib/plex-scope.ts`, and `src/lib/tmdb.ts`.
+- Test foundation: `package.json` plus the isolated suites and alias loader in
+  `tests/`.
 - Handoff and operating guidance: `AGENTS.md`, `README.md`, `DEPLOYMENT.md`,
-  this file, and the brand asset-pack README.
+  and this file.
 
-The current documentation pass does not yet fix scanner, query, watcher, or
-player correctness findings in the roadmap below. Do not infer those fixes
-from the redesign diff.
+The current tree addresses the scanner, progress, discovery, Plex-preview, and
+watcher slices explicitly recorded here. Production media behaviour remains a
+deployment check; do not infer it solely from the visual diff or local tests.
 
 ### Validation State
 
@@ -307,70 +629,252 @@ from the redesign diff.
   container startup repair, NAS scanning, embedded subtitle extraction, and
   bitmap subtitle burn-in still require runtime verification in the deployed
   image.
+- Read-only deployment verification on 2026-07-13 confirmed the current Home,
+  rail, Settings-header, and panel-alignment changes at 1280x720. It also
+  confirmed live API availability and CPU/libx264 transcoding fallback. No
+  production scan or playback was started, so scanner reconciliation,
+  progress persistence, subtitle clearance, direct play, and subtitle
+  conversion/burn-in remain unverified against real media.
+- The later Lumina-signature pass was locally browser-inspected with a
+  temporary 81-title fixture at 1280x800. Home and Movies retained their
+  established page boundary and density, the feature hierarchy and new shelf
+  rhythm rendered correctly, and 390px geometry had no horizontal overflow.
+  The browser could not complete the refreshed 390px screenshot, so final
+  mobile visual inspection remains required after deployment. No production
+  state was mutated for this fixture check.
+- The 2026-07-13 production-diagnostic follow-up passed the complete validation
+  set again. `npm test` reported 14/14 passing. A temporary 205-row SQLite
+  fixture validated inventory search, availability/TMDB filters, and 100-row
+  append pagination in the local browser. No NAS scan, production playback,
+  deployment, commit, or push was performed.
+- The 2026-07-14 read-only deployment audit reported 706 playable titles:
+  Movies 478, Movies (Anime) 19, TV Shows 179, and TV Shows (Anime) 30.
+  In the earlier image, `1917` and `Casino Royale` returned zero rows even from
+  availability=`all`, proving that a matching aggregate was not an itemized
+  reconciliation. A preview-only Plex request also exposed cross-type section
+  scoping. The local corrective follow-up passed the complete validation set
+  with 17/17 tests.
+- The 2026-07-14 grouped-search and shelf-browse slice passed `npm run lint`,
+  `npx tsc --noEmit`, Prisma validation/generation, 25/25 Node tests,
+  `build:docker`, and `git diff --check`. An isolated 42-title/56-episode SQLite
+  fixture exercised the local APIs: `Night` returned movie, show, and exact
+  episode groups; `1917` remained a movie with no false episode match; preset
+  order returned the expected first page; and watched/in-progress/unwatched
+  sets were disjoint. The disposable database was removed. The in-app browser
+  runtime failed to initialise in this desktop session, so responsive layout,
+  focus movement, and scroll restoration are compile/API-validated but still
+  require fixture-browser or deployment acceptance. No production scan,
+  deployment, playback, commit, or push was performed.
+- Read-only acceptance against the subsequently rebuilt service on 2026-07-14
+  confirmed 706 playable titles, 6,033 playable episodes, 24 genres, and about
+  4,419 hours. `1917` (2019) and `Casino Royale` (2006) now resolve normally;
+  movie/show watch-state totals partition exactly as 394 unwatched, 23 in
+  progress, and 289 watched. All four current-session retained-report GETs
+  returned 404, so the recovered titles still lack path-level scan evidence.
+- A Plex preview with `apply: false` inspected 6,554 items: 5,551 matched,
+  2,770 already-synced rows, one pending Lumina change, and 1,003 unmatched.
+  Repeated `Animal Kingdom (2016)` episode false negatives reproduced the
+  bracketed-year parent-title defect despite the Lumina show row being matched
+  to TMDB. No Plex apply or watched-state mutation was performed.
+- Final validation of the exact combined local tree on 2026-07-14 passed
+  `npm run lint`, `npx tsc --noEmit`, `npx prisma validate`,
+  `npx prisma generate` (Prisma Client 6.19.3), `npm test` (40/40 across eight
+  suites), `npm run build:docker` (Next.js 16.2.9), and `git diff --check`.
+  This is compile/fixture validation only: no production scan, Plex apply,
+  playback mutation, deployment, commit, or push was performed.
+- A 2026-07-15 read-only Plex preview against the rebuilt service inspected
+  6,554 items: 6,142 matched, 412 unmatched, 3,012 already synced, and 61
+  Lumina changes proposed. The response remained preview-only (`apply: false`).
+  Its supplied 200-row attention detail is the evidence for the parent-year,
+  regional-alias, duplicate-title, and sticky-metadata findings recorded below.
+- Final validation of the exact 2026-07-15 local tree passed `npm run lint`,
+  `npx tsc --noEmit`, `npx prisma validate`, `npx prisma generate` (Prisma
+  Client 6.19.3), `npm test` (60/60 across nine suites),
+  `npm run build:docker` (Next.js 16.2.9), and `git diff --check`. This remains
+  compile/fixture validation: no production scan, Plex apply, deployment,
+  playback mutation, commit, or push was performed.
+- The 2026-07-19 empty-folder and episode-parser hardening passed `npm run
+  lint`, `npx tsc --noEmit`, `npx prisma validate`, `npx prisma generate`
+  (Prisma Client 6.19.3), `npm test` (63/63 across nine suites), and `npm run
+  build:docker` (Next.js 16.2.9). `git diff --check` is recorded after the
+  handoff update. No production scan, Plex apply, deployment, playback
+  mutation, commit, or push was performed.
 
 ### Confirmed Audit Findings
 
-These were confirmed by code inspection on 2026-07-13. They are defects or
-safety gaps to fix; they are not yet proven to be the exact cause of each live
-count discrepancy.
+P0-A status update (2026-07-14): exact-path reconciliation, traversal gating,
+non-destructive episode availability, section serialization, manifests, and
+the temporary-tree/isolated-SQLite test foundation are implemented locally.
+The parser suite also covers numeric titles, dotted names, common release tags,
+and AppleDouble/system metadata. Background scan jobs and the remote-safe
+watcher close the later request-lifetime and NAS-event reliability gaps.
 
-- `src/lib/scanner.ts` looks up movies and shows with `filePath OR title/year`.
-  A second live path with the same parsed title/year can overwrite the first
-  row before path reconciliation. Alternate editions and parser collisions are
-  therefore silent instead of explainable.
-- Several nested `readdir`/`stat` failures become an empty list or a logged
-  skip, but the scan still performs missing-path reconciliation. A partial NAS
-  traversal can mark undiscovered media unavailable.
-- The scanner deletes episode rows after clearing missing `filePath` values,
-  and TMDB cleanup also deletes rows without a current file/stream. The Prisma
-  relation cascades an episode deletion into episode watch progress. This
-  contradicts the local-media/history invariants.
-- Browse, search, headline counts, and section counts use the shared playable
-  predicate, but Home feature/trending/popular/recent/genre queries, Continue
-  Watching, My List, top-genre grouping, and runtime totals do not apply it
-  consistently. The earlier statement that all user-facing queries were
-  aligned was too broad.
-- Show-level playback resolves a playable episode for the stream but saves
-  progress using `activeEpId`; when no episode was supplied initially, a TV
-  progress row can be written with `episodeId: null`.
-- The global player key handler closes over stale `current` and `duration`
-  values because its effect omits them, so left/right keyboard seeking can use
-  an outdated position.
-- The filesystem watcher is initialized once, handles add/add-directory/raw
-  rename events only, and does not reconcile section edits or removals. Manual
-  and watcher scans have no per-section concurrency lock.
-- Every rescan probes subtitle streams again; there is no path/size/mtime media
-  analysis cache.
-- There is no automated test suite or CI workflow. `/api` still returns
-  `Hello, world!`, and the image has no Docker health check.
+The original `1917` and `Casino Royale` disappearances are operationally
+recovered in the current live service, but not considered path-level explained
+until a complete retained Movies manifest names both files. No production scan
+was run in this task.
+
+The 2026-07-15 Plex preview proves that a Lumina metadata match and a Plex
+episode match are different identity layers. `Hell's Kitchen` was searchable
+and playable locally while all 32 attached Plex episode rows said no Lumina
+show. The cause was using the episode air year as the show year plus losing
+regional/source aliases after TMDB retitled the local row. Parent-show identity
+and exact collision-aware source aliases are now fixture-tested locally. The
+remaining season-zero rows in the supplied preview are not assumed to be false:
+they represent Plex specials for which Lumina may genuinely have no local file.
+
+`Mr. & Mrs. Smith (2024)` → `Mr. & Mrs. North (1952)` and `Run (2020)` →
+`Chicken Run (2000)` are confirmed local metadata errors. The new automatic
+match gate prevents these title/year mismatches for future unmatched rows, but
+the existing sticky IDs require explicit Fix Match review after deployment.
+
+Remaining confirmed or deliberately deferred gaps:
+
+- Startup duplicate repair and the shared manual TMDB apply path can still
+  delete/merge a row without proving a second playable path is unavailable.
+  The authoritative merge policy must refuse distinct live file/stream paths,
+  including cross-section races, before the unique identity is repaired.
+- Missing-path reconciliation applies individual updates outside one
+  transaction. A failure can leave a partially unavailable section without a
+  retained completed manifest. Batch the reconciliation phase atomically and
+  add failure-injection rollback coverage.
+- Watcher-originated scans currently treat an empty-but-readable remote mount
+  as a complete traversal. Require a manual confirmation/safety gate for a
+  zero-result or mass-removal watcher scan.
+- Duplicate files resolving to one `(show, season, episode)` still need a
+  path-preserving collision policy rather than last-path-wins updates.
+- Progress writes lack a single atomic logical target and request ordering;
+  cleanup/auto-next/transcode races can overwrite newer progress. Validate
+  episode ownership, repair duplicates, and order writes before deployment.
+- Lumina has no first-class multiple-edition/version model. The scanner keeps
+  distinct live paths and reports identity collisions; product representation
+  of several files sharing one TMDB identity remains future work.
+- Scan jobs and manifests are process-local by design. They survive browser
+  navigation and a closed request, but not a container restart; deployment
+  operators must retain reports before restarting.
+- The current analysis shortcut covers unchanged embedded-subtitle probing;
+  codec/container analysis is not yet a general path/size/mtime cache.
+- Player geometry and absolute transcoded-progress logic are locally validated,
+  but direct play, compatibility fallback, restart/resume, and subtitle
+  clearance still require named real-media deployment checks.
+- There is no CI workflow. `/api` still returns `Hello, world!`, and the image
+  has no structured readiness endpoint or Docker health check.
 
 ### Prioritized Roadmap
 
-#### P0-A — Make Production Scans Safe And Explainable
+#### P0-A — Make Production Scans Safe And Explainable (Hardening Required Before Production Scan)
+
+Completed on top of `144c976`: normalized path-first reconciliation,
+unavailable-only title/year recovery, live-path and TMDB collision reporting,
+traversal completeness gating, non-destructive episode availability,
+per-section scan serialization, API/UI manifests, and temporary-tree/isolated
+SQLite regression tests. The later reliability slice adds request-independent
+scan jobs, compact polling, lazy full-manifest retrieval, remote-mount watcher
+polling/event coverage, dynamic section subscriptions, foreground Home
+revalidation, and unchanged-video embedded-subtitle probe avoidance.
+The core scanner safety code is present in the current live image but has not
+had a controlled production scan. The deployed image exposes the background
+scan-job contract, while the parent Plex identity/report fix remains local.
+Do not run the controlled scan until the remaining merge, atomic
+reconciliation, watcher empty-mount, duplicate-episode, and progress-integrity
+gates in Confirmed Audit Findings are resolved and fixture-tested.
+
+Original P0-A validation completed on 2026-07-13:
+
+- `npm run lint` passed.
+- `npx tsc --noEmit` passed.
+- `npx prisma validate` passed.
+- `npx prisma generate` passed (Prisma Client 6.19.3).
+- `npm test` passed: 17 tests, 17 passed.
+- `npm run build:docker` passed with Next.js 16.2.9.
+- `git diff --check` passed (line-ending conversion notices only).
+
+The exact combined P0-A, Plex-identity, grouped-discovery, progress, background-
+scan, watcher, and subtitle-completeness tree was revalidated on 2026-07-14:
+
+- `npm run lint` passed.
+- `npx tsc --noEmit` passed.
+- `npx prisma validate` passed.
+- `npx prisma generate` passed (Prisma Client 6.19.3).
+- `npm test` passed: 40 tests across eight suites.
+- `npm run build:docker` passed with Next.js 16.2.9.
+- `git diff --check` passed.
+
+The 2026-07-15 parent-show Plex, apply-boundary, preview-contract, and safe
+TMDB-auto-match follow-up was revalidated against the complete tree:
+
+- `npm run lint` passed.
+- `npx tsc --noEmit` passed.
+- `npx prisma validate` passed.
+- `npx prisma generate` passed (Prisma Client 6.19.3).
+- `npm test` passed: 60 tests across nine suites.
+- `npm run build:docker` passed with Next.js 16.2.9.
+- `git diff --check` passed.
+
+The 2026-07-19 empty-folder and episode-parser follow-up was revalidated
+against the complete tree:
+
+- `npm run lint` passed.
+- `npx tsc --noEmit` passed.
+- `npx prisma validate` passed.
+- `npx prisma generate` passed (Prisma Client 6.19.3).
+- `npm test` passed: 63 tests across nine suites.
+- `npm run build:docker` passed with Next.js 16.2.9.
+- `git diff --check` passed.
+
+The subsequent responsive/player and production-diagnostic refinements also
+passed lint, TypeScript, Prisma validation/generation, the 17-test suite,
+`build:docker`, and `git diff --check` on 2026-07-13. The latest browser check
+used a disposable 205-row inventory fixture; artwork, subtitle clearance,
+transcoded progress persistence, and scanner reconciliation still need the
+preserved production `/data` bind and named real media.
+
+Remaining deployment checks: do not infer correctness from the matching Movies
+aggregate. First finish the outstanding P0 hardening gates above. Then deploy
+the latest corrective tree through the normal backup/rollback procedure and
+run one Movies section scan, immediately reopen
+and retain its report, require it to be complete, and locate the exact `1917`
+and `Casino Royale` paths among discovered, ignored, unsupported, traversal, or
+identity-collision entries. Confirm the evidence-backed Anime total stays 19
+and reconcile TV 179 against the 180-directory NAS definition. Preview Plex
+with “Needs attention” selected and confirm a Movies scope excludes TV
+episodes. Separately preview All/TV scope and confirm `Animal Kingdom (2016)`,
+`Hell's Kitchen (US)`, both `Next Level Chef` libraries, `Star Trek`,
+`PLUR1BUS`, `Kitchen Nightmares (US)`, and `Monster (2022)` resolve through
+their exact parent/source identities. Confirm the US `Next Level Chef` S2 rows
+do not attach to the UK series. Review genuine missing-special rows separately.
+Use the reason text to locate `Mr. & Mrs. Smith`/`Run`, correct those two sticky
+TMDB identities explicitly through Fix Match, then run another preview. Do not
+apply watched changes until the attention set is reviewed.
+Add/change/remove one controlled non-production fixture under a watched section
+and confirm the serialized watcher scan completes and Home refreshes. Resume
+and stop a named transcoded title across a container restart and compare the
+stored absolute position with the player timeline.
+
+Implemented guarantees:
 
 1. Match an exact normalized path first. Reuse a title/year row only when its
    previous path is absent/unavailable; never overwrite a second path that was
    discovered in the same scan.
-2. Define how multiple files/editions for one TMDB title should be represented.
-   Until a versions model exists, surface every identity collapse in the scan
-   manifest instead of silently losing a path from reconciliation evidence.
-3. Track traversal completeness. If any directory needed for a section cannot
-   be read reliably, return an incomplete scan and skip all missing-path
-   reconciliation for that section.
-4. Preserve missing episode rows, metadata, subtitles, and watch history by
-   marking them unavailable rather than deleting them. Remove the equivalent
-   destructive TMDB cleanup.
-5. Serialize scans per section across manual requests and the watcher.
-6. Return and expose a path-level reconciliation manifest: discovered videos,
-   unsupported/ignored entries with reasons, traversal errors, parser output,
-   duplicate path/title/TMDB collisions, and database rows proposed as stale.
-7. Add focused temporary-directory/SQLite scanner tests for numeric titles,
-   collection recursion, extras, same-title distinct paths, rename recovery,
-   partial traversal, missing episodes/history, and idempotent rescans.
+2. Until a versions model exists, surface every identity collapse in the scan
+   manifest instead of silently losing a live path.
+3. Any relevant traversal uncertainty returns an incomplete scan and suppresses
+   all missing-path reconciliation for the section, including non-absence
+   subtitle-directory read failures.
+4. Missing episodes retain their rows, metadata, subtitles, and watch history;
+   the equivalent TMDB cleanup is non-destructive. Failed sidecar or embedded
+   subtitle discovery likewise preserves the existing affected track group.
+5. Manual and watcher work serialize per section, and HTTP scan requests queue
+   process-local jobs rather than holding one fragile response open.
+6. The manifest covers discoveries, ignored/unsupported reasons, traversal
+   failures, parser output, identity collisions, and proposed unavailable rows.
+7. Temporary-directory/SQLite tests cover the destructive, duplicate, parser,
+   Plex-identity, watcher-policy, and idempotency cases recorded above.
 
 Definition of done: an incomplete scan cannot remove availability/history; the
 manifest explains every discovered or excluded path; destructive test fixtures
-pass; lint, TypeScript, Prisma validation/generation, and `build:docker` pass.
+pass; lint, TypeScript, Prisma validation/generation, `npm test`,
+`build:docker`, and `git diff --check` pass.
 
 #### P0-B — Deploy, Reconcile Counts, And Verify Real Media
 
@@ -381,11 +885,11 @@ pass; lint, TypeScript, Prisma validation/generation, and `build:docker` pass.
 2. Confirm duplicate repair and guarded schema push complete before
    `Starting server on port 3000`, then compare stats/sections with the captured
    pre-deployment JSON before scanning.
-3. After P0-A is complete, scan one section at a time and retain each manifest.
-   Reconcile the three movie differences and the extra TV row path-by-path.
-   Determine whether any difference is an intentional TMDB/edition collapse or
-   a mismatched NAS-vs-Lumina counting definition. Keep anime counts unchanged
-   and confirm *Harry Potter and the Deathly Hallows: Part 2* appears.
+3. Scan one section at a time and retain each manifest. Even though the current
+   regular Movies aggregate is 478, confirm all 478 expected paths item-by-item,
+   including `1917`, `Casino Royale`, and *Harry Potter and the Deathly Hallows:
+   Part 2*. Reconcile 179 Lumina TV shows against the 180-directory NAS
+   definition and keep the evidence-backed Anime totals unchanged.
 4. Exercise Home, Movies, TV, Search, My List, Settings, detail, rails, and the
    player at mobile, desktop, and ultrawide/high-DPI widths.
 5. Test direct play, compatibility fallback, resume, menus, external SRT/ASS,
@@ -396,6 +900,32 @@ Definition of done: startup and rollback evidence is retained; every count
 difference has an itemized explanation; no unresolved scan error exists; real
 subtitle/player checks pass; the deployed image is explicitly recorded as
 deployment-verified.
+
+#### P1-A — Trustworthy Discovery And Navigation (First Slice Implemented Locally)
+
+Implemented locally: grouped playable Movie/TV/Episode search with exact
+episode actions and keyboard states; six typed shelf `View all` presets with
+Home/full-list parity; stable pagination; correct movie/full-series watch-state
+filters; per-scope browse preferences; and logical-view scroll restoration.
+
+Next discovery steps, in order:
+
+1. Give Continue Watching and Recently Added Episodes dedicated paginated
+   contracts before adding `View all`; retain next-episode selection and
+   per-show episode deduplication exactly.
+2. Add indexed `sortTitle` A–Z and `#` navigation without loading all earlier
+   pages. Numeric fixtures must keep `1917` and `2046` under `#`.
+3. Add user collections and a small set of explainable smart shelves. Each
+   recommendation should state its reason (genre, creator, cast, collection,
+   recently watched) instead of presenting an opaque ranking.
+4. Add a command-palette/search overlay and living-room focus model only after
+   the current mouse/keyboard flows have fixture-browser coverage.
+
+Definition of done for this slice: every displayed scope is backed by a
+matching server query; no unavailable target becomes a Play/Resume action;
+filters and paging remain stable across navigation; keyboard and responsive
+browser regression checks pass; deployment acceptance confirms the same
+behaviour with real artwork and the preserved production database.
 
 #### P1 — Playback, Query, Watcher, And Analysis Correctness
 
@@ -410,10 +940,11 @@ deployment-verified.
   responsive-detail behavior.
 - Refine codec/container direct-play decisions and fatal direct-play fallback
   with small media fixtures.
-- Refresh watcher subscriptions when sections change; handle change/unlink and
-  unlink-directory events through the safe serialized scan path.
-- Cache codec/subtitle analysis by normalized path, size, and modification time
-  so unchanged media skips repeated `ffprobe` work.
+- Deployment-verify the locally implemented dynamic watcher subscriptions,
+  add/change/unlink/directory events, bounded remote polling, serialized scan
+  path, and foreground Home refresh.
+- Extend the current unchanged-video embedded-subtitle shortcut into a general
+  codec/container analysis cache keyed by normalized path, size, and mtime.
 - Replace `/api` with a structured health/readiness response and consider a
   Docker `HEALTHCHECK` after the endpoint is meaningful.
 
@@ -434,7 +965,8 @@ regressions, unchanged files skip analysis, and all standard validations pass.
 
 #### P2 — Operations And UX Hardening
 
-- Show/export the full reconciliation manifest instead of only a note count.
+- Add manifest export/download; the full report is already viewable lazily in
+  Settings rather than reduced to a note count.
 - Replace hard-coded section “Active” status with path, watcher, and last-scan
   health; add clear offline treatment if My List retains unavailable items.
 - Add empty-library onboarding after correctness work is stable.
@@ -447,24 +979,30 @@ regressions, unchanged files skip analysis, and all standard validations pass.
 The exact build/save/transfer/import, backup, startup, functional verification,
 and rollback procedure now lives in `DEPLOYMENT.md`. The key order is:
 
-1. Complete P0-A before any production rescan.
+1. Validate and deploy the exact local P0-A plus Plex/background-scan/watcher
+   tree before any production rescan.
 2. Import and start the new image with the preserved live configuration.
 3. Verify state before scanning, then run section scans only with manifests and
    a restore-ready backup.
 4. Complete real-library player and responsive checks.
-5. Review the complete diff, commit intentionally, and push `main` only after
-   the deployment is accepted.
+5. Review the complete diff. Commit or push only after deployment acceptance
+   and only when the user explicitly requests those Git actions.
 
 ### Known Risks And Scope Guardrails
 
 - Bitmap subtitle burn-in is compile-validated but not exercised on this host.
-- The live image predates the responsive pass; current count discrepancies are
-  investigation targets, not guaranteed fixes.
+- The live image includes the responsive pass, but current count discrepancies
+  remain investigation targets, not guaranteed fixes.
 - No further broad redesign is queued. Make targeted corrections from deployed
   evidence and preserve the current visual system.
 - Authentication, multi-user support, new page routes, and a media-versions
   data model are separate product decisions; do not introduce them as incidental
   fixes.
+- Watch Together, Live TV/DVR, global reviews, offline downloads, broad theme
+  customisation, and multi-user profiles are explicitly deferred. Multi-user is
+  the only desired item in that group, and it remains a much-later deliberate
+  migration after the single-user trust, discovery, and premium experience are
+  mature.
 - Historical notes below mention full runtime `node_modules`, seeded demo
   behavior, glow-heavy cards, old logos, hover-only arrows, and earlier player
   layouts. None is current guidance.

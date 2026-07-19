@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Search,
   Menu,
-  X,
   Film,
   Home as HomeIcon,
   Tv,
@@ -32,11 +31,20 @@ const NAV: { key: RouteKey; label: string; icon: typeof HomeIcon }[] = [
 
 export function TopNav() {
   const route = useMediaStore((s) => s.route);
+  const browseTarget = useMediaStore((s) => s.browseTarget);
   const setRoute = useMediaStore((s) => s.setRoute);
   const searchQuery = useMediaStore((s) => s.searchQuery);
-  const setSearch = useMediaStore((s) => s.setSearch);
+  const openSearch = useMediaStore((s) => s.openSearch);
+  const selectedMediaId = useMediaStore((s) => s.selectedMediaId);
+  const watchMediaId = useMediaStore((s) => s.watchMediaId);
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const openSearchView = useCallback(() => {
+    setMobileOpen(false);
+    openSearch();
+    window.setTimeout(() => window.dispatchEvent(new Event("lumina:focus-search")), 0);
+  }, [openSearch]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -45,8 +53,34 @@ export function TopNav() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if (selectedMediaId || watchMediaId) return;
+
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const isEditable =
+        !!target &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT");
+      const slash = event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey;
+      const commandK = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+
+      if ((!slash && !commandK) || (slash && isEditable)) return;
+      event.preventDefault();
+      openSearchView();
+    };
+
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
+  }, [openSearchView, selectedMediaId, watchMediaId]);
+
   const isActive = (key: RouteKey) =>
-    route === key || (key === "settings" && route === "library");
+    route === key ||
+    (key === "settings" && route === "library") ||
+    (route === "browse" && key === "movies" && browseTarget?.type === "MOVIE") ||
+    (route === "browse" && key === "tv" && browseTarget?.type === "TV");
 
   const navButtonClass = (active: boolean) =>
     cn(
@@ -96,30 +130,21 @@ export function TopNav() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 justify-self-end">
-          {/* desktop search */}
-          <div className="relative hidden items-center sm:flex">
-            <Search className="pointer-events-none absolute left-2.5 h-4 w-4 text-foreground/50" />
-            <input
-              value={searchQuery}
-              onChange={(e) => setSearch(e.target.value)}
-              onFocus={() => searchQuery.trim() && setRoute("search")}
-              placeholder="Search titles…"
-              className={cn(
-                "h-9 rounded-full border border-white/12 bg-white/[0.09] pl-9 pr-3 text-sm text-white placeholder:text-white/42 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl transition-all focus:border-white/28 focus:bg-white/[0.14] focus:outline-none min-[2200px]:h-11 min-[2200px]:pl-10 min-[2200px]:text-base",
-                "w-36 focus:w-56 xl:w-44 xl:focus:w-64 min-[2200px]:w-56 min-[2200px]:focus:w-72"
-              )}
-              aria-label="Search"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2 text-foreground/50 hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+          {/* desktop search launcher — SearchView owns the editable field */}
+          <button
+            type="button"
+            onClick={openSearchView}
+            className="hidden h-9 w-40 items-center gap-2 rounded-full border border-white/12 bg-white/[0.09] px-3 text-left text-sm text-white/56 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl transition-colors hover:border-white/20 hover:bg-white/[0.13] hover:text-white/78 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 sm:inline-flex xl:w-48 min-[2200px]:h-11 min-[2200px]:w-60 min-[2200px]:text-base"
+            aria-label="Search your library"
+          >
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {route === "search" && searchQuery ? searchQuery : "Search library…"}
+            </span>
+            <kbd className="hidden rounded border border-white/12 bg-[var(--lumina-ink)]/34 px-1.5 py-0.5 text-[10px] font-medium text-white/42 xl:inline">
+              /
+            </kbd>
+          </button>
 
           {/* mobile menu */}
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -140,16 +165,17 @@ export function TopNav() {
                 </SheetTitle>
               </SheetHeader>
               <div className="thin-scrollbar max-h-[calc(100vh-100px)] overflow-y-auto px-3 py-4">
-                <div className="relative mb-4 flex items-center sm:hidden">
-                  <Search className="pointer-events-none absolute left-2.5 h-4 w-4 text-foreground/50" />
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search titles…"
-                    className="h-10 w-full rounded-lg border border-border/60 bg-foreground/5 pl-9 pr-3 text-sm focus:border-primary/50 focus:outline-none"
-                    aria-label="Search"
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={openSearchView}
+                  className="mb-4 flex h-10 w-full items-center gap-2.5 rounded-lg border border-white/12 bg-white/[0.06] px-3 text-sm text-white/64 transition-colors hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 sm:hidden"
+                  aria-label="Search your library"
+                >
+                  <Search className="h-4 w-4" />
+                  <span className="truncate">
+                    {route === "search" && searchQuery ? searchQuery : "Search library…"}
+                  </span>
+                </button>
                 <nav className="flex flex-col gap-1">
                   {NAV.map((item) => {
                     const Icon = item.icon;

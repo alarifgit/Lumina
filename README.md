@@ -68,7 +68,9 @@ npm run lint
 npx tsc --noEmit
 npx prisma validate
 npx prisma generate
+npm test
 npm run build:docker
+git diff --check
 ```
 
 These commands prove static and production-build validity. They do not prove

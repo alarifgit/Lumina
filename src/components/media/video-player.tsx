@@ -26,6 +26,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { formatTimecode } from "@/lib/media-utils";
 import type { Episode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { resolvePlaybackTimeline } from "@/lib/playback-progress";
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -150,9 +151,11 @@ function PlayerSession({
   };
 
   const expectedDuration = useMemo(() => {
+    const probed = probe.data?.durationSeconds ?? 0;
+    if (probed > 0) return probed;
     const runtime = currentEpisode?.runtime ?? d?.runtime ?? null;
     return runtime && runtime > 0 ? runtime * 60 : 0;
-  }, [currentEpisode?.runtime, d?.runtime]);
+  }, [currentEpisode?.runtime, d?.runtime, probe.data?.durationSeconds]);
 
   const hasLocalTranscodeSource = transcode && !currentEpisode?.streamUrl && !d?.streamUrl;
 
@@ -180,29 +183,37 @@ function PlayerSession({
     (force = false, traktEvent?: "start" | "pause" | "resume" | "stop") => {
       const v = videoRef.current;
       if (!v || !mediaId || !d) return;
-      const pos = hasLocalTranscodeSource ? timelineOffset + (v.currentTime || 0) : v.currentTime || 0;
-      const rawDuration = Number.isFinite(v.duration) ? v.duration : 0;
-      const dur = expectedDuration || (hasLocalTranscodeSource ? timelineOffset + rawDuration : rawDuration);
+      const timeline = resolvePlaybackTimeline({
+        transcoded: hasLocalTranscodeSource,
+        timelineOffset,
+        currentTime: v.currentTime,
+        mediaDuration: v.duration,
+        probeDuration: probe.data?.durationSeconds,
+        runtimeMinutes: currentEpisode?.runtime ?? d.runtime,
+      });
+      const pos = timeline.position;
+      const dur = timeline.duration;
       if (dur <= 0) return;
       const now = Date.now();
       if (!force && now - lastSave.current < 4000) return;
       lastSave.current = now;
-      const completed = pos / dur > 0.95;
+      const completed = timeline.completed;
       fetch("/api/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mediaId,
-          episodeId: d.type === "TV" ? activeEpId : null,
+          episodeId: d.type === "TV" ? currentEpisode?.id ?? activeEpId : null,
           position: pos,
           duration: dur,
           completed,
           traktEvent,
           progressPct: Math.round((pos / dur) * 1000) / 10,
         }),
+        keepalive: true,
       }).catch(() => {});
     },
-    [mediaId, d, activeEpId, expectedDuration, hasLocalTranscodeSource, timelineOffset]
+    [mediaId, d, activeEpId, currentEpisode?.id, currentEpisode?.runtime, hasLocalTranscodeSource, timelineOffset, probe.data?.durationSeconds]
   );
 
   const togglePlay = () => {
@@ -214,11 +225,8 @@ function PlayerSession({
 
   const stopPlayback = () => {
     const v = videoRef.current;
-    if (v) {
-      v.pause();
-      v.currentTime = 0;
-    }
     saveProgress(true, "stop");
+    if (v) v.pause();
     close();
   };
 
@@ -466,7 +474,7 @@ function PlayerSession({
           if (!cues) return;
           for (let cueIndex = 0; cueIndex < cues.length; cueIndex++) {
             const cue = cues[cueIndex];
-            if (cue instanceof VTTCue && cue.snapToLines) cue.line = -4;
+            if (cue instanceof VTTCue && cue.snapToLines) cue.line = -7;
           }
         };
         keepCuesClearOfTransport();
@@ -537,7 +545,7 @@ function PlayerSession({
           "relative flex items-center justify-center overflow-hidden bg-black transition-all duration-300",
           fullscreen
             ? "h-full w-full"
-            : "h-[min(88vh,900px)] w-[min(96vw,1600px)] rounded-lg ring-1 ring-white/18 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_34px_120px_rgba(10,26,34,0.62)]"
+            : "h-[min(94vh,1240px)] w-[min(96vw,2400px)] rounded-lg ring-1 ring-white/18 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_34px_120px_rgba(10,26,34,0.62)]"
         )}
       >
       {source && (

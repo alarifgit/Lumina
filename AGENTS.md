@@ -23,13 +23,14 @@ persistent state stored under `/data`.
 - `npm run dev` - local development server
 - `npm run lint` - ESLint
 - `npx tsc --noEmit` - TypeScript validation
+- `npm test` - isolated Node regression tests
 - `npm run build` - production build
 - `npm run build:docker` - production build used by the container
 - `npx prisma validate` - validate the database schema
 - `npx prisma generate` - regenerate the Prisma client
 
-Run lint, TypeScript, Prisma validation, and the production build before
-considering substantial changes complete.
+Run lint, TypeScript, Prisma validation/generation, tests, the production
+build, and `git diff --check` before considering substantial changes complete.
 
 ## Architecture
 
@@ -78,6 +79,14 @@ intentionally being changed.
   recursively while common extras/trailer folders are ignored.
 - Numeric titles such as `1917` and `2046` must not be mistaken for release
   years.
+- Plex episode synchronization must resolve the parent show identity and its
+  actual premiere year; an episode air year or episode-level GUID is never a
+  show identity. Exact local source aliases may assist matching, but must not
+  override a unique non-conflicting parent TMDB/IMDb identity.
+- Automatic TMDB matching requires one exact normalized title candidate and,
+  when the source year is known, the exact year. Yearless/broad fallback is for
+  explicit manual matching only; ambiguous automatic matches remain unchanged
+  and are explained in the scan manifest.
 - Continue Watching dismissal must preserve resume history.
 - Resuming playback should restore a dismissed item to Continue Watching.
 - Plex synchronization is additive and must not mark content unwatched unless

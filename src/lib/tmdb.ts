@@ -39,6 +39,7 @@ function extractSearchYear(raw: string, fallback?: number) {
 export interface TmdbMatch {
   tmdbId: number;
   title: string;
+  originalTitle: string | null;
   year: number | null;
   overview: string | null;
   posterUrl: string | null;
@@ -49,7 +50,8 @@ export async function searchTmdb(
   title: string,
   type: "MOVIE" | "TV",
   year?: number,
-  key?: string
+  key?: string,
+  options: { allowYearlessFallback?: boolean } = {}
 ): Promise<TmdbMatch[]> {
   const apiKey = key ?? (await getTmdbKey());
   if (!apiKey) throw new Error("No TMDB API key configured");
@@ -62,7 +64,11 @@ export async function searchTmdb(
   if (parsed.year && type === "TV") params.first_air_date_year = parsed.year;
 
   let data = await tmdbFetch<{ results: any[] }>(path, params, apiKey);
-  if ((data.results?.length ?? 0) === 0 && parsed.year) {
+  if (
+    (data.results?.length ?? 0) === 0 &&
+    parsed.year &&
+    options.allowYearlessFallback !== false
+  ) {
     data = await tmdbFetch<{ results: any[] }>(path, { query, include_adult: false }, apiKey);
   }
   return data.results
@@ -71,6 +77,7 @@ export async function searchTmdb(
     .map((r) => ({
       tmdbId: r.id,
       title: r.title || r.name || query,
+      originalTitle: r.original_title || r.original_name || null,
       year: r.release_date ? new Date(r.release_date).getFullYear() : r.first_air_date ? new Date(r.first_air_date).getFullYear() : null,
       overview: r.overview || null,
       posterUrl: tmdbPoster(r.poster_path),
@@ -269,13 +276,8 @@ export async function applyTmdbMetadata(
     const existingByKey = new Map(
       existing.map((e) => [`${e.seasonNumber}x${e.episodeNumber}`, e])
     );
-    // Clean up old TMDB-only rows from earlier builds. Local files always win,
-    // even when TMDB uses different numbering or has incomplete metadata.
-    for (const e of existing) {
-      if (!e.filePath && !e.streamUrl) {
-        await db.episode.delete({ where: { id: e.id } });
-      }
-    }
+    // Unavailable episode rows are retained: they can contain metadata,
+    // subtitles, and watch history, and may be reconciled when files return.
     for (const ep of tv.episodes) {
       const existingEp = existingByKey.get(`${ep.seasonNumber}x${ep.episodeNumber}`);
       if (existingEp && (existingEp.filePath || existingEp.streamUrl)) {
