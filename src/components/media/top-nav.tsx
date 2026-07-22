@@ -84,7 +84,7 @@ export function TopNav() {
 
   const navButtonClass = (active: boolean) =>
     cn(
-      "group inline-flex h-9 items-center gap-2 rounded-full px-3.5 text-xs font-medium transition-all duration-200 min-[2200px]:h-11 min-[2200px]:px-4 min-[2200px]:text-sm",
+      "group inline-flex h-9 items-center gap-2 rounded-md px-3.5 text-xs font-medium transition-colors duration-200 min-[2200px]:h-11 min-[2200px]:px-4 min-[2200px]:text-sm",
       active
         ? "bg-white/14 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]"
         : "text-white/58 hover:bg-white/[0.08] hover:text-white"
@@ -112,7 +112,7 @@ export function TopNav() {
         </button>
 
         {/* desktop nav */}
-        <div className="hidden items-center gap-0.5 rounded-full bg-[var(--lumina-ink)] p-1 shadow-[0_12px_34px_rgba(8,27,36,0.22),inset_0_1px_0_rgba(255,255,255,0.06)] md:flex min-[2200px]:p-1.5">
+        <div className="hidden items-center gap-0.5 rounded-[10px] bg-[var(--lumina-ink)] p-1 shadow-[0_12px_34px_rgba(8,27,36,0.22),inset_0_1px_0_rgba(255,255,255,0.06)] md:flex min-[2200px]:p-1.5">
           {NAV.map((item) => {
             const Icon = item.icon;
             return (
@@ -134,7 +134,7 @@ export function TopNav() {
           <button
             type="button"
             onClick={openSearchView}
-            className="hidden h-9 w-40 items-center gap-2 rounded-full border border-white/12 bg-white/[0.09] px-3 text-left text-sm text-white/56 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl transition-colors hover:border-white/20 hover:bg-white/[0.13] hover:text-white/78 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 sm:inline-flex xl:w-48 min-[2200px]:h-11 min-[2200px]:w-60 min-[2200px]:text-base"
+            className="hidden h-9 w-40 items-center gap-2 rounded-lg border border-white/12 bg-white/[0.09] px-3 text-left text-sm text-white/56 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl transition-colors hover:border-white/20 hover:bg-white/[0.13] hover:text-white/78 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 sm:inline-flex xl:w-48 min-[2200px]:h-11 min-[2200px]:w-60 min-[2200px]:text-base"
             aria-label="Search your library"
           >
             <Search className="h-4 w-4 shrink-0" />

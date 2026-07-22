@@ -40,5 +40,5 @@ export function watcherPollingEnabled(value = process.env.LUMINA_WATCH_USE_POLLI
 
 export function watcherPollingInterval(value = process.env.LUMINA_WATCH_POLL_INTERVAL_MS) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 10_000;
+  return Number.isFinite(parsed) && parsed >= 1_000 ? parsed : 60_000;
 }

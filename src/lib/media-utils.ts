@@ -113,6 +113,24 @@ export function progressPercent(item: {
   return 0;
 }
 
+/**
+ * Generic TV controls leave episode selection to the shared server resolver.
+ * Only an explicitly resume-oriented surface may pass stored episode progress
+ * through as an exact target.
+ */
+export function playbackRequestForSummary(
+  item: Pick<MediaSummary, "type" | "progressEpisodeId" | "progressPosition">,
+  intent: "show" | "resume" = "show"
+): { episodeId: string | null; startAt: number } {
+  if (item.type === "TV" && intent === "show") {
+    return { episodeId: null, startAt: 0 };
+  }
+  return {
+    episodeId: item.progressEpisodeId ?? null,
+    startAt: item.progressPosition ?? 0,
+  };
+}
+
 export function typeLabel(type: MediaType): string {
   return type === "TV" ? "TV Series" : "Movie";
 }

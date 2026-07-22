@@ -55,6 +55,11 @@ export interface MediaSummary {
   progressSeason?: number | null;
   progressEpisode?: number | null;
   progressUpdatedAt?: string | null;
+  /** Optional shelf-only episode context. This must never drive playback. */
+  contextEpisodeId?: string | null;
+  contextSeason?: number | null;
+  contextEpisode?: number | null;
+  contextEpisodeTitle?: string | null;
 }
 
 export interface SearchEpisodeResult {
@@ -150,6 +155,7 @@ export interface MediaDetail extends MediaSummary {
   episodes: Episode[]; // episodes of the currently-selected season
   playableEpisodes?: Episode[]; // all local/downloaded episodes, used by player
   nextEpisode?: Episode | null;
+  playbackDecision?: import("./playback-selection").PlaybackDecision;
 }
 
 export interface ContentRow {

@@ -33,7 +33,7 @@ test("watcher reconciles additions, changes, and removals for media and subtitle
 test("remote-safe polling defaults are bounded and can be disabled", () => {
   assert.equal(watcherPollingEnabled(undefined), true);
   assert.equal(watcherPollingEnabled("false"), false);
-  assert.equal(watcherPollingInterval(undefined), 10_000);
-  assert.equal(watcherPollingInterval("500"), 10_000);
+  assert.equal(watcherPollingInterval(undefined), 60_000);
+  assert.equal(watcherPollingInterval("500"), 60_000);
   assert.equal(watcherPollingInterval("2500"), 2_500);
 });

@@ -28,6 +28,7 @@ import {
 } from "@/lib/queries";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { playbackRequestForSummary } from "@/lib/media-utils";
 import { MediaInfoDialog } from "./media-info-dialog";
 import { MediaMatchDialog } from "./media-match-dialog";
 
@@ -60,6 +61,10 @@ export function MediaActionsMenu({
   const dismissContinueWatching = useDismissContinueWatching();
   const canMarkWatched = media.type === "MOVIE" || !!media.progressEpisodeId;
   const resume = (media.progressPosition ?? 0) > 0;
+  const playback = playbackRequestForSummary(
+    media,
+    showRemoveFromContinueWatching ? "resume" : "show"
+  );
 
   const markWatched = () => {
     const duration = Math.max(1, media.progressDuration ?? (media.runtime ?? 1) * 60);
@@ -140,9 +145,7 @@ export function MediaActionsMenu({
           )}
           {showPlay && (
             <DropdownMenuItem
-              onSelect={() =>
-                onPlay(media.id, media.progressEpisodeId ?? null, media.progressPosition ?? 0)
-              }
+              onSelect={() => onPlay(media.id, playback.episodeId, playback.startAt)}
             >
               <Play className="h-4 w-4" />
               {resume ? "Resume" : "Play"}

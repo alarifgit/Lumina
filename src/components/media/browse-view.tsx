@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, AlertCircle, Play, Plus } from "lucide-react";
 import type { BrowseSort, MediaSummary, WatchState } from "@/lib/types";
-import { formatRuntime } from "@/lib/media-utils";
+import { formatRuntime, playbackRequestForSummary } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
 import { ProceduralPoster } from "./procedural-poster";
 
@@ -215,6 +215,7 @@ function BrowseFeature({
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const backdrop = item.backdropUrl || item.posterUrl || "/brand/hero-1.png";
+  const playback = playbackRequestForSummary(item);
   return (
     <section
       data-lumina-frame="true"
@@ -224,7 +225,7 @@ function BrowseFeature({
         <img
           src={backdrop}
           alt=""
-          className="absolute inset-0 h-full w-full scale-[1.01] object-cover brightness-[0.9] contrast-[1.03] saturate-[0.8] transition-[transform,filter] duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[1.025]"
+          className="absolute inset-0 h-full w-full scale-[1.01] object-cover brightness-[0.9] contrast-[1.03] saturate-[0.8]"
           onError={() => setImageFailed(true)}
         />
       ) : (
@@ -274,15 +275,15 @@ function BrowseFeature({
           </div>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
-              onClick={() => onPlay(item.id, item.progressEpisodeId ?? null, item.progressPosition ?? 0)}
-              className="lumina-button-primary inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-bold transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[1.03] active:scale-[0.98]"
+              onClick={() => onPlay(item.id, playback.episodeId, playback.startAt)}
+              className="lumina-button-primary inline-flex items-center gap-2 rounded-md px-6 py-2.5 text-sm font-bold transition-colors"
             >
               <Play className="h-4 w-4 fill-current" />
               {item.progressPercent ? "Resume" : "Play"}
             </button>
             <button
               onClick={() => onOpen(item.id)}
-              className="lumina-button-secondary inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-[background-color,transform] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:translate-x-0.5 hover:bg-white/[0.12] active:scale-[0.98]"
+              className="lumina-button-secondary inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-bold transition-colors hover:bg-white/[0.12]"
             >
               <Plus className="h-4 w-4" />
               More info

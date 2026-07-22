@@ -47,7 +47,7 @@ ENV HOSTNAME=0.0.0.0
 # TrueHD, HEVC, etc.) to browser-friendly formats on the fly — no need for
 # you to pre-encode your library.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
+    && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg mesa-va-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 # Next.js standalone server (includes its own minimal node_modules)

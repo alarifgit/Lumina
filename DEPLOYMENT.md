@@ -15,7 +15,7 @@ import it on the Synology-compatible NAS. The current live service is
 | Persistent state | Existing writable host directory mounted at `/data` |
 | Media | Preserve every existing host-to-container mount; read-only is sufficient |
 | Startup | Duplicate repair, guarded Prisma schema push, then `node server.js` |
-| Hardware acceleration | Optional `/dev/dri`; CPU fallback is supported |
+| Hardware acceleration | Optional `/dev/dri`; AMD Mesa VAAPI is bundled and CPU fallback is supported |
 | Image build | External capable host; the NAS is import/run only |
 
 The repository `docker-compose.yml` is a development/deployment example. It is
@@ -259,7 +259,9 @@ preferably through a root-readable environment file instead of shell history.
 Do not supply `DATABASE_URL`; the image sets the production path.
 
 Filesystem watching uses polling by default because NAS mounts do not always
-emit reliable native change events. The default interval is 10 seconds. Set
+emit reliable native change events. The default interval is 60 seconds so a
+large SMB tree is not continuously re-walked while users browse or run a
+manual scan. Set
 `LUMINA_WATCH_POLL_INTERVAL_MS` to another value of at least `1000`, or set
 `LUMINA_WATCH_USE_POLLING=false` only when the mounted filesystem is known to
 deliver reliable native events.
@@ -283,6 +285,7 @@ Expected logs include:
 ```text
 [Lumina] Ensuring database schema at file:/data/lumina.db ...
 [Lumina] Starting server on port 3000 ...
+[Lumina] Home data ready in <duration>ms
 ```
 
 Duplicate-merge messages may appear between them. A repair or Prisma error is a
@@ -317,6 +320,18 @@ At `http://10.41.6.100:3422`, verify without starting a scan:
   real media and remain clear of visible controls.
 - VAAPI failure, when applicable, falls back to CPU rather than breaking
   playback.
+
+For an AMD host, the image includes `mesa-va-drivers`. A custom stable host
+device alias can be mapped to Lumina's default device path, for example:
+
+```yaml
+devices:
+  - "/dev/dri-dgpu:/dev/dri/renderD128"
+```
+
+Confirm `/api/library/stats` reports `transcodeHardware: true` and
+`h264_vaapi` before accepting the deployment. Installing a driver interactively
+inside a running container is diagnostic only and will be lost on recreation.
 
 Record exact media filenames/codecs for any failure. “Build passed” is not a
 substitute for these checks.

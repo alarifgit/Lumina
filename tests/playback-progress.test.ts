@@ -1,8 +1,45 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { resolvePlaybackTimeline } from "@/lib/playback-progress";
+import {
+  resolveAutoTranscodeStart,
+  resolvePlaybackOffset,
+  resolvePlaybackTimeline,
+} from "@/lib/playback-progress";
 
 describe("playback progress timeline", () => {
+  test("uses a late server-selected resume point for generic transcoded TV playback", () => {
+    assert.equal(
+      resolvePlaybackOffset({
+        resumeOverride: null,
+        serverResumeAt: 845,
+        timelineOffset: 0,
+      }),
+      845
+    );
+  });
+
+  test("keeps an explicit seek offset after it takes ownership of the timeline", () => {
+    assert.equal(
+      resolvePlaybackOffset({
+        resumeOverride: 845,
+        serverResumeAt: 845,
+        timelineOffset: 1_200,
+      }),
+      1_200
+    );
+  });
+
+  test("a late auto-transcode switch keeps the furthest known absolute clock", () => {
+    assert.equal(
+      resolveAutoTranscodeStart({ currentTime: 852, serverResumeAt: 845 }),
+      852
+    );
+    assert.equal(
+      resolveAutoTranscodeStart({ currentTime: 0, serverResumeAt: 845 }),
+      845
+    );
+  });
+
   test("adds a transcode segment offset to the browser clock", () => {
     assert.deepEqual(
       resolvePlaybackTimeline({

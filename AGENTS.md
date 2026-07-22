@@ -79,6 +79,9 @@ intentionally being changed.
   recursively while common extras/trailer folders are ignored.
 - Numeric titles such as `1917` and `2046` must not be mistaken for release
   years.
+- Episode filenames may provide a safe display-title fallback when an exact
+  TMDB season/episode record is absent. Do not shift episode metadata between
+  seasons merely to fill a placeholder.
 - Plex episode synchronization must resolve the parent show identity and its
   actual premiere year; an episode air year or episode-level GUID is never a
   show identity. Exact local source aliases may assist matching, but must not
@@ -132,6 +135,10 @@ intentionally being changed.
   episode-level watched controls.
 - TV playback progress must reference the resolved local episode, including
   playback started from a show-level action.
+- Contextual shelves must keep episode context separate from resume state.
+  Generic show Play uses the shared canonical selector: earliest unwatched
+  regular episode, canonical resume, then Specials only as a fallback;
+  explicit episode and Continue Watching targets remain exact.
 - Mutations must invalidate Home, detail, search, and relevant grid queries so
   changes appear without reloading.
 
@@ -154,7 +161,14 @@ intentionally being changed.
   NAS configuration.
 - Hardware transcoding should auto-detect `/dev/dri/renderD128` when available
   and fall back gracefully.
+- Keep the Mesa VAAPI userspace driver in the runtime image so AMD render
+  devices work without modifying a running container.
+- Remote-mount polling must be conservative enough that the watcher does not
+  continuously compete with manual scans for SMB traversal I/O.
 - Never require VAAPI-specific environment variables for the normal case.
+- Prepare the first Home payload before starting remote-mount watcher traversal
+  so the server does not report ready while its initial UI request is still
+  competing with an SMB filesystem crawl.
 
 ## Git And Existing Work
 

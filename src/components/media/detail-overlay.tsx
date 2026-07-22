@@ -60,24 +60,23 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
   });
 
   const d = detail.data;
-  const currentSeason = season ?? d?.seasons?.[0]?.seasonNumber;
+  const currentSeason =
+    season ?? d?.seasons.find((candidate) => candidate.seasonNumber > 0)?.seasonNumber ??
+    d?.seasons?.[0]?.seasonNumber;
   const similarItems = (similar.data?.items ?? []).filter((m) => m.id !== id).slice(0, 8);
-  const nextEpisode = d?.type === "TV" ? (d.nextEpisode ?? d.episodes[0] ?? null) : null;
+  const playbackTarget = d?.type === "TV" ? d.playbackDecision?.target ?? null : null;
+  const nextEpisode = d?.type === "TV"
+    ? (d.playableEpisodes ?? d.episodes).find(
+        (episode) => episode.id === playbackTarget?.episodeId
+      ) ?? d.nextEpisode ?? null
+    : null;
   const nextEpisodeProgress =
-    nextEpisode && d?.type === "TV"
-      ? (d.episodes.find((ep) => ep.id === nextEpisode.id)?.progressPosition ??
-        (d.progressEpisodeId === nextEpisode.id ? d.progressPosition ?? 0 : 0))
-      : 0;
-  const hasTvProgress =
-    d?.type === "TV" &&
-    (Boolean(d.progressEpisodeId) ||
-      (d.progressPosition ?? 0) > 0 ||
-      d.episodes.some((ep) => (ep.progressPosition ?? 0) > 0 || (ep.progressPercent ?? 0) > 0));
+    nextEpisode && d?.type === "TV" ? playbackTarget?.startAt ?? 0 : 0;
   const playLabel =
     d?.type === "TV"
-      ? hasTvProgress
-        ? "Play Next Episode"
-        : "Play"
+      ? nextEpisode
+        ? `${nextEpisodeProgress > 0 ? "Resume" : d.playbackDecision?.reason.startsWith("restart-") ? "Replay" : "Play"} S${nextEpisode.seasonNumber} · E${nextEpisode.episodeNumber}`
+        : "Unavailable"
       : d?.progressPosition
         ? "Resume"
         : "Play";
@@ -182,7 +181,8 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             onClick={handleMainPlay}
-            className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-transform hover:scale-105"
+            disabled={d.type === "TV" && !nextEpisode}
+            className="inline-flex items-center gap-2 rounded-lg bg-white px-6 py-2.5 text-sm font-bold text-black transition-transform hover:scale-105 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100"
           >
             <Play className="h-5 w-5 fill-current" />
             {playLabel}
@@ -267,7 +267,9 @@ function DetailContent({ id, onPlay }: { id: string; onPlay: Props["onPlay"] }) 
                     className="group flex gap-3 rounded-lg p-2 transition-colors hover:bg-foreground/5"
                   >
                     <button
-                      onClick={() => onPlay(d.id, ep.id, ep.progressPosition ?? 0)}
+                      onClick={() =>
+                        onPlay(d.id, ep.id, ep.completed ? 0 : ep.progressPosition ?? 0)
+                      }
                       className="relative aspect-video w-32 shrink-0 overflow-hidden rounded-md bg-foreground/10 sm:w-44"
                       aria-label={`Play ${ep.title}`}
                     >

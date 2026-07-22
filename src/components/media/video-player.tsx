@@ -26,7 +26,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { formatTimecode } from "@/lib/media-utils";
 import type { Episode } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { resolvePlaybackTimeline } from "@/lib/playback-progress";
+import {
+  resolveAutoTranscodeStart,
+  resolvePlaybackOffset,
+  resolvePlaybackTimeline,
+} from "@/lib/playback-progress";
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -66,7 +70,9 @@ function PlayerSession({
   const ccMenuRef = useRef<HTMLDivElement>(null);
 
   const [activeEpId, setActiveEpId] = useState<string | null>(episodeIdParam);
-  const [resumeAt, setResumeAt] = useState(startAt);
+  const [resumeOverride, setResumeOverride] = useState<number | null>(
+    episodeIdParam != null ? startAt : null
+  );
   const [timelineOffset, setTimelineOffset] = useState(startAt);
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -91,6 +97,20 @@ function PlayerSession({
   const [buffered, setBuffered] = useState(0);
 
   const d = detail.data;
+  const resumeAt =
+    resumeOverride ??
+    (episodeIdParam == null && d?.type === "TV"
+      ? d.playbackDecision?.target?.startAt ?? 0
+      : startAt);
+  // Generic show playback learns its resume point from the detail response,
+  // after state initialisation. Keep the transcoded media clock anchored to
+  // that server-selected offset until an explicit seek/quality change takes
+  // ownership of the timeline.
+  const resolvedTimelineOffset = resolvePlaybackOffset({
+    resumeOverride,
+    serverResumeAt: resumeAt,
+    timelineOffset,
+  });
   const closeMenus = useCallback(() => {
     setRateOpen(false);
     setSettingsPage("root");
@@ -117,7 +137,11 @@ function PlayerSession({
         filePath: null,
       } as Episode;
     }
-    return d.nextEpisode ?? playableEpisodes[0] ?? null;
+    const selectedEpisodeId = d.playbackDecision?.target?.episodeId;
+    if (selectedEpisodeId) {
+      return playableEpisodes.find((episode) => episode.id === selectedEpisodeId) ?? null;
+    }
+    return d.playbackDecision ? null : (d.nextEpisode ?? playableEpisodes[0] ?? null);
   }, [d, activeEpId]);
 
   // Subtitles for the currently-playing item (episode subs for TV, media subs for movies)
@@ -131,7 +155,11 @@ function PlayerSession({
   // `transcodeOverride` is null (auto), or a user's explicit choice (true/false).
   // The effective `transcode` value is: override if set, else auto-detected from probe.
   const [transcodeOverride, setTranscodeOverride] = useState<boolean | null>(null);
-  const probeTargetId = currentEpisode?.id ?? d?.id ?? null;
+  const [preparedAutoTranscodeTarget, setPreparedAutoTranscodeTarget] = useState<
+    string | null
+  >(null);
+  const probeTargetId =
+    d?.type === "TV" ? currentEpisode?.id ?? null : d?.id ?? null;
   const probeKind: "media" | "episode" = currentEpisode ? "episode" : "media";
   const probe = useProbe(probeKind, probeTargetId, !!probeTargetId);
 
@@ -141,12 +169,47 @@ function PlayerSession({
   const autoTranscode = probe.data
     ? probe.data.directPlayable === false || (!("directPlayable" in probe.data) && !probe.data.browserCompatible)
     : false;
-  const transcode = transcodeOverride ?? autoTranscode;
+  // Do not swap a playing direct source the instant an asynchronous probe
+  // returns. First capture the current absolute clock, then start the
+  // transcoded source from that point on the following render.
+  const autoTranscodeReady =
+    autoTranscode &&
+    probeTargetId != null &&
+    preparedAutoTranscodeTarget === probeTargetId;
+  const transcode = transcodeOverride ?? autoTranscodeReady;
+
+  useEffect(() => {
+    if (
+      transcodeOverride !== null ||
+      !autoTranscode ||
+      !probeTargetId ||
+      preparedAutoTranscodeTarget === probeTargetId
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const nextStart = resolveAutoTranscodeStart({
+        currentTime: current,
+        serverResumeAt: resumeAt,
+      });
+      setResumeOverride(nextStart);
+      setTimelineOffset(nextStart);
+      setPreparedAutoTranscodeTarget(probeTargetId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    autoTranscode,
+    current,
+    preparedAutoTranscodeTarget,
+    probeTargetId,
+    resumeAt,
+    transcodeOverride,
+  ]);
 
   const setTranscode = (v: boolean) => {
     const nextStart = Math.max(0, current || resumeAt || 0);
     setTimelineOffset(v ? nextStart : 0);
-    setResumeAt(v ? nextStart : current || 0);
+    setResumeOverride(v ? nextStart : current || 0);
     setTranscodeOverride(v);
   };
 
@@ -162,7 +225,7 @@ function PlayerSession({
   // Build the source URL. When transcoding, append ?transcode=1&t=<resumePos>
   // so ffmpeg starts at the resume position (seeking a live transcode isn't possible).
   const source = useMemo(() => {
-    if (!d) return null;
+    if (!d || (d.type === "TV" && !currentEpisode)) return null;
     const base = currentEpisode
       ? (currentEpisode.streamUrl ?? `/api/episodes/${currentEpisode.id}/stream`)
       : (d.streamUrl ?? `/api/media/${d.id}/stream`);
@@ -174,8 +237,13 @@ function PlayerSession({
   const nextUp = useMemo(() => {
     if (!d || d.type !== "TV" || !currentEpisode) return null;
     const playableEpisodes = d.playableEpisodes ?? d.episodes;
-    const idx = playableEpisodes.findIndex((e) => e.id === currentEpisode.id);
-    if (idx >= 0 && idx < playableEpisodes.length - 1) return playableEpisodes[idx + 1];
+    const sameSequence = playableEpisodes.filter((episode) =>
+      currentEpisode.seasonNumber === 0
+        ? episode.seasonNumber === 0
+        : episode.seasonNumber > 0
+    );
+    const idx = sameSequence.findIndex((episode) => episode.id === currentEpisode.id);
+    if (idx >= 0 && idx < sameSequence.length - 1) return sameSequence[idx + 1];
     return null;
   }, [d, currentEpisode]);
 
@@ -185,7 +253,7 @@ function PlayerSession({
       if (!v || !mediaId || !d) return;
       const timeline = resolvePlaybackTimeline({
         transcoded: hasLocalTranscodeSource,
-        timelineOffset,
+        timelineOffset: resolvedTimelineOffset,
         currentTime: v.currentTime,
         mediaDuration: v.duration,
         probeDuration: probe.data?.durationSeconds,
@@ -213,7 +281,7 @@ function PlayerSession({
         keepalive: true,
       }).catch(() => {});
     },
-    [mediaId, d, activeEpId, currentEpisode?.id, currentEpisode?.runtime, hasLocalTranscodeSource, timelineOffset, probe.data?.durationSeconds]
+    [mediaId, d, activeEpId, currentEpisode?.id, currentEpisode?.runtime, hasLocalTranscodeSource, resolvedTimelineOffset, probe.data?.durationSeconds]
   );
 
   const togglePlay = () => {
@@ -251,7 +319,7 @@ function PlayerSession({
       if (!v) return;
       const target = Math.max(0, Math.min(duration || val, val));
       if (hasLocalTranscodeSource) {
-        setResumeAt(target);
+        setResumeOverride(target);
         setTimelineOffset(target);
         setCurrent(target);
         setBuffered(target);
@@ -483,7 +551,7 @@ function PlayerSession({
     }
     if (selected?.delivery === "burn-in" || burnedSubtitle) {
       const nextStart = Math.max(0, current || resumeAt || 0);
-      setResumeAt(nextStart);
+      setResumeOverride(nextStart);
       setTimelineOffset(nextStart);
       setTranscodeOverride(true);
     }
@@ -499,7 +567,7 @@ function PlayerSession({
   const playNext = () => {
     if (nextUp) {
       setActiveEpId(nextUp.id);
-      setResumeAt(0);
+      setResumeOverride(0);
       setTimelineOffset(0);
       setEnded(false);
       setCurrent(0);
@@ -563,17 +631,17 @@ function PlayerSession({
           onLoadedMetadata={onLoadedMetadata}
           onTimeUpdate={(e) => {
             const v = e.target as HTMLVideoElement;
-            setCurrent(hasLocalTranscodeSource ? timelineOffset + (v.currentTime || 0) : v.currentTime || 0);
+            setCurrent(hasLocalTranscodeSource ? resolvedTimelineOffset + (v.currentTime || 0) : v.currentTime || 0);
           }}
           onDurationChange={(e) => {
             const rawDuration = Number.isFinite(e.currentTarget.duration) ? e.currentTarget.duration : 0;
-            setDuration(expectedDuration || (hasLocalTranscodeSource ? timelineOffset + rawDuration : rawDuration));
+            setDuration(expectedDuration || (hasLocalTranscodeSource ? resolvedTimelineOffset + rawDuration : rawDuration));
           }}
           onProgress={(e) => {
             const v = e.currentTarget;
             if (v.buffered.length > 0) {
               const rawBuffered = v.buffered.end(v.buffered.length - 1);
-              const nextBuffered = hasLocalTranscodeSource ? timelineOffset + rawBuffered : rawBuffered;
+              const nextBuffered = hasLocalTranscodeSource ? resolvedTimelineOffset + rawBuffered : rawBuffered;
               setBuffered(Math.min(duration || nextBuffered, nextBuffered));
             }
           }}

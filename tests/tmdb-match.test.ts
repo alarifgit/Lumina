@@ -103,4 +103,25 @@ describe("collision-safe TMDB auto matching", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test("preserves a source episode title when provider season ordering conflicts", async () => {
+    process.env.DATABASE_URL ??= "file:./tests/tmdb-match-unused.db";
+    const { getEpisodeSourceMetadataConflict } = await import("@/lib/tmdb");
+    const localEpisode = {
+      filePath: "/media/tv/Kitchen Nightmares (US)/Season 9/Kitchen Nightmares (US) - S09E01 - Freddy's Steak House WEBDL-1080p.mkv",
+      overview: null,
+      stillUrl: null,
+      airDate: null,
+      runtime: null,
+    };
+
+    assert.deepEqual(
+      getEpisodeSourceMetadataConflict(localEpisode, "Iberville: Ramsay's Worst Nightmare"),
+      {
+        sourceTitle: "Freddy's Steak House",
+        providerTitle: "Iberville: Ramsay's Worst Nightmare",
+      }
+    );
+    assert.equal(getEpisodeSourceMetadataConflict(localEpisode, "Freddy's Steak House"), null);
+  });
 });

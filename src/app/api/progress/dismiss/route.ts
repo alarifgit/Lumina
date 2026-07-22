@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { dismissContinueWatching } from "@/lib/media-queries";
+import {
+  dismissContinueWatching,
+  InvalidProgressTargetError,
+} from "@/lib/media-queries";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +23,9 @@ export async function POST(req: Request) {
     });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof InvalidProgressTargetError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }

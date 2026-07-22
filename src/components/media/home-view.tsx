@@ -65,7 +65,10 @@ export function HomeView({ onOpen, onPlay }: Props) {
     );
   }
 
-  if (error || !data) {
+  // A watcher-driven background refresh can fail transiently while the server
+  // or a mount is restarting. Keep the last successful Home payload visible;
+  // only show the fatal state when no usable payload has ever loaded.
+  if (!data) {
     return (
       <div className="flex flex-col items-center justify-center px-4 py-24 text-center">
         <AlertCircle className="mb-3 h-10 w-10 text-foreground/40" />

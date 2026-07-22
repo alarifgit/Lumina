@@ -3,7 +3,7 @@
 import { useState, type KeyboardEvent } from "react";
 import { Check, Film, Play, Star, Tv } from "lucide-react";
 import type { MediaSummary, SearchEpisodeResult } from "@/lib/types";
-import { formatRuntime, progressPercent } from "@/lib/media-utils";
+import { formatRuntime, playbackRequestForSummary, progressPercent } from "@/lib/media-utils";
 import { cn } from "@/lib/utils";
 import { ProceduralPoster } from "./procedural-poster";
 
@@ -36,6 +36,7 @@ export function SearchMediaResultCard({
   const [imageFailed, setImageFailed] = useState(false);
   const pct = progressPercent(media);
   const TypeIcon = media.type === "TV" ? Tv : Film;
+  const playback = playbackRequestForSummary(media);
 
   return (
     <article className="lumina-panel group/result flex min-h-32 gap-2 rounded-lg p-2.5 transition-colors hover:border-white/24">
@@ -54,7 +55,7 @@ export function SearchMediaResultCard({
             <img
               src={media.posterUrl}
               alt=""
-              className="h-full w-full object-cover transition-transform duration-500 group-hover/result:scale-[1.035]"
+              className="h-full w-full object-cover"
               onError={() => setImageFailed(true)}
             />
           ) : (
@@ -96,10 +97,8 @@ export function SearchMediaResultCard({
       <div className="flex shrink-0 items-end">
         <button
           type="button"
-          onClick={() =>
-            onPlay(media.id, media.progressEpisodeId ?? null, media.progressPosition ?? 0)
-          }
-          className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/12 bg-[var(--lumina-ink)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#102a37] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80"
+          onClick={() => onPlay(media.id, playback.episodeId, playback.startAt)}
+          className="inline-flex h-9 items-center gap-1.5 rounded-md border border-white/12 bg-[var(--lumina-ink)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#102a37] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80"
           aria-label={`${media.progressPosition ? "Resume" : "Play"} ${media.title}`}
         >
           <Play className="h-3.5 w-3.5 fill-current" />
@@ -160,7 +159,7 @@ export function SearchEpisodeResultCard({
               src={image}
               alt=""
               className={cn(
-                "h-full w-full transition-transform duration-500 group-hover/result:scale-[1.035]",
+                "h-full w-full",
                 image === episode.posterUrl ? "object-cover object-top" : "object-cover"
               )}
               onError={() => setImageFailed(true)}
@@ -205,7 +204,7 @@ export function SearchEpisodeResultCard({
         <button
           type="button"
           onClick={() => onOpen(episode.mediaId)}
-          className="inline-flex h-9 items-center rounded-full border border-white/12 bg-white/[0.07] px-3 text-xs font-semibold text-white/76 transition-colors hover:bg-white/[0.12] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80"
+          className="inline-flex h-9 items-center rounded-md border border-white/12 bg-white/[0.07] px-3 text-xs font-semibold text-white/76 transition-colors hover:bg-white/[0.12] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80"
           aria-label={`View ${episode.showTitle}`}
         >
           <span className="hidden sm:inline">View show</span>

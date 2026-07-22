@@ -4,11 +4,15 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getRailEdgeState, getRailPageDistance } from "@/lib/rail-state";
+
+const savedRailPositions = new Map<string, number>();
 
 interface HorizontalRailProps {
   children: ReactNode;
@@ -16,6 +20,7 @@ interface HorizontalRailProps {
   label: string;
   className?: string;
   viewportClassName?: string;
+  stateKey?: string;
 }
 
 /**
@@ -28,19 +33,31 @@ export function HorizontalRail({
   label,
   className,
   viewportClassName,
+  stateKey,
 }: HorizontalRailProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
+  const persistenceKey = stateKey ?? label;
+  const [edgeState, setEdgeState] = useState(() =>
+    getRailEdgeState(0, 0, 0)
+  );
 
   const updateControls = useCallback(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
 
-    const maxScroll = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-    setCanScrollLeft(viewport.scrollLeft > 8);
-    setCanScrollRight(maxScroll > 8 && viewport.scrollLeft < maxScroll - 8);
+    const nextState = getRailEdgeState(
+      viewport.scrollLeft,
+      viewport.scrollWidth,
+      viewport.clientWidth
+    );
+    setEdgeState((current) =>
+      current.canScrollLeft === nextState.canScrollLeft &&
+      current.canScrollRight === nextState.canScrollRight &&
+      current.maxScroll === nextState.maxScroll
+        ? current
+        : nextState
+    );
   }, []);
 
   const scheduleUpdate = useCallback(() => {
@@ -51,12 +68,46 @@ export function HorizontalRail({
     });
   }, [updateControls]);
 
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    let firstFrame = 0;
+    let secondFrame = 0;
+    const restorePosition = () => {
+      const savedPosition = savedRailPositions.get(persistenceKey);
+      if (savedPosition != null) {
+        viewport.scrollLeft = Math.min(
+          savedPosition,
+          Math.max(0, viewport.scrollWidth - viewport.clientWidth)
+        );
+      }
+      updateControls();
+    };
+
+    restorePosition();
+    firstFrame = requestAnimationFrame(() => {
+      restorePosition();
+      secondFrame = requestAnimationFrame(restorePosition);
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+    };
+  }, [itemCount, persistenceKey, updateControls]);
+
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
 
     scheduleUpdate();
-    viewport.addEventListener("scroll", scheduleUpdate, { passive: true });
+    const handleScroll = () => {
+      savedRailPositions.set(persistenceKey, viewport.scrollLeft);
+      scheduleUpdate();
+    };
+
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", scheduleUpdate);
 
     const observer =
@@ -64,7 +115,12 @@ export function HorizontalRail({
     observer?.observe(viewport);
 
     return () => {
-      viewport.removeEventListener("scroll", scheduleUpdate);
+      // A browser may reset a detached scroller to zero before React runs the
+      // passive cleanup. Keep the last scroll-event value in that case.
+      if (viewport.scrollLeft > 0 || !savedRailPositions.has(persistenceKey)) {
+        savedRailPositions.set(persistenceKey, viewport.scrollLeft);
+      }
+      viewport.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", scheduleUpdate);
       observer?.disconnect();
       if (rafRef.current !== null) {
@@ -72,27 +128,27 @@ export function HorizontalRail({
         rafRef.current = null;
       }
     };
-  }, [itemCount, scheduleUpdate]);
+  }, [itemCount, persistenceKey, scheduleUpdate]);
 
   const move = (direction: -1 | 1) => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     viewport.scrollBy({
-      left: direction * Math.max(320, viewport.clientWidth * 0.82),
+      left: direction * getRailPageDistance(viewport.clientWidth),
       behavior: "smooth",
     });
   };
 
   const controlClass =
-    "absolute top-1/2 z-50 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-lg border border-white/20 bg-[var(--lumina-ink)]/96 text-white shadow-[0_16px_38px_rgba(7,23,32,0.48)] backdrop-blur-xl transition-[background-color,border-color,opacity] hover:border-white/36 hover:bg-[#14313f] active:bg-[#0b202b] md:flex [&_svg]:h-6 [&_svg]:w-6";
+    "absolute top-1/2 z-20 hidden h-11 w-11 -translate-y-1/2 items-center justify-center rounded-lg border border-white/18 bg-[var(--lumina-ink)]/94 text-white shadow-[0_12px_30px_rgba(7,23,32,0.34)] backdrop-blur-xl transition-[background-color,border-color] hover:border-white/30 hover:bg-[#14313f] active:bg-[#0b202b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80 md:flex [&_svg]:h-5 [&_svg]:w-5";
 
   return (
     <div className={cn("relative", className)}>
-      {canScrollLeft && (
+      {edgeState.canScrollLeft && (
         <button
           type="button"
           onClick={() => move(-1)}
-          className={cn(controlClass, "left-2 sm:left-3 lg:left-4")}
+          className={cn(controlClass, "left-3")}
           aria-label={`Show previous ${label}`}
         >
           <ChevronLeft />
@@ -111,11 +167,11 @@ export function HorizontalRail({
         {children}
       </div>
 
-      {canScrollRight && (
+      {edgeState.canScrollRight && (
         <button
           type="button"
           onClick={() => move(1)}
-          className={cn(controlClass, "right-2 sm:right-3 lg:right-4")}
+          className={cn(controlClass, "right-3")}
           aria-label={`Show more ${label}`}
         >
           <ChevronRight />

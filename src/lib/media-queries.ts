@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getTranscodeStatus } from "@/lib/transcoder";
 import { isTextSubtitleCodec } from "@/lib/subtitles";
+import { resolvePlaybackDecision } from "@/lib/playback-selection";
 import { Prisma } from "@prisma/client";
 import type {
   BrowsePreset,
@@ -300,25 +301,61 @@ export async function attachSummaryData(
   if (items.length === 0) return [];
   const ids = items.map((m) => m.id);
   const col = await getMyListCollection();
-  const myListItems = await db.collectionItem.findMany({
-    where: { collectionId: col.id, mediaId: { in: ids } },
-  });
+  const [myListItems, progressRows] = await Promise.all([
+    db.collectionItem.findMany({
+      where: { collectionId: col.id, mediaId: { in: ids } },
+    }),
+    db.watchProgress.findMany({
+      where: { mediaId: { in: ids } },
+      orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+      include: { episode: true },
+    }),
+  ]);
   const myListSet = new Set(myListItems.map((i) => i.mediaId));
-  const progressRows = await db.watchProgress.findMany({
-    where: { mediaId: { in: ids } },
-    orderBy: { updatedAt: "desc" },
-    include: { episode: true },
-  });
+  const progressByMedia = new Map<string, typeof progressRows>();
+  for (const progress of progressRows) {
+    const grouped = progressByMedia.get(progress.mediaId) ?? [];
+    grouped.push(progress);
+    progressByMedia.set(progress.mediaId, grouped);
+  }
+  // Episode topology is only needed to resolve a TV resume target. Shelves
+  // without any progress should not hydrate thousands of unrelated episodes.
+  const tvIds = items
+    .filter((item) => item.type === "TV" && progressByMedia.has(item.id))
+    .map((item) => item.id);
+  const episodeRows = tvIds.length
+    ? await db.episode.findMany({
+        where: { mediaId: { in: tvIds } },
+        orderBy: [{ seasonNumber: "asc" }, { episodeNumber: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          mediaId: true,
+          seasonNumber: true,
+          episodeNumber: true,
+          filePath: true,
+          streamUrl: true,
+          airDate: true,
+        },
+      })
+    : [];
+  const episodesByMedia = new Map<string, typeof episodeRows>();
+  for (const episode of episodeRows) {
+    const grouped = episodesByMedia.get(episode.mediaId) ?? [];
+    grouped.push(episode);
+    episodesByMedia.set(episode.mediaId, grouped);
+  }
+  const progressById = new Map(progressRows.map((progress) => [progress.id, progress]));
   const itemById = new Map(items.map((item) => [item.id, item]));
   const progressMap = new Map<string, ProgressInfo>();
   const seenProgressTargets = new Set<string>();
   for (const p of progressRows) {
+    const media = itemById.get(p.mediaId);
+    if (media?.type === "TV") continue;
     const targetKey = `${p.mediaId}:${p.episodeId ?? "movie"}`;
     if (seenProgressTargets.has(targetKey)) continue;
     seenProgressTargets.add(targetKey);
     if (progressMap.has(p.mediaId) || p.completed || p.position <= 0) continue;
 
-    const media = itemById.get(p.mediaId);
     const hasPlayableTarget =
       media?.type === "MOVIE"
         ? p.episodeId == null && !!(media.filePath || media.streamUrl)
@@ -338,6 +375,45 @@ export async function attachSummaryData(
       updatedAt: p.updatedAt,
     });
   }
+  for (const mediaId of tvIds) {
+    const decision = resolvePlaybackDecision({
+      mediaId,
+      episodes: (episodesByMedia.get(mediaId) ?? []).map((episode) => ({
+        id: episode.id,
+        mediaId: episode.mediaId,
+        seasonNumber: episode.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        available: Boolean(episode.filePath || episode.streamUrl),
+        airDate: episode.airDate,
+      })),
+      progress: (progressByMedia.get(mediaId) ?? []).map((progress) => ({
+        id: progress.id,
+        mediaId:
+          progress.episode && progress.episode.mediaId !== mediaId
+            ? progress.episode.mediaId
+            : progress.mediaId,
+        episodeId: progress.episodeId,
+        position: progress.position,
+        duration: progress.duration,
+        completed: progress.completed,
+        updatedAt: progress.updatedAt,
+      })),
+    });
+    const selected = decision.target?.progressId
+      ? progressById.get(decision.target.progressId)
+      : undefined;
+    if (!selected?.episode || selected.position <= 0 || selected.completed) continue;
+    progressMap.set(mediaId, {
+      position: selected.position,
+      duration: selected.duration,
+      episodeId: selected.episodeId,
+      episode: {
+        seasonNumber: selected.episode.seasonNumber,
+        episodeNumber: selected.episode.episodeNumber,
+      },
+      updatedAt: selected.updatedAt,
+    });
+  }
   return items.map((m) =>
     toSummary(m, myListSet.has(m.id), progressMap.get(m.id))
   );
@@ -354,36 +430,89 @@ const searchEpisodeInclude = {
       year: true,
     },
   },
-  progress: { orderBy: { updatedAt: "desc" }, take: 1 },
-} as const;
+  progress: { orderBy: [{ updatedAt: "desc" }, { id: "asc" }], take: 1 },
+} satisfies Prisma.EpisodeInclude;
 
-async function getPresetMedia(
+async function getPresetMediaRows(
   preset: BrowsePreset,
   limit: number
-): Promise<MediaSummary[]> {
+): Promise<MediaRow[]> {
   const definition = browsePresetDefinition(preset);
-  const items = await db.media.findMany({
+  return db.media.findMany({
     where: locallyAvailable(definition.where),
     orderBy: definition.orderBy,
     take: limit,
     include: mediaInclude,
   });
-  return attachSummaryData(items);
+}
+
+async function getPresetMedia(
+  preset: BrowsePreset,
+  limit: number
+): Promise<MediaSummary[]> {
+  return attachSummaryData(await getPresetMediaRows(preset, limit));
+}
+
+async function getFeaturedRows(limit = 6): Promise<MediaRow[]> {
+  const orderBy: Prisma.MediaOrderByWithRelationInput[] = [
+    { featured: "desc" },
+    { popularity: "desc" },
+    { title: "asc" },
+    { id: "asc" },
+  ];
+  const [movies, shows] = await Promise.all(
+    (["MOVIE", "TV"] as const).map((type) =>
+      db.media.findMany({
+        where: locallyAvailable({
+          type,
+          OR: [{ featured: true }, { backdropUrl: { not: null } }],
+        }),
+        orderBy,
+        take: limit * 2,
+        include: mediaInclude,
+      })
+    )
+  );
+
+  const compareRank = (a: MediaRow, b: MediaRow) =>
+    Number(b.featured) - Number(a.featured) ||
+    b.popularity - a.popularity ||
+    a.title.localeCompare(b.title) ||
+    a.id.localeCompare(b.id);
+  const interleave = (left: MediaRow[], right: MediaRow[]) => {
+    const result: MediaRow[] = [];
+    let leftIndex = 0;
+    let rightIndex = 0;
+    let useLeft = !right[0] || (!!left[0] && compareRank(left[0], right[0]) <= 0);
+    while (leftIndex < left.length || rightIndex < right.length) {
+      if ((useLeft && leftIndex < left.length) || rightIndex >= right.length) {
+        result.push(left[leftIndex++]);
+      } else {
+        result.push(right[rightIndex++]);
+      }
+      useLeft = !useLeft;
+    }
+    return result;
+  };
+
+  // Explicit editorial picks remain ahead of artwork fallbacks. Within each
+  // tier, alternate movies and series so the feature deck represents both
+  // halves of a mixed library without randomising on every Home refresh.
+  const items = [
+    ...interleave(
+      movies.filter((item) => item.featured),
+      shows.filter((item) => item.featured)
+    ),
+    ...interleave(
+      movies.filter((item) => !item.featured),
+      shows.filter((item) => !item.featured)
+    ),
+  ].slice(0, limit);
+  return items;
 }
 
 export async function getFeatured(limit = 6): Promise<MediaSummary[]> {
-  const items = await db.media.findMany({
-    where: locallyAvailable({ OR: [{ featured: true }, { backdropUrl: { not: null } }] }),
-    orderBy: [
-      { featured: "desc" },
-      { popularity: "desc" },
-      { title: "asc" },
-      { id: "asc" },
-    ],
-    take: limit,
-    include: mediaInclude,
-  });
-  return attachSummaryData(items);
+  return attachSummaryData(await getFeaturedRows(limit));
 }
 
 export async function getTrending(limit = 20): Promise<MediaSummary[]> {
@@ -429,10 +558,11 @@ export async function getRecentlyAddedMovies(limit = 20): Promise<MediaSummary[]
 
 /**
  * Recently added EPISODES — newest episodes by filesystem timestamp, collapsed to
- * their parent show so we don't show the same show 5 times. Each returned
- * summary carries the latest episode's id/season/episode for "resume" context.
+ * their parent show so we don't show the same show 5 times. The latest
+ * episode is display context only; show-level Play still uses the canonical
+ * playback selector.
  */
-export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary[]> {
+async function getRecentlyAddedEpisodeRows(limit = 20) {
   // Fetch the newest episodes, grouped by show
   const episodes = await db.episode.findMany({
     where: playableEpisodeWhere,
@@ -449,20 +579,34 @@ export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary
     }
     if (picked.length >= limit) break;
   }
-  if (picked.length === 0) return [];
-  const col = await getMyListCollection();
-  const myListItems = await db.collectionItem.findMany({
-    where: { collectionId: col.id, mediaId: { in: picked.map((e) => e.mediaId) } },
+  return picked;
+}
+
+function summariesWithEpisodeContext(
+  picked: Awaited<ReturnType<typeof getRecentlyAddedEpisodeRows>>,
+  summaryById: Map<string, MediaSummary>
+) {
+  return picked.flatMap((episode) => {
+    const summary = summaryById.get(episode.mediaId);
+    return summary
+      ? [{
+          ...summary,
+          contextEpisodeId: episode.id,
+          contextSeason: episode.seasonNumber,
+          contextEpisode: episode.episodeNumber,
+          contextEpisodeTitle: episode.title,
+        }]
+      : [];
   });
-  const myListSet = new Set(myListItems.map((i) => i.mediaId));
-  return picked.map((ep) =>
-    toSummary(ep.media, myListSet.has(ep.mediaId), {
-      position: 0,
-      duration: 0,
-      episodeId: ep.id,
-      episode: { seasonNumber: ep.seasonNumber, episodeNumber: ep.episodeNumber },
-      updatedAt: ep.sourceModifiedAt ?? ep.createdAt,
-    })
+}
+
+export async function getRecentlyAddedEpisodes(limit = 20): Promise<MediaSummary[]> {
+  const picked = await getRecentlyAddedEpisodeRows(limit);
+  if (picked.length === 0) return [];
+  const summaries = await attachSummaryData(picked.map((episode) => episode.media));
+  return summariesWithEpisodeContext(
+    picked,
+    new Map(summaries.map((summary) => [summary.id, summary]))
   );
 }
 
@@ -504,14 +648,44 @@ export async function getContinueWatching(
         { episode: { is: playableEpisodeWhere } },
       ],
     },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     take: limit * 3,
     include: { media: { include: mediaInclude }, episode: true },
   });
+  const targetKey = (mediaId: string, episodeId: string | null) =>
+    `${mediaId}:${episodeId ?? "movie"}`;
+  const progressTargetClauses: Prisma.WatchProgressWhereInput[] = [
+    ...new Map(
+      inProgressRows.map((row) => [
+        targetKey(row.mediaId, row.episodeId),
+        { mediaId: row.mediaId, episodeId: row.episodeId },
+      ])
+    ).values(),
+  ];
+  const effectiveTargetRows = progressTargetClauses.length
+    ? await db.watchProgress.findMany({
+        where: { OR: progressTargetClauses },
+        orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+      })
+    : [];
+  const effectiveTargetByKey = new Map<string, typeof effectiveTargetRows[number]>();
+  for (const row of effectiveTargetRows) {
+    const key = targetKey(row.mediaId, row.episodeId);
+    if (!effectiveTargetByKey.has(key)) effectiveTargetByKey.set(key, row);
+  }
   const seen = new Set<string>();
   const candidates: ContinueWatchingCandidate[] = [];
 
   for (const r of inProgressRows) {
+    if (r.episode && r.episode.mediaId !== r.mediaId) continue;
+    const effective = effectiveTargetByKey.get(targetKey(r.mediaId, r.episodeId));
+    if (
+      !effective ||
+      effective.id !== r.id ||
+      effective.completed ||
+      effective.hiddenFromContinueWatching ||
+      effective.position <= 0
+    ) continue;
     if (!seen.has(r.mediaId)) {
       seen.add(r.mediaId);
       candidates.push({
@@ -547,7 +721,7 @@ export async function getContinueWatching(
         episodeId: { not: null },
         media: { type: "TV", id: { notIn: [...seen] } },
       },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       take: limit * 6,
       include: {
         episode: true,
@@ -556,7 +730,14 @@ export async function getContinueWatching(
             genres: { include: { genre: true } },
             episodes: {
               orderBy: [{ seasonNumber: "asc" }, { episodeNumber: "asc" }],
-              include: { progress: { where: { completed: true } } },
+              // The selector must see every row for a target so a newer
+              // reset/incomplete duplicate can supersede older completion
+              // history deterministically.
+              include: {
+                progress: {
+                  orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+                },
+              },
             },
           },
         },
@@ -566,27 +747,44 @@ export async function getContinueWatching(
     for (const watched of watchedEpisodeRows) {
       if (
         !watched.episode ||
+        watched.episode.mediaId !== watched.mediaId ||
         seen.has(watched.mediaId) ||
         dismissedMediaIds.has(watched.mediaId)
       ) continue;
       const show = watched.media;
 
-      const latestIndex = show.episodes.findIndex((ep) => ep.id === watched.episodeId);
-      if (latestIndex < 0) continue;
-
-      const watchedIds = new Set(
-        show.episodes
-          .filter((ep) => ep.progress.some((p) => p.completed))
-          .map((ep) => ep.id)
+      const playbackDecision = resolvePlaybackDecision({
+        mediaId: show.id,
+        episodes: show.episodes.map((episode) => ({
+          id: episode.id,
+          mediaId: episode.mediaId,
+          seasonNumber: episode.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          available: Boolean(episode.filePath || episode.streamUrl),
+          airDate: episode.airDate,
+        })),
+        progress: show.episodes.flatMap((episode) =>
+          episode.progress.map((progress) => ({
+            id: progress.id,
+            mediaId: progress.mediaId,
+            episodeId: progress.episodeId,
+            position: progress.position,
+            duration: progress.duration,
+            completed: progress.completed,
+            updatedAt: progress.updatedAt,
+          }))
+        ),
+      });
+      if (
+        playbackDecision.reason !== "first-unwatched-regular" &&
+        playbackDecision.reason !== "first-unwatched-special"
+      ) continue;
+      const nextEpisode = show.episodes.find(
+        (episode) => episode.id === playbackDecision.target?.episodeId
       );
-      const nextEpisode = show.episodes
-        .slice(latestIndex + 1)
-        .find((ep) => !watchedIds.has(ep.id) && (ep.filePath || ep.streamUrl));
       if (!nextEpisode) continue;
 
       const now = Date.now();
-      if (nextEpisode.airDate && nextEpisode.airDate.getTime() > now) continue;
-
       const previousAirDate = watched.episode.airDate;
       const nextEpisodeAge =
         previousAirDate && nextEpisode.airDate
@@ -627,18 +825,46 @@ export async function getContinueWatching(
 }
 
 export async function getHomeData(): Promise<HomeData> {
-  const [featured, continueWatching, recentlyAddedEpisodes, recentlyAddedMovies, trending, popularMovies, popularTV, topRated, newReleases] =
+  const [featuredRows, continueWatching, recentEpisodeRows, recentlyAddedMovieRows, trendingRows, popularMovieRows, popularTVRows, topRatedRows, newReleaseRows] =
     await Promise.all([
-      getFeatured(6),
+      getFeaturedRows(6),
       getContinueWatching(12),
-      getRecentlyAddedEpisodes(20),
-      getRecentlyAddedMovies(20),
-      getTrending(20),
-      getPopularMovies(20),
-      getPopularTV(20),
-      getTopRated(20),
-      getNewReleases(20),
+      getRecentlyAddedEpisodeRows(20),
+      getPresetMediaRows("recently-added-movies", 20),
+      getPresetMediaRows("trending", 20),
+      getPresetMediaRows("popular-movies", 20),
+      getPresetMediaRows("popular-tv", 20),
+      getPresetMediaRows("top-rated", 20),
+      getPresetMediaRows("new-releases", 20),
     ]);
+
+  const summaryRows = [
+    ...featuredRows,
+    ...recentEpisodeRows.map((episode) => episode.media),
+    ...recentlyAddedMovieRows,
+    ...trendingRows,
+    ...popularMovieRows,
+    ...popularTVRows,
+    ...topRatedRows,
+    ...newReleaseRows,
+  ];
+  const uniqueSummaryRows = [...new Map(summaryRows.map((item) => [item.id, item])).values()];
+  const summaries = await attachSummaryData(uniqueSummaryRows);
+  const summaryById = new Map(summaries.map((summary) => [summary.id, summary]));
+  const summarize = (items: MediaRow[]) =>
+    items.flatMap((item) => {
+      const summary = summaryById.get(item.id);
+      return summary ? [summary] : [];
+    });
+
+  const featured = summarize(featuredRows);
+  const recentlyAddedEpisodes = summariesWithEpisodeContext(recentEpisodeRows, summaryById);
+  const recentlyAddedMovies = summarize(recentlyAddedMovieRows);
+  const trending = summarize(trendingRows);
+  const popularMovies = summarize(popularMovieRows);
+  const popularTV = summarize(popularTVRows);
+  const topRated = summarize(topRatedRows);
+  const newReleases = summarize(newReleaseRows);
 
   const rows: ContentRow[] = [
     { key: "recently-added-episodes", title: "Recently Added Episodes", items: recentlyAddedEpisodes },
@@ -678,13 +904,34 @@ export async function getMediaDetail(
 
   const progressRows = await db.watchProgress.findMany({
     where: { mediaId: id },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     include: { episode: true },
   });
-  const latestProgress = progressRows[0];
-
   const playableEpisodeRows = media.episodes.filter((e) => e.filePath || e.streamUrl);
   const episodeRowsForDisplay = media.type === "TV" ? playableEpisodeRows : media.episodes;
+
+  const playbackDecision = media.type === "TV"
+    ? resolvePlaybackDecision({
+        mediaId: media.id,
+        episodes: media.episodes.map((episode) => ({
+          id: episode.id,
+          mediaId: episode.mediaId,
+          seasonNumber: episode.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          available: Boolean(episode.filePath || episode.streamUrl),
+          airDate: episode.airDate,
+        })),
+        progress: progressRows.map((progress) => ({
+          id: progress.id,
+          mediaId: progress.mediaId,
+          episodeId: progress.episodeId,
+          position: progress.position,
+          duration: progress.duration,
+          completed: progress.completed,
+          updatedAt: progress.updatedAt,
+        })),
+      })
+    : undefined;
 
   const seasonNumbers = [...new Set(episodeRowsForDisplay.map((e) => e.seasonNumber))].sort(
     (a, b) => a - b
@@ -699,12 +946,20 @@ export async function getMediaDetail(
     overview: null,
   }));
 
-  const targetSeason = season ?? seasons[0]?.seasonNumber ?? 1;
+  const targetSeason =
+    season ?? seasons.find((candidate) => candidate.seasonNumber > 0)?.seasonNumber ??
+    seasons[0]?.seasonNumber ?? 1;
   const seasonEpisodes = episodeRowsForDisplay.filter((e) => e.seasonNumber === targetSeason);
 
-  const epProgressMap = new Map(
-    progressRows.filter((p) => p.episodeId).map((p) => [p.episodeId!, p])
-  );
+  const epProgressMap = new Map<string, typeof progressRows[number]>();
+  for (const progress of progressRows) {
+    if (
+      !progress.episodeId ||
+      progress.episode?.mediaId !== media.id ||
+      epProgressMap.has(progress.episodeId)
+    ) continue;
+    epProgressMap.set(progress.episodeId, progress);
+  }
   const serializeEpisode = (e: typeof media.episodes[number]): Episode => {
     const p = epProgressMap.get(e.id);
     return {
@@ -731,35 +986,44 @@ export async function getMediaDetail(
     };
   };
   const episodes: Episode[] = seasonEpisodes.map(serializeEpisode);
-  const playableEpisodes = playableEpisodeRows.map(serializeEpisode);
+  const playbackEpisodeRows = [...playableEpisodeRows].sort(
+    (a, b) =>
+      Number(a.seasonNumber === 0) - Number(b.seasonNumber === 0) ||
+      a.seasonNumber - b.seasonNumber ||
+      a.episodeNumber - b.episodeNumber ||
+      a.id.localeCompare(b.id)
+  );
+  const playableEpisodes = playbackEpisodeRows.map(serializeEpisode);
 
-  let nextEpisode: Episode | null = null;
-  if (media.type === "TV" && playableEpisodeRows.length) {
-    const watchedIds = new Set(
-      progressRows.filter((p) => p.completed).map((p) => p.episodeId)
-    );
-    const now = Date.now();
-    const next =
-      playableEpisodeRows.find((e) => !watchedIds.has(e.id) && (!e.airDate || e.airDate.getTime() <= now)) ??
-      playableEpisodeRows[0];
-    nextEpisode = serializeEpisode(next);
-  }
+  const playbackEpisodeId = playbackDecision?.target?.episodeId;
+  const nextEpisodeRow = playbackEpisodeId
+    ? playbackEpisodeRows.find((episode) => episode.id === playbackEpisodeId)
+    : null;
+  const nextEpisode = nextEpisodeRow ? serializeEpisode(nextEpisodeRow) : null;
+  const selectedProgress = playbackDecision?.target?.progressId
+    ? progressRows.find((progress) => progress.id === playbackDecision.target?.progressId)
+    : media.type === "MOVIE"
+      ? (() => {
+          const latest = progressRows.find((progress) => progress.episodeId == null);
+          return latest && !latest.completed && latest.position > 0 ? latest : undefined;
+        })()
+      : undefined;
 
   const summary = toSummary(
     media,
     inMyList,
-    latestProgress
+    selectedProgress
       ? {
-          position: latestProgress.position,
-          duration: latestProgress.duration,
-          episodeId: latestProgress.episodeId,
-          episode: latestProgress.episode
+          position: selectedProgress.position,
+          duration: selectedProgress.duration,
+          episodeId: selectedProgress.episodeId,
+          episode: selectedProgress.episode
             ? {
-                seasonNumber: latestProgress.episode.seasonNumber,
-                episodeNumber: latestProgress.episode.episodeNumber,
+                seasonNumber: selectedProgress.episode.seasonNumber,
+                episodeNumber: selectedProgress.episode.episodeNumber,
               }
             : null,
-          updatedAt: latestProgress.updatedAt,
+          updatedAt: selectedProgress.updatedAt,
         }
       : undefined
   );
@@ -782,6 +1046,7 @@ export async function getMediaDetail(
     episodes,
     playableEpisodes,
     nextEpisode,
+    playbackDecision,
   };
 }
 
@@ -1112,12 +1377,16 @@ export async function saveProgress(payload: {
   completed?: boolean;
 }) {
   const { mediaId, episodeId = null, position, duration, completed = false } = payload;
+  await assertProgressTargetOwnership(mediaId, episodeId);
   const where = episodeId ? { mediaId, episodeId } : { mediaId, episodeId: null };
   await db.watchProgress.updateMany({
     where: { mediaId, hiddenFromContinueWatching: true },
     data: { hiddenFromContinueWatching: false },
   });
-  const existing = await db.watchProgress.findFirst({ where });
+  const existing = await db.watchProgress.findFirst({
+    where,
+    orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+  });
   if (existing) {
     await db.watchProgress.update({
       where: { id: existing.id },
@@ -1137,12 +1406,36 @@ export async function saveProgress(payload: {
   return { ok: true };
 }
 
+export class InvalidProgressTargetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidProgressTargetError";
+  }
+}
+
+async function assertProgressTargetOwnership(
+  mediaId: string,
+  episodeId: string | null
+) {
+  if (!episodeId) return;
+  const episode = await db.episode.findFirst({
+    where: { id: episodeId, mediaId },
+    select: { id: true },
+  });
+  if (!episode) {
+    throw new InvalidProgressTargetError(
+      "Episode does not belong to the requested media item."
+    );
+  }
+}
+
 export async function dismissContinueWatching(input: {
   mediaId: string;
   episodeId?: string | null;
   duration?: number;
 }) {
   const { mediaId, episodeId = null, duration = 0 } = input;
+  await assertProgressTargetOwnership(mediaId, episodeId);
   const media = await db.media.findUnique({ where: { id: mediaId }, select: { id: true } });
   if (!media) throw new Error("Media item not found");
 

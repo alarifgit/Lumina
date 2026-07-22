@@ -4,6 +4,7 @@ import path from "path";
 import { db } from "@/lib/db";
 import { searchTmdb, applyTmdbMetadata } from "@/lib/tmdb";
 import { decideTmdbAutoMatch } from "@/lib/tmdb-match";
+import { deriveEpisodeSourceTitle } from "@/lib/episode-title";
 import { findSubtitlesForVideo, type SubtitleDiscoveryResult } from "@/lib/subtitles";
 import { splitTrailingReleaseYear } from "@/lib/title-parser";
 import type { MediaType, ScanManifest, ScanManifestEntry, ScanResult } from "@/lib/types";
@@ -78,6 +79,10 @@ export function parseMediaTitle(raw: string): { title: string; year: number | nu
     .trim();
   const parsed = splitTrailingReleaseYear(title);
   return { title: parsed.title || raw, year: parsed.year ?? null };
+}
+
+function isPlaceholderEpisodeTitle(value: string | null | undefined) {
+  return /^s\d+e\d+$/i.test(String(value ?? "").trim());
 }
 
 function sourceDates(stat: Stats) {
@@ -194,9 +199,23 @@ async function scanSectionUnlocked(options: ScanOptions): Promise<ScanResult> {
       }
     }
   };
+  const directoryEntryNames = new Map<string, string[]>();
   const readDir = async (target: string) => {
-    try { return await io.readdir(target, { withFileTypes: true }) as Dirent[]; }
+    try {
+      const result = await io.readdir(target, { withFileTypes: true }) as Dirent[];
+      directoryEntryNames.set(normalizeMediaPath(target), result.map((entry) => entry.name));
+      return result;
+    }
     catch (error) { traversalFailure(target, error); return null; }
+  };
+  const readSubtitleDir = async (target: string) => {
+    const normalized = normalizeMediaPath(target);
+    const cached = directoryEntryNames.get(normalized);
+    if (cached) return cached;
+    const result = await io.readdir(target) as unknown as Array<string | Dirent>;
+    const names = result.map((entry) => typeof entry === "string" ? entry : entry.name);
+    directoryEntryNames.set(normalized, names);
+    return names;
   };
   const getStat = async (target: string) => {
     try { return await io.stat(target); }
@@ -247,21 +266,32 @@ async function scanSectionUnlocked(options: ScanOptions): Promise<ScanResult> {
     entries.push({ kind: "parser-result", path: file, mediaType: "MOVIE", ...parsed });
     let media = await findCandidate("MOVIE", file, parsed.title, parsed.year);
     const isNew = !media;
+    let countedAsUpdated = false;
     const analyzeEmbeddedSubtitles = sourceNeedsAnalysis(media, file, stat);
     if (media) {
       if (sourceNeedsUpdate(media, file, stat) || (media.year == null && parsed.year != null)) {
         media = await db.media.update({ where: { id: media.id }, data: { filePath: file, year: media.year ?? parsed.year, ...sourceDates(stat) } });
         updated++;
+        countedAsUpdated = true;
       }
     } else {
       media = await db.media.create({ data: { type: "MOVIE", title: parsed.title, filePath: file, year: parsed.year, sortTitle: parsed.title.toLowerCase(), sectionId: section.id, category: section.category, ...sourceDates(stat) } });
       added++;
     }
     recordSubtitleDiscovery(
-      await syncSubtitles(media.id, null, file, io, analyzeEmbeddedSubtitles, discoverSubtitles)
+      await syncSubtitles(media.id, null, file, readSubtitleDir, analyzeEmbeddedSubtitles, discoverSubtitles)
     );
     if (autoMatch && tmdbKey && (refreshExistingMetadata || isNew || analyzeEmbeddedSubtitles)) {
-      await syncTmdbMetadataIfNeeded(media, parsed.title, "MOVIE", parsed.year ?? undefined, tmdbKey, errors, entries, file);
+      if (await syncTmdbMetadataIfNeeded(
+        media,
+        parsed.title,
+        "MOVIE",
+        parsed.year ?? undefined,
+        tmdbKey,
+        errors,
+        entries,
+        file
+      ) && !isNew && !countedAsUpdated) updated++;
     }
   };
 
@@ -269,6 +299,7 @@ async function scanSectionUnlocked(options: ScanOptions): Promise<ScanResult> {
     file: string;
     season: number;
     episode: number;
+    sourceTitle: string | null;
     stat: Stats;
   };
 
@@ -306,7 +337,7 @@ async function scanSectionUnlocked(options: ScanOptions): Promise<ScanResult> {
       }
       const stat = await getStat(file);
       if (!stat) return;
-      candidates.push({ file, season, episode, stat });
+      candidates.push({ file, season, episode, sourceTitle: deriveEpisodeSourceTitle(name), stat });
     };
 
     for (const child of children) {
@@ -347,11 +378,13 @@ async function scanSectionUnlocked(options: ScanOptions): Promise<ScanResult> {
     entries.push({ kind: "parser-result", path: folder, mediaType: "TV", ...parsed });
     let show = await findCandidate("TV", folder, parsed.title, parsed.year);
     const isNew = !show;
+    let countedAsUpdated = false;
     const showHasSourceChanges = sourceNeedsAnalysis(show, folder, folderStat) || changedInside(folder);
     if (show) {
       if (sourceNeedsUpdate(show, folder, folderStat) || (show.year == null && parsed.year != null)) {
         show = await db.media.update({ where: { id: show.id }, data: { filePath: folder, year: show.year ?? parsed.year, ...sourceDates(folderStat) } });
         updated++;
+        countedAsUpdated = true;
       }
     } else {
       show = await db.media.create({ data: { type: "TV", title: parsed.title, filePath: folder, year: parsed.year, sortTitle: parsed.title.toLowerCase(), sectionId: section.id, category: section.category, ...sourceDates(folderStat) } });
@@ -359,24 +392,180 @@ async function scanSectionUnlocked(options: ScanOptions): Promise<ScanResult> {
     }
     const episodePaths = new Set<string>();
     discoveredEpisodes.set(show.id, episodePaths);
+    const episodeKey = (season: number, episode: number) => `${season}x${episode}`;
+    const candidatePaths = new Set(candidates.map((candidate) => normalizeMediaPath(candidate.file)));
+    const existingEpisodes = await db.episode.findMany({ where: { mediaId: show.id } });
+    const episodesByPath = new Map(
+      existingEpisodes
+        .filter((episode) => episode.filePath)
+        .map((episode) => [normalizeMediaPath(episode.filePath!), episode])
+    );
+    const episodesByIdentity = new Map(
+      existingEpisodes.map((episode) => [
+        episodeKey(episode.seasonNumber, episode.episodeNumber),
+        episode,
+      ])
+    );
+    const blockedEpisodePaths = new Set<string>();
+    let episodeIdentityChanged = false;
+    let episodeContentChanged = false;
+
+    // Older scanners treated every non-`Season N` directory as season 1, so
+    // Plex-style `Specials/...S00E03...` paths can already belong to an S1 row.
+    // Re-key exact paths before resolving any S/E fallback so traversal order
+    // cannot let a real S1 file overwrite the legacy Specials path and its
+    // metadata, subtitle, or progress relations.
+    for (const candidate of candidates) {
+      const normalized = normalizeMediaPath(candidate.file);
+      const exact = episodesByPath.get(normalized);
+      if (
+        !exact ||
+        (exact.seasonNumber === candidate.season && exact.episodeNumber === candidate.episode)
+      ) {
+        continue;
+      }
+      const oldKey = episodeKey(exact.seasonNumber, exact.episodeNumber);
+      const newKey = episodeKey(candidate.season, candidate.episode);
+      const identityOwner = episodesByIdentity.get(newKey);
+      if (identityOwner && identityOwner.id !== exact.id) {
+        blockedEpisodePaths.add(normalized);
+        entries.push({
+          kind: "identity-collision",
+          path: candidate.file,
+          rowId: identityOwner.id,
+          mediaType: "TV",
+          season: candidate.season,
+          episode: candidate.episode,
+          reason: `Could not re-key exact-path row ${exact.id} from S${exact.seasonNumber}E${exact.episodeNumber}: S${candidate.season}E${candidate.episode} is already owned by row ${identityOwner.id}`,
+        });
+        continue;
+      }
+      const rekeyed = await db.episode.update({
+        where: { id: exact.id },
+        data: {
+          seasonNumber: candidate.season,
+          episodeNumber: candidate.episode,
+        },
+      });
+      if (episodesByIdentity.get(oldKey)?.id === exact.id) episodesByIdentity.delete(oldKey);
+      episodesByIdentity.set(newKey, rekeyed);
+      episodesByPath.set(normalized, rekeyed);
+      episodeIdentityChanged = true;
+      episodeContentChanged = true;
+      entries.push({
+        kind: "identity-collision",
+        path: candidate.file,
+        rowId: exact.id,
+        mediaType: "TV",
+        season: candidate.season,
+        episode: candidate.episode,
+        reason: `Re-keyed existing episode row by exact normalized path from S${exact.seasonNumber}E${exact.episodeNumber} to S${candidate.season}E${candidate.episode}`,
+      });
+    }
+
     for (const candidate of candidates) {
       const { season, episode, stat } = candidate;
-      episodePaths.add(normalizeMediaPath(candidate.file));
-      entries.push({ kind: "discovered", path: candidate.file, mediaType: "TV", season, episode });
-      const existing = await db.episode.findUnique({ where: { mediaId_seasonNumber_episodeNumber: { mediaId: show.id, seasonNumber: season, episodeNumber: episode } } });
+      const normalized = normalizeMediaPath(candidate.file);
+      const identityKey = episodeKey(season, episode);
+      episodePaths.add(normalized);
+      entries.push({
+        kind: "discovered",
+        path: candidate.file,
+        mediaType: "TV",
+        season,
+        episode,
+        title: candidate.sourceTitle ?? undefined,
+      });
+      if (blockedEpisodePaths.has(normalized)) continue;
+      let existing = episodesByPath.get(normalized) ?? episodesByIdentity.get(identityKey) ?? null;
+      if (existing?.filePath && normalizeMediaPath(existing.filePath) !== normalized) {
+        const previousPath = normalizeMediaPath(existing.filePath);
+        let previousUnavailable = false;
+        if (!candidatePaths.has(previousPath)) {
+          try {
+            await io.stat(existing.filePath);
+          } catch (error) {
+            if (unavailableError(error)) previousUnavailable = true;
+            else traversalFailure(existing.filePath, error);
+          }
+        }
+        if (!previousUnavailable) {
+          entries.push({
+            kind: "identity-collision",
+            path: candidate.file,
+            rowId: existing.id,
+            mediaType: "TV",
+            season,
+            episode,
+            reason: `Kept distinct episode path because S${season}E${episode} already has an available path: ${existing.filePath}`,
+          });
+          continue;
+        }
+        entries.push({
+          kind: "identity-collision",
+          path: candidate.file,
+          rowId: existing.id,
+          mediaType: "TV",
+          season,
+          episode,
+          reason: `Reused S${season}E${episode} row because its previous path is unavailable`,
+        });
+      }
       const analyzeEmbeddedSubtitles = sourceNeedsAnalysis(existing, candidate.file, stat);
+      if (!existing) {
+        episodeIdentityChanged = true;
+        episodeContentChanged = true;
+      }
+      const useSourceTitle = Boolean(
+        candidate.sourceTitle && (!existing?.title || isPlaceholderEpisodeTitle(existing.title))
+      );
+      const needsSourceUpdate = existing ? sourceNeedsUpdate(existing, candidate.file, stat) : false;
+      if (needsSourceUpdate || useSourceTitle) episodeContentChanged = true;
       const row = existing
-        ? sourceNeedsUpdate(existing, candidate.file, stat)
-          ? await db.episode.update({ where: { id: existing.id }, data: { filePath: candidate.file, ...sourceDates(stat) } })
+        ? needsSourceUpdate || useSourceTitle
+          ? await db.episode.update({
+              where: { id: existing.id },
+              data: {
+                ...(needsSourceUpdate ? { filePath: candidate.file, ...sourceDates(stat) } : {}),
+                ...(useSourceTitle ? { title: candidate.sourceTitle! } : {}),
+              },
+            })
           : existing
-        : await db.episode.create({ data: { mediaId: show.id, seasonNumber: season, episodeNumber: episode, title: `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`, filePath: candidate.file, ...sourceDates(stat) } });
+        : await db.episode.create({
+            data: {
+              mediaId: show.id,
+              seasonNumber: season,
+              episodeNumber: episode,
+              title: candidate.sourceTitle ?? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`,
+              filePath: candidate.file,
+              ...sourceDates(stat),
+            },
+          });
+      if (existing?.filePath && normalizeMediaPath(existing.filePath) !== normalized) {
+        const previousPath = normalizeMediaPath(existing.filePath);
+        if (episodesByPath.get(previousPath)?.id === existing.id) episodesByPath.delete(previousPath);
+      }
+      episodesByPath.set(normalized, row);
+      episodesByIdentity.set(identityKey, row);
       recordSubtitleDiscovery(
-        await syncSubtitles(show.id, row.id, candidate.file, io, analyzeEmbeddedSubtitles, discoverSubtitles)
+        await syncSubtitles(show.id, row.id, candidate.file, readSubtitleDir, analyzeEmbeddedSubtitles, discoverSubtitles)
       );
     }
-    if (autoMatch && tmdbKey && (refreshExistingMetadata || isNew || showHasSourceChanges)) {
-      await syncTmdbMetadataIfNeeded(show, parsed.title, "TV", parsed.year ?? undefined, tmdbKey, errors, entries, folder);
+    let metadataUpdated = false;
+    if (autoMatch && tmdbKey && (refreshExistingMetadata || isNew || showHasSourceChanges || episodeIdentityChanged)) {
+      metadataUpdated = await syncTmdbMetadataIfNeeded(
+        show,
+        parsed.title,
+        "TV",
+        parsed.year ?? undefined,
+        tmdbKey,
+        errors,
+        entries,
+        folder,
+        episodeIdentityChanged
+      );
     }
+    if (!isNew && !countedAsUpdated && (episodeContentChanged || metadataUpdated)) updated++;
   };
 
   const walkMovies = async (root: string, depth = 0): Promise<string[]> => {
@@ -473,13 +662,13 @@ async function syncSubtitles(
   mediaId: string,
   episodeId: string | null,
   videoPath: string,
-  io: FsOps,
+  readdir: (target: string) => Promise<string[]>,
   includeEmbedded: boolean,
   discover: typeof findSubtitlesForVideo
 ): Promise<SubtitleDiscoveryResult> {
   const discovery = await discover(
     videoPath,
-    (target) => io.readdir(target) as Promise<string[]>,
+    readdir,
     { includeEmbedded }
   );
   const found = discovery.subtitles;
@@ -553,11 +742,29 @@ async function syncSubtitles(
 }
 
 type MetadataCandidate = { id: string; tmdbId: number | null; posterUrl: string | null; backdropUrl: string | null; overview: string | null; rating: number | null };
-async function syncTmdbMetadataIfNeeded(media: MetadataCandidate, title: string, type: MediaType, year: number | undefined, key: string, errors: string[], manifestEntries: ScanManifestEntry[], mediaPath: string) {
+async function syncTmdbMetadataIfNeeded(media: MetadataCandidate, title: string, type: MediaType, year: number | undefined, key: string, errors: string[], manifestEntries: ScanManifestEntry[], mediaPath: string, forceRefresh = false) {
+  const applyMetadata = async (tmdbId: number) => {
+    const result = await applyTmdbMetadata(media.id, tmdbId, type, key);
+    for (const skipped of result.episodeMetadataSkips) {
+      manifestEntries.push({
+        kind: "identity-collision",
+        path: skipped.filePath ?? mediaPath,
+        rowId: skipped.episodeId,
+        mediaType: type,
+        title: skipped.sourceTitle,
+        season: skipped.seasonNumber,
+        episode: skipped.episodeNumber,
+        reason: `Kept source episode title “${skipped.sourceTitle}” because TMDB S${skipped.seasonNumber}E${skipped.episodeNumber} is “${skipped.providerTitle}”; provider episode ordering may differ`,
+      });
+    }
+  };
   try {
     if (media.tmdbId) {
-      if (!media.posterUrl || !media.backdropUrl || !media.overview || media.rating == null) await applyTmdbMetadata(media.id, media.tmdbId, type, key);
-      return;
+      if (forceRefresh || !media.posterUrl || !media.backdropUrl || !media.overview || media.rating == null) {
+        await applyMetadata(media.tmdbId);
+        return true;
+      }
+      return false;
     }
     const matches = await searchTmdb(title, type, year, key, {
       allowYearlessFallback: false,
@@ -587,13 +794,27 @@ async function syncTmdbMetadataIfNeeded(media: MetadataCandidate, title: string,
         year: year ?? null,
         reason: `TMDB auto-match skipped: ${reason}${candidates ? `. Candidates: ${candidates}` : ""}`,
       });
-      return;
+      return false;
     }
     const identityOwner = await db.media.findFirst({ where: { id: { not: media.id }, type, tmdbId: match.tmdbId } });
     if (identityOwner?.filePath && normalizeMediaPath(identityOwner.filePath) !== normalizeMediaPath(mediaPath)) {
       manifestEntries.push({ kind: "identity-collision", path: mediaPath, rowId: identityOwner.id, mediaType: type, title, year: year ?? null, reason: `TMDB ${match.tmdbId} is already attached to distinct path: ${identityOwner.filePath}` });
-      return;
+      return false;
     }
-    await applyTmdbMetadata(media.id, match.tmdbId, type, key);
-  } catch (error) { errors.push(`Metadata match failed for "${title}": ${(error as Error).message}`); }
+    await applyMetadata(match.tmdbId);
+    return true;
+  } catch (error) {
+    const reason = `Metadata match failed for "${title}": ${(error as Error).message}`;
+    errors.push(reason);
+    manifestEntries.push({
+      kind: "unsupported",
+      path: mediaPath,
+      rowId: media.id,
+      mediaType: type,
+      title,
+      year: year ?? null,
+      reason,
+    });
+    return false;
+  }
 }

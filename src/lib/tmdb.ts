@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
+import { deriveEpisodeSourceTitle } from "@/lib/episode-title";
 import { splitTrailingReleaseYear } from "@/lib/title-parser";
+import { normalizeTmdbMatchTitle } from "@/lib/tmdb-match";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 export const TMDB_IMG = "https://image.tmdb.org/t/p";
@@ -201,6 +203,30 @@ function extractTvCertification(contentRatings: any): string | null {
   }
 }
 
+export function getEpisodeSourceMetadataConflict(
+  episode: {
+    filePath: string | null;
+    overview: string | null;
+    stillUrl: string | null;
+    airDate: Date | null;
+    runtime: number | null;
+  },
+  providerTitle: string
+) {
+  const sourceTitle = episode.filePath
+    ? deriveEpisodeSourceTitle(episode.filePath)
+    : null;
+  const hasExistingProviderMetadata = Boolean(
+    episode.overview || episode.stillUrl || episode.airDate || episode.runtime
+  );
+  if (
+    !sourceTitle ||
+    hasExistingProviderMetadata ||
+    normalizeTmdbMatchTitle(sourceTitle) === normalizeTmdbMatchTitle(providerTitle)
+  ) return null;
+  return { sourceTitle, providerTitle };
+}
+
 /** Persist fetched TMDB metadata onto an existing Media row. */
 export async function applyTmdbMetadata(
   mediaId: string,
@@ -268,6 +294,14 @@ export async function applyTmdbMetadata(
     },
   });
 
+  const episodeMetadataSkips: Array<{
+    episodeId: string;
+    filePath: string | null;
+    seasonNumber: number;
+    episodeNumber: number;
+    sourceTitle: string;
+    providerTitle: string;
+  }> = [];
   if (type === "TV") {
     // Enrich local episodes with TMDB metadata. Lumina should not create or
     // display remote-only/future episodes that are not present on disk.
@@ -281,6 +315,18 @@ export async function applyTmdbMetadata(
     for (const ep of tv.episodes) {
       const existingEp = existingByKey.get(`${ep.seasonNumber}x${ep.episodeNumber}`);
       if (existingEp && (existingEp.filePath || existingEp.streamUrl)) {
+        const conflict = getEpisodeSourceMetadataConflict(existingEp, ep.title);
+        if (conflict) {
+          episodeMetadataSkips.push({
+            episodeId: existingEp.id,
+            filePath: existingEp.filePath,
+            seasonNumber: existingEp.seasonNumber,
+            episodeNumber: existingEp.episodeNumber,
+            sourceTitle: conflict.sourceTitle,
+            providerTitle: conflict.providerTitle,
+          });
+          continue;
+        }
         await db.episode.update({
           where: { id: existingEp.id },
           data: {
@@ -295,7 +341,7 @@ export async function applyTmdbMetadata(
     }
   }
 
-  return { mediaId };
+  return { mediaId, episodeMetadataSkips };
 }
 
 export async function mergeMediaRows(sourceId: string, targetId: string) {

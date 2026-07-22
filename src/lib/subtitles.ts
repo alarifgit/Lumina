@@ -122,7 +122,13 @@ export async function findSubtitlesForVideo(
   const subs: DiscoveredSubtitle[] = [];
   const videoCount = entries.filter(isLikelyVideo).length;
   const locations = [{ directory: dir, entries }];
-  for (const folder of ["Subs", "Subtitles", "subs", "subtitles"]) {
+  // The parent listing already tells us whether a nested subtitle directory
+  // exists. Avoid four speculative readdir calls per video: those misses are
+  // especially expensive on a remote SMB mount and multiply across episodes.
+  const nestedSubtitleFolders = [...new Set(
+    entries.filter((entry) => ["subs", "subtitles"].includes(entry.toLowerCase()))
+  )];
+  for (const folder of nestedSubtitleFolders) {
     const directory = path.join(/* turbopackIgnore: true */ dir, folder);
     const nested = await readdir(directory).catch((error: unknown) => {
       const code = (error as NodeJS.ErrnoException).code;

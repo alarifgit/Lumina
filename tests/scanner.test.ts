@@ -203,7 +203,8 @@ describe("safe scanner reconciliation", () => {
 
   test("uses filename episode identity for specials and three-digit episode numbers", async () => {
     const root = await fs.mkdtemp(path.join(tempRoot, "episode-numbering-"));
-    await video(path.join(root, "Numbered Show", "Specials", "Numbered.Show.S00E01.mkv"));
+    await video(path.join(root, "Numbered Show", "Specials", "Numbered.Show.S0E01.mkv"));
+    await video(path.join(root, "Numbered Show", "Specials", "Numbered.Show.S00E04.mkv"));
     const conflictingPath = await video(
       path.join(root, "Numbered Show", "Season 02", "Numbered.Show.S03E100.mkv")
     );
@@ -216,7 +217,7 @@ describe("safe scanner reconciliation", () => {
 
     assert.deepEqual(
       episodes.map((episode) => [episode.seasonNumber, episode.episodeNumber]),
-      [[0, 1], [3, 100]]
+      [[0, 1], [0, 4], [3, 100]]
     );
     assert.equal(
       result.manifest.entries.some(
@@ -224,6 +225,154 @@ describe("safe scanner reconciliation", () => {
           entry.kind === "identity-collision" &&
           entry.path === conflictingPath &&
           entry.reason?.includes("filename season S03")
+      ),
+      true
+    );
+  });
+
+  test("uses source episode names when remote metadata is unavailable", async () => {
+    const root = await fs.mkdtemp(path.join(tempRoot, "episode-source-titles-"));
+    await video(path.join(
+      root,
+      "Kitchen Nightmares (US)",
+      "Season 09",
+      "Kitchen Nightmares (US) - S09E01 - Freddy's Steak House WEBDL-1080p.mkv"
+    ));
+    await video(path.join(
+      root,
+      "Kitchen Nightmares (US)",
+      "Season 09",
+      "Kitchen Nightmares (US) - S09E02 - 4-Star Diner HDTV-1080p.mkv"
+    ));
+    const s = await section("TV", root);
+
+    await scanSection({ sectionId: s.id });
+    let episodes = await db.episode.findMany({ orderBy: { episodeNumber: "asc" } });
+    assert.deepEqual(episodes.map((episode) => episode.title), ["Freddy's Steak House", "4-Star Diner"]);
+
+    await db.episode.update({ where: { id: episodes[0].id }, data: { title: "S09E01" } });
+    await scanSection({ sectionId: s.id });
+    episodes = await db.episode.findMany({ orderBy: { episodeNumber: "asc" } });
+    assert.deepEqual(episodes.map((episode) => episode.title), ["Freddy's Steak House", "4-Star Diner"]);
+  });
+
+  test("rekeys legacy Specials rows by exact path without losing metadata or history", async () => {
+    const root = await fs.mkdtemp(path.join(tempRoot, "legacy-specials-"));
+    const showPath = path.join(root, "Daria");
+    const specialPath = await video(
+      path.join(showPath, "Specials", "Daria - S00E03 - Is It Fall Yet.mkv")
+    );
+    const regularPath = await video(
+      path.join(showPath, "Season 01", "Daria - S01E03 - College Bored.mkv")
+    );
+    const subtitlePath = `${specialPath}.en.srt`;
+    await fs.writeFile(subtitlePath, "fixture subtitles");
+    const s = await section("TV", root);
+    const show = await db.media.create({
+      data: {
+        type: "TV",
+        title: "Daria",
+        sortTitle: "daria",
+        filePath: showPath,
+        sectionId: s.id,
+      },
+    });
+    const legacy = await db.episode.create({
+      data: {
+        mediaId: show.id,
+        seasonNumber: 1,
+        episodeNumber: 3,
+        title: "Is It Fall Yet?",
+        overview: "Retained special metadata",
+        filePath: specialPath,
+      },
+    });
+    const progress = await db.watchProgress.create({
+      data: { mediaId: show.id, episodeId: legacy.id, position: 42, duration: 100 },
+    });
+    const subtitle = await db.subtitle.create({
+      data: {
+        mediaId: show.id,
+        episodeId: legacy.id,
+        language: "en",
+        label: "English",
+        format: "srt",
+        filePath: subtitlePath,
+        isDefault: true,
+      },
+    });
+    const discover: NonNullable<Parameters<typeof scanSection>[0]["subtitleDiscovery"]> =
+      async (target) => ({
+        subtitles: target === specialPath
+          ? [{
+              filePath: subtitlePath,
+              language: "en",
+              label: "English",
+              format: "srt",
+              source: "sidecar",
+              streamIndex: null,
+              codec: null,
+              isDefault: true,
+            }]
+          : [],
+        complete: true,
+        sidecarComplete: true,
+        embeddedComplete: true,
+        issues: [],
+      });
+
+    const first = await scanSection({ sectionId: s.id, subtitleDiscovery: discover });
+    await scanSection({ sectionId: s.id, subtitleDiscovery: discover });
+    const episodes = await db.episode.findMany({
+      orderBy: [{ seasonNumber: "asc" }, { episodeNumber: "asc" }],
+    });
+    const retainedSpecial = episodes.find(
+      (episode) => episode.seasonNumber === 0 && episode.episodeNumber === 3
+    );
+    const regularEpisode = episodes.find(
+      (episode) => episode.seasonNumber === 1 && episode.episodeNumber === 3
+    );
+
+    assert.equal(episodes.length, 2);
+    assert.equal(retainedSpecial?.id, legacy.id);
+    assert.equal(retainedSpecial?.filePath, specialPath);
+    assert.equal(retainedSpecial?.overview, "Retained special metadata");
+    assert.equal(regularEpisode?.filePath, regularPath);
+    assert.equal((await db.watchProgress.findUniqueOrThrow({ where: { id: progress.id } })).episodeId, legacy.id);
+    assert.equal((await db.subtitle.findUniqueOrThrow({ where: { id: subtitle.id } })).episodeId, legacy.id);
+    assert.equal(
+      first.manifest.entries.some(
+        (entry) =>
+          entry.kind === "identity-collision" &&
+          entry.path === specialPath &&
+          entry.reason?.includes("Re-keyed existing episode row")
+      ),
+      true
+    );
+  });
+
+  test("never overwrites one live path with another for the same episode identity", async () => {
+    const root = await fs.mkdtemp(path.join(tempRoot, "duplicate-episode-paths-"));
+    const firstPath = await video(
+      path.join(root, "Duplicate Episode Show", "Season 01", "A.Show.S01E01.mkv")
+    );
+    const secondPath = await video(
+      path.join(root, "Duplicate Episode Show", "Season 01", "B.Show.S01E01.mkv")
+    );
+    const s = await section("TV", root);
+
+    const first = await scanSection({ sectionId: s.id });
+    const retainedPath = (await db.episode.findFirstOrThrow()).filePath;
+    const second = await scanSection({ sectionId: s.id });
+
+    assert.equal(await db.episode.count(), 1);
+    assert.equal((await db.episode.findFirstOrThrow()).filePath, retainedPath);
+    assert.equal([firstPath, secondPath].includes(retainedPath ?? ""), true);
+    assert.equal(
+      [...first.manifest.entries, ...second.manifest.entries].some(
+        (entry) =>
+          entry.kind === "identity-collision" &&
+          entry.reason?.includes("already has an available path")
       ),
       true
     );
@@ -426,6 +575,7 @@ describe("safe scanner reconciliation", () => {
   test("subtitle discovery exposes nested-directory traversal failures", async () => {
     const root = await fs.mkdtemp(path.join(tempRoot, "subtitle-discovery-"));
     const moviePath = await video(path.join(root, "Moon (2009).mkv"));
+    await fs.mkdir(path.join(root, "Subs"));
     const { findSubtitlesForVideo } = await import("@/lib/subtitles");
     const result = await findSubtitlesForVideo(
       moviePath,
@@ -440,6 +590,25 @@ describe("safe scanner reconciliation", () => {
     assert.equal(result.complete, false);
     assert.equal(result.sidecarComplete, false);
     assert.equal(result.issues.some((issue) => issue.traversal && issue.path.endsWith("Subs")), true);
+  });
+
+  test("subtitle discovery does not probe absent nested directories", async () => {
+    const root = await fs.mkdtemp(path.join(tempRoot, "subtitle-probes-"));
+    const moviePath = await video(path.join(root, "Moon (2009).mkv"));
+    const calls: string[] = [];
+    const { findSubtitlesForVideo } = await import("@/lib/subtitles");
+
+    const result = await findSubtitlesForVideo(
+      moviePath,
+      async (target) => {
+        calls.push(target);
+        return fs.readdir(target);
+      },
+      { includeEmbedded: false }
+    );
+
+    assert.equal(result.complete, true);
+    assert.deepEqual(calls, [root]);
   });
 
   test("subtitle discovery failures preserve cached rows and explain incomplete traversal", async () => {

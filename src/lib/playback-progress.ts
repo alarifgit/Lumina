@@ -7,8 +7,38 @@ type PlaybackTimelineInput = {
   runtimeMinutes?: number | null;
 };
 
+type PlaybackOffsetInput = {
+  resumeOverride: number | null;
+  serverResumeAt: number;
+  timelineOffset: number;
+};
+
+type AutoTranscodeStartInput = {
+  currentTime: number;
+  serverResumeAt: number;
+};
+
 function positiveFinite(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Generic TV playback receives its canonical resume point after the detail
+ * request resolves. Keep a transcode anchored to that server-selected point
+ * until an explicit seek or quality change takes ownership of the timeline.
+ */
+export function resolvePlaybackOffset(input: PlaybackOffsetInput) {
+  return input.resumeOverride == null
+    ? positiveFinite(input.serverResumeAt)
+    : positiveFinite(input.timelineOffset);
+}
+
+/** Capture the furthest known absolute clock before a late probe changes source. */
+export function resolveAutoTranscodeStart(input: AutoTranscodeStartInput) {
+  return Math.max(
+    positiveFinite(input.currentTime),
+    positiveFinite(input.serverResumeAt)
+  );
 }
 
 /** Resolve one absolute playback timeline for direct and segmented transcodes. */

@@ -158,6 +158,36 @@ async function createShow(input: {
 }
 
 describe("Plex watched-sync identity matching", () => {
+  test("matches Plex season zero to the exact Lumina Specials episode", async () => {
+    await createShow({
+      id: "daria",
+      title: "Daria",
+      year: 1997,
+      tmdbId: 2131,
+      filePath: "/media/tv/Daria",
+      episodes: [{ seasonNumber: 0, episodeNumber: 3 }],
+    });
+    plexFixture({
+      type: "episode",
+      ratingKey: "daria-special-3",
+      title: "Is It Fall Yet?",
+      grandparentTitle: "Daria",
+      parentYear: 1997,
+      parentIndex: "0",
+      index: "3",
+      duration: 4_500_000,
+      viewCount: 1,
+    });
+
+    const result = await syncPlexWatched({ apply: false });
+
+    assert.equal(result.matched, 1);
+    assert.equal(result.unmatched, 0);
+    assert.equal(result.items[0]?.seasonNumber, 0);
+    assert.equal(result.items[0]?.episodeNumber, 3);
+    assert.equal(result.items[0]?.reason.includes("Matched exact S0E3 episode row"), true);
+  });
+
   test("matches year-suffixed Plex show titles to the exact local episode", async () => {
     await db.media.create({
       data: {
