@@ -384,10 +384,13 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 		it.State = library.StateActive
 		it.MissingAt = time.Time{}
 		// "Recently added" should mean "recently acquired", not "when the
-		// scanner happened to walk past". New items inherit the file's mtime
-		// (UPDATEs never write added_at, so existing items are untouched).
-		// Future-dated mtimes (clock skew) fall back to now.
-		if mt := fi.ModTime(); !mt.IsZero() && mt.Before(time.Now()) {
+		// scanner happened to walk past". Items take the file's mtime when
+		// it is EARLIER than what we have: new items inherit it directly,
+		// and first-scan batches (which all shared one scan timestamp)
+		// backfill to each file's true mod time on the next sweep. mtime
+		// only ever moves added_at backwards, so this is idempotent.
+		// Future-dated mtimes (clock skew) are ignored.
+		if mt := fi.ModTime(); !mt.IsZero() && mt.Before(time.Now()) && mt.Before(it.AddedAt) {
 			it.AddedAt = mt
 		}
 		for _, p := range it.Paths {

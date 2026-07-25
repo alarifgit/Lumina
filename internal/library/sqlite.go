@@ -218,10 +218,10 @@ func (s *sqliteStore) UpsertByHash(hash, libraryName string, mutate func(it *Ite
 		it.ID = fmt.Sprintf("itm-%d", id)
 	} else {
 		if _, err := tx.Exec(
-			`UPDATE items SET kind=?, title=?, year=?, state=?, size_bytes=?, updated_at=?, missing_at=?
+			`UPDATE items SET kind=?, title=?, year=?, state=?, size_bytes=?, added_at=?, updated_at=?, missing_at=?
 			 WHERE id=?`,
 			string(it.Kind), it.Title, it.Year, string(it.State), it.SizeBytes,
-			fmtTime(it.UpdatedAt), fmtTimePtr(it.MissingAt), numericID(it.ID),
+			fmtTime(it.AddedAt), fmtTime(it.UpdatedAt), fmtTimePtr(it.MissingAt), numericID(it.ID),
 		); err != nil {
 			return nil, fmt.Errorf("update item: %w", err)
 		}

@@ -8,8 +8,27 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "brand-candidates" / "logo-emblem-serif.png"
+WORDMARK = ROOT / "brand-candidates" / "wordmark-gold.png"
 OUT = ROOT / "internal" / "api" / "web" / "brand"
 NAVY = (11, 18, 32)  # deep midnight navy, darker than --bg for icon contrast
+
+
+def white_to_alpha(im: Image.Image) -> Image.Image:
+    """Key out a white background: alpha = 255 - min(R,G,B), then
+    un-premultiply so gold keeps its saturation at the edges."""
+    im = im.convert("RGBA")
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, _ = px[x, y]
+            a = 255 - min(r, g, b)
+            if a > 8:
+                f = 255 / (255 - min(r, g, b)) if min(r, g, b) < 255 else 1
+                px[x, y] = (min(255, int(r * f)), min(255, int(g * f)),
+                            min(255, int(b * f)), a)
+            else:
+                px[x, y] = (0, 0, 0, 0)
+    return im
 
 
 def crop_to_content(im: Image.Image) -> Image.Image:
@@ -74,6 +93,25 @@ def main() -> None:
                        (180, "apple-touch-icon.png")]:
         icon = paste_centered(squircle(size), emblem, 0.78)
         icon.convert("RGB").save(OUT / name)
+
+    # Wordmark: the generator insists on a white background, so key it out,
+    # crop to the letterforms, and ship a transparent header lockup.
+    if WORDMARK.exists():
+        wm = white_to_alpha(Image.open(WORDMARK))
+        # Watermark sits in the bottom strip — clamp the bbox scan above it.
+        px = wm.load()
+        xs, ys = [], []
+        for y in range(int(wm.height * 0.88)):
+            for x in range(wm.width):
+                if px[x, y][3] > 16:
+                    xs.append(x)
+                    ys.append(y)
+        if xs:
+            wm = wm.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
+        wm.save(ROOT / "brand-candidates" / "wordmark-gold-transparent.png")
+        target_h = 256
+        wm.resize((int(target_h * wm.width / wm.height), target_h),
+                  Image.LANCZOS).save(OUT / "wordmark.png")
 
     print("wrote:", *[p.name for p in sorted(OUT.iterdir())], sep="\n  ")
 
