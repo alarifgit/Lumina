@@ -97,6 +97,42 @@ func (m *Manager) ActiveSessions() []Session {
 	return out
 }
 
+// SessionDebug is the admin troubleshooting view: everything needed to
+// answer "why is this transcode not producing output" without docker exec.
+type SessionDebug struct {
+	Key      string   `json:"key"`
+	Mode     string   `json:"mode"`
+	Dead     bool     `json:"dead"`
+	Completed bool    `json:"completed"`
+	IdleS    int      `json:"idleSeconds"`
+	Files    []string `json:"files"` // segment/playlist files currently on disk
+	LogTail  string   `json:"logTail"`
+}
+
+// DebugSessions snapshots every session with its ffmpeg log tail and the
+// files it has produced so far.
+func (m *Manager) DebugSessions() []SessionDebug {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []SessionDebug{}
+	for _, s := range m.sessions {
+		s.mu.Lock()
+		d := SessionDebug{
+			Key: s.Key, Mode: s.Mode, Dead: s.dead, Completed: s.completed,
+			IdleS: int(time.Since(s.lastTouch).Seconds()),
+		}
+		s.mu.Unlock()
+		d.LogTail = s.tail()
+		if ents, err := os.ReadDir(s.Dir); err == nil {
+			for _, e := range ents {
+				d.Files = append(d.Files, e.Name())
+			}
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
 // SessionKey identifies one transcode session: item + start offset.
 // A seek beyond produced segments starts a NEW key (FFmpeg restarts with
 // -ss) while the old session idles out under the reaper.
@@ -338,7 +374,12 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		"-c:a", "aac", "-ac", "2", "-b:a", "192k",
 		"-f", "hls",
 		"-hls_time", "4",
-		"-hls_playlist_type", "vod",
+		// NO -hls_playlist_type: "vod" tells ffmpeg the playlist is static,
+		// and it withholds index.m3u8 until the ENTIRE file is processed —
+		// fine for a 2-minute clip, fatal for a 43-minute episode (the
+		// client loads forever). The default progressive playlist appears
+		// after the first segment and grows; seeking works for anything
+		// already produced, which is exactly our session model.
 		"-hls_flags", "independent_segments",
 		"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
 		out,

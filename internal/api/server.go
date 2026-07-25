@@ -51,6 +51,7 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	mux.HandleFunc("GET /api/v1/items/{id}/hls/{file...}", s.hlsFile)
 	mux.HandleFunc("GET /api/v1/system/capabilities", s.capabilities)
 	mux.HandleFunc("GET /api/v1/system/sessions", s.sessions)
+	mux.HandleFunc("GET /api/v1/system/sessions/debug", s.sessionsDebug)
 
 	// Users + watch-state journal
 	mux.HandleFunc("GET /api/v1/users", s.listUsers)

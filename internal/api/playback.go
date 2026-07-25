@@ -163,3 +163,10 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sessions(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.tm.ActiveSessions())
 }
+
+// GET /api/v1/system/sessions/debug — every session with its ffmpeg log
+// tail and on-disk files. The "why is my transcode stuck" answer, without
+// needing docker exec.
+func (s *Server) sessionsDebug(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.tm.DebugSessions())
+}
