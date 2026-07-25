@@ -304,16 +304,20 @@ function homeCard(it, ph, poster = false, label = null) {
 // identical posters for every new episode. Episodes carry SxxExx in the
 // title (scanner-side parse), so group on the prefix before that marker.
 const SERIES_RE = /\s*[-–—.:]?\s*[Ss](\d{1,3})[Ee](\d{1,4})\b/;
+// Absolute-numbered anime displays as "Bleach E362 · …" — group those too.
+const ABS_EP_RE = /\s*[-–—.:]?\s*[Ee](\d{1,4})\b/;
 
 function seriesKey(it) {
-  const m = it.title.match(SERIES_RE);
+  const m = it.title.match(SERIES_RE) || it.title.match(ABS_EP_RE);
   if (!m || m.index === 0) return it.title;
   return it.title.slice(0, m.index).replace(/[\s\-–—.:]+$/, "") || it.title;
 }
 
 function episodeSE(it) {
   const m = it.title.match(SERIES_RE);
-  return m ? { s: +m[1], e: +m[2] } : null;
+  if (m) return { s: +m[1], e: +m[2] };
+  const a = it.title.match(ABS_EP_RE);
+  return a ? { s: 0, e: +a[1] } : null;
 }
 
 // Group episodes (already sorted newest-first) into one entry per series.
@@ -332,7 +336,7 @@ function groupBySeries(episodes) {
         sMax = se.s; eMax = se.e;
       }
     }
-    const latest = sMax > 0 ? `S${sMax}E${eMax}` : "";
+    const latest = sMax > 0 ? `S${sMax}E${eMax}` : (eMax > 0 ? `E${eMax}` : "");
     const sub = eps.length > 1
       ? [latest && `up to ${latest}`, `${eps.length} new`].filter(Boolean).join(" · ")
       : latest;
@@ -934,6 +938,23 @@ function openCardMenu(x, y, it) {
       ph && ph.watched ? "○ Mark unwatched" : "✓ Mark watched",
       () => toggleWatched(it, !(ph && ph.watched)),
     ));
+    if (ph && !ph.watched && ph.positionMs > 0) {
+      // Plex's "Remove from Continue Watching": same journal write as
+      // unwatched — zero position with a nonzero duration reads as
+      // "no resume point".
+      cardMenu.appendChild(menuItem("✕ Remove from Continue Watching",
+        () => toggleWatched(it, false)));
+    }
+  }
+  if (it.paths && it.paths[0]) {
+    cardMenu.appendChild(menuItem("⧉ Copy file path", async () => {
+      try {
+        await navigator.clipboard.writeText(it.paths[0]);
+        toast("Path copied");
+      } catch {
+        toast("Clipboard blocked — see Media info", "err");
+      }
+    }));
   }
   document.body.appendChild(cardMenu);
   // Clamp inside the viewport (menu may open near the right/bottom edge).

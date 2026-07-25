@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -247,6 +248,20 @@ func (s *Scanner) tier(path string) WatcherTier {
 	return s.tiers[path]
 }
 
+// skipDirNames are directory names that never contain library media:
+// NAS/system sidecars plus Plex-style extras folders. Skipping them at walk
+// time means bonus features never pollute Recently Added.
+var skipDirNames = map[string]bool{
+	"@eadir": true, ".appledouble": true, "#recycle": true, "$recycle.bin": true,
+	"extras": true, "extra": true, "featurettes": true, "trailers": true,
+	"samples": true, "sample": true, "behind the scenes": true,
+	"behind-the-scenes": true, "deleted scenes": true, "interviews": true,
+}
+
+// skipFileRe drops filesystem sidecars (AppleDouble "._*", Thumbs.db) and
+// sample/trailer/featurette clips.
+var skipFileRe = regexp.MustCompile(`(?i)^(\..*|thumbs\.db|desktop\.ini)$|(?:^|[ ._-])(sample|trailer|featurette)(?:[ ._-]|$)`)
+
 // ScanRoot performs an incremental walk of a library root and applies the
 // tombstone rule. If the root comes up completely empty while the library
 // has known items (classic dropped-SMB-mount signature), scanning halts
@@ -285,13 +300,22 @@ func (s *Scanner) ScanRoot(ctx context.Context, root config.LibraryRoot) error {
 	}
 
 	walkErr := filepath.WalkDir(root.Path, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if skipDirNames[strings.ToLower(d.Name())] {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+		if skipFileRe.MatchString(d.Name()) {
+			return nil
 		}
 		if !library.MediaFileExts[strings.ToLower(filepath.Ext(path))] {
 			return nil
@@ -403,10 +427,34 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 	// Unidentified items go to the metadata worker (no-op without a
 	// TMDB key; the worker also dedups naturally via SetMetadata).
 	if err == nil && it != nil && it.TMDBID == 0 && s.meta != nil {
-		s.meta.Enqueue(*it)
+		// Folder structure is the authoritative series identity for TV:
+		// "/TV/Bleach/Season 17/file.mkv" → series "Bleach", season 17 —
+		// regardless of how the filename itself is written. Anime files
+		// without SxxExx markers get an absolute-episode hint instead
+		// ("[Group] Show - 362" → E362).
+		hint := metadata.IdentifyHint{}
+		if kind == library.KindEpisode {
+			if rel, rerr := filepath.Rel(root.Path, path); rerr == nil {
+				comps := strings.Split(rel, string(filepath.Separator))
+				if len(comps) >= 2 {
+					folder := metadata.ParseFilename(comps[0])
+					hint.Series = folder.Title
+					if season := metadata.SeasonFromDir(comps[len(comps)-2]); season > 0 {
+						hint.Season = season
+					}
+				}
+			}
+			base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			if !episodeMarkerRe.MatchString(base) {
+				hint.AbsEpisode = metadata.ParseAbsoluteEpisode(base)
+			}
+		}
+		s.meta.EnqueueHint(*it, hint)
 	}
 	return err
 }
+
+var episodeMarkerRe = regexp.MustCompile(`(?i)\bs\d{1,2}\s*e\d{1,4}\b`)
 
 // ContentHash is the item's identity: sha256(size ‖ head 8MiB ‖ tail 8MiB).
 // Survives renames, moves, and remounts. TODO: blake3 for speed.

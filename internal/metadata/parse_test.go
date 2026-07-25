@@ -41,3 +41,40 @@ func TestParseFilenameEpisodeDisplayName(t *testing.T) {
 		t.Fatalf("got %+v", p)
 	}
 }
+
+func TestParseAbsoluteEpisode(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"[SubsPlease] Bleach - 362 (1080p) [ABCD1234]", 362},
+		{"[Erai-raws] One Piece - 1100 (1080p)[Multiple Subtitle]", 1100},
+		{"Show Name - 042", 42},
+		{"Bleach - 17 v2", 17},
+		// No dash-counter → no episode. Year-shaped numbers are excluded.
+		{"Movie Name 2012 1080p", 0},
+		{"Some Show - 2012", 0},
+		{"Bleach S17E24 1080p", 0},
+		{"Plain Title", 0},
+	}
+	for _, c := range cases {
+		if got := ParseAbsoluteEpisode(c.in); got != c.want {
+			t.Errorf("ParseAbsoluteEpisode(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSeasonFromDir(t *testing.T) {
+	cases := map[string]int{
+		"Season 3":       3,
+		"season 03":      3,
+		"Season 17":      17,
+		"Bleach":         0,
+		"Season of Mist": 0,
+	}
+	for dir, want := range cases {
+		if got := SeasonFromDir(dir); got != want {
+			t.Errorf("SeasonFromDir(%q) = %d, want %d", dir, got, want)
+		}
+	}
+}

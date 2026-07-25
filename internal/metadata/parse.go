@@ -21,6 +21,14 @@ var (
 	sepRe = regexp.MustCompile(`[\._]+`)
 	// Trailing year, optionally bracketed: "Title (2009)" / "Title.2009".
 	trailingYearRe = regexp.MustCompile(`^(.*?)\s*[\(\[]?\b((?:19|20)\d{2})\b[\)\]]?\s*$`)
+	// Absolute episode numbering, fansub-style: "[Group] Show - 362 (1080p)
+	// [ABCD1234]" / "Show - 042". Anime libraries number long-running shows
+	// absolutely instead of SxxExx. TV context only — never apply to movies.
+	absEpisodeRe = regexp.MustCompile(`[-–—]\s*(\d{1,4})(?:\s*v\d+)?\s*$`)
+	// "Season 3" / "season 03" directory names.
+	seasonDirRe = regexp.MustCompile(`(?i)\bseason\s*(\d{1,2})\b`)
+	// Trailing checksum/crc bracket: "[ABCD1234]" / "(1080p)" leftovers.
+	trailingBracketRe = regexp.MustCompile(`[\[\(][^\[\]\(\)]*[\]\)]\s*$`)
 )
 
 // Parsed is the identification hint extracted from a media filename.
@@ -71,6 +79,49 @@ func ParseFilename(base string) Parsed {
 	}
 	p.Title = work
 	return p
+}
+
+// ParseAbsoluteEpisode extracts an absolute episode number from fansub-style
+// names ("[SubsPlease] Bleach - 362 (1080p) [ABCD1234]" → 362). Returns 0
+// when there is no unambiguous trailing " - NNN" counter. TV libraries only:
+// a dash-number at the end of a MOVIE name is far more likely part of the
+// title, so callers must gate on library kind. Year-shaped numbers
+// (1900–2099) are excluded — those are years, not episode counters.
+func ParseAbsoluteEpisode(base string) int {
+	work := sepRe.ReplaceAllString(base, " ")
+	if m := tagRe.FindStringIndex(work); m != nil {
+		work = work[:m[0]]
+	}
+	// A tag cut can leave the opening bracket behind ("- 362 ("), and
+	// dashes/spaces around it — trim before matching the counter.
+	work = strings.TrimRight(work, "([{ -–—._")
+	work = strings.TrimSpace(work)
+	// Drop trailing bracket groups: "[ABCD1234]", "(BD 1080p)" leftovers.
+	for {
+		next := strings.TrimSpace(trailingBracketRe.ReplaceAllString(work, ""))
+		if next == work {
+			break
+		}
+		work = next
+	}
+	m := absEpisodeRe.FindStringSubmatch(work)
+	if m == nil {
+		return 0
+	}
+	n := atoi(m[1])
+	if n == 0 || (n >= 1900 && n <= 2099) {
+		return 0
+	}
+	return n
+}
+
+// SeasonFromDir extracts a season number from a directory name
+// ("Season 3" → 3, "Season 03" → 3). Returns 0 when absent.
+func SeasonFromDir(dir string) int {
+	if m := seasonDirRe.FindStringSubmatch(dir); m != nil {
+		return atoi(m[1])
+	}
+	return 0
 }
 
 func atoi(s string) int {

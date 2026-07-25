@@ -15,14 +15,29 @@ import (
 	"github.com/lumina-media/lumina/internal/library"
 )
 
+// IdentifyHint carries folder-structure knowledge from the scanner that a
+// bare filename cannot express: the series folder's cleaned title, the
+// "Season N" directory's number, and an absolute episode number for
+// fansub-style anime files with no SxxExx marker.
+type IdentifyHint struct {
+	Series     string
+	Season     int
+	AbsEpisode int
+}
+
+type identifyReq struct {
+	it   library.Item
+	hint IdentifyHint
+}
+
 type Worker struct {
 	tmdb  *Client
 	store library.Store
-	queue chan library.Item
+	queue chan identifyReq
 }
 
 func NewWorker(tmdb *Client, store library.Store) *Worker {
-	return &Worker{tmdb: tmdb, store: store, queue: make(chan library.Item, 512)}
+	return &Worker{tmdb: tmdb, store: store, queue: make(chan identifyReq, 512)}
 }
 
 // Available reports whether the worker can identify (TMDB key present).
@@ -31,11 +46,16 @@ func (w *Worker) Available() bool { return w != nil && w.tmdb.Available() }
 // Enqueue schedules identification. Non-blocking; duplicates are cheap
 // (SetMetadata is idempotent for the same TMDB result).
 func (w *Worker) Enqueue(it library.Item) {
+	w.EnqueueHint(it, IdentifyHint{})
+}
+
+// EnqueueHint schedules identification with scanner-supplied folder hints.
+func (w *Worker) EnqueueHint(it library.Item, hint IdentifyHint) {
 	if !w.tmdb.Available() {
 		return
 	}
 	select {
-	case w.queue <- it:
+	case w.queue <- identifyReq{it: it, hint: hint}:
 	default:
 		log.Printf("metadata: queue full, dropped %s", it.ID)
 	}
@@ -100,45 +120,65 @@ func (w *Worker) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case it := <-w.queue:
+		case req := <-w.queue:
 			<-rate.C
 			func() {
 				// Identification must never kill the server: a bad filename,
 				// a TMDB oddity, or a parser bug is one item, not a crash loop.
 				defer func() {
 					if r := recover(); r != nil {
-						log.Printf("metadata: identify %s (%s): panic: %v", it.ID, it.Title, r)
+						log.Printf("metadata: identify %s (%s): panic: %v", req.it.ID, req.it.Title, r)
 					}
 				}()
-				if err := w.identify(ctx, it); err != nil {
-					log.Printf("metadata: identify %s (%s): %v", it.ID, it.Title, err)
+				if err := w.identify(ctx, req.it, req.hint); err != nil {
+					log.Printf("metadata: identify %s (%s): %v", req.it.ID, req.it.Title, err)
 				}
 			}()
 		}
 	}
 }
 
-func (w *Worker) identify(ctx context.Context, it library.Item) error {
+func (w *Worker) identify(ctx context.Context, it library.Item, hint IdentifyHint) error {
 	if len(it.Paths) == 0 {
 		return nil
 	}
 	base := strings.TrimSuffix(filepath.Base(it.Paths[0]), filepath.Ext(it.Paths[0]))
 	parsed := ParseFilename(base)
+
+	if it.Kind == library.KindEpisode || parsed.Episode > 0 || hint.AbsEpisode > 0 {
+		// The series folder outranks the filename prefix as the search title
+		// — folders follow Plex conventions, filenames follow release-group
+		// whims. Absolute-numbered anime gets its episode number here.
+		if parsed.Episode == 0 && hint.AbsEpisode > 0 {
+			parsed.Episode = hint.AbsEpisode
+			parsed.Season = hint.Season // 0 unless a "Season N" dir said otherwise
+		}
+		if parsed.Season == 0 && hint.Season > 0 {
+			parsed.Season = hint.Season
+		}
+		title := parsed.Title
+		if hint.Series != "" {
+			title = hint.Series
+		}
+		if title == "" {
+			return nil
+		}
+		m, err := w.tmdb.IdentifySeries(ctx, title)
+		if err != nil || m == nil {
+			return err
+		}
+		// Episode items display as "Series Name S02E04 · The Last Dance"
+		// (or "Series Name E362" for absolute numbering).
+		if parsed.Episode > 0 {
+			m.Title = episodeDisplayTitle(m.Title, parsed)
+		}
+		return w.store.SetMetadata(it.ID, *m)
+	}
+
 	if parsed.Title == "" {
 		return nil
 	}
-
-	var m *library.Metadata
-	var err error
-	if it.Kind == library.KindEpisode || parsed.Episode > 0 {
-		m, err = w.tmdb.IdentifySeries(ctx, parsed.Title)
-		// Episode items display as "Series Name S02E04 · The Last Dance".
-		if m != nil && parsed.Episode > 0 {
-			m.Title = episodeDisplayTitle(m.Title, parsed)
-		}
-	} else {
-		m, err = w.tmdb.IdentifyMovie(ctx, parsed.Title, parsed.Year)
-	}
+	m, err := w.tmdb.IdentifyMovie(ctx, parsed.Title, parsed.Year)
 	if err != nil || m == nil {
 		return err
 	}
@@ -146,5 +186,8 @@ func (w *Worker) identify(ctx context.Context, it library.Item) error {
 }
 
 func episodeLabel(p Parsed) string {
-	return fmt.Sprintf("S%02dE%02d", p.Season, p.Episode)
+	if p.Season > 0 {
+		return fmt.Sprintf("S%02dE%02d", p.Season, p.Episode)
+	}
+	return fmt.Sprintf("E%02d", p.Episode)
 }
