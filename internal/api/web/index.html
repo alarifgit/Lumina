@@ -55,13 +55,29 @@
   <div id="player-bar">
     <span id="player-title"></span>
     <span id="player-mode" class="badge"></span>
-    <select id="cc-select" class="hidden" title="Subtitles"></select>
     <label id="force-transcode-label">
       <input type="checkbox" id="force-transcode"> force transcode
     </label>
     <button id="player-close" aria-label="Close player">✕</button>
   </div>
-  <video id="video" controls autoplay crossorigin="anonymous"></video>
+  <video id="video" autoplay crossorigin="anonymous"></video>
+  <div id="player-controls">
+    <div id="seek-bar" aria-label="Seek">
+      <div id="seek-buffered"></div>
+      <div id="seek-played"></div>
+    </div>
+    <div id="controls-row">
+      <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)">▶</button>
+      <button id="pc-back" title="Back 10 seconds (←)">−10</button>
+      <button id="pc-fwd" title="Forward 10 seconds (→)">+10</button>
+      <span id="pc-time">0:00 / 0:00</span>
+      <span class="pc-spacer"></span>
+      <select id="cc-select" class="hidden" title="Subtitles"></select>
+      <button id="pc-rate" title="Playback speed">1×</button>
+      <input id="pc-volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
+      <button id="pc-full" aria-label="Fullscreen" title="Fullscreen (f)">⛶</button>
+    </div>
+  </div>
   <details id="media-details"><summary>Media info</summary><p id="media-overview"></p><pre id="media-info-json"></pre></details>
 </div>
 

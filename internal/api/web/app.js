@@ -27,6 +27,16 @@ const playerMode = document.getElementById("player-mode");
 const mediaInfoJson = document.getElementById("media-info-json");
 const forceTranscode = document.getElementById("force-transcode");
 const ccSelect = document.getElementById("cc-select");
+const pcPlay = document.getElementById("pc-play");
+const pcBack = document.getElementById("pc-back");
+const pcFwd = document.getElementById("pc-fwd");
+const pcTime = document.getElementById("pc-time");
+const pcRate = document.getElementById("pc-rate");
+const pcVolume = document.getElementById("pc-volume");
+const pcFull = document.getElementById("pc-full");
+const seekBar = document.getElementById("seek-bar");
+const seekPlayed = document.getElementById("seek-played");
+const seekBuffered = document.getElementById("seek-buffered");
 const headerEl = document.querySelector("header");
 
 window.addEventListener("scroll", () => {
@@ -178,6 +188,10 @@ async function loadLibraries() {
     const btn = document.createElement("button");
     btn.textContent = `${lib.name} (${lib.items})`;
     btn.title = `${lib.path} — watcher: ${lib.watcher}`;
+    // loadHome() rewrites the count once items are known: TV libraries show
+    // a SERIES count (Plex-style), not raw episode files.
+    btn.dataset.lib = lib.name;
+    btn.dataset.kind = lib.kind || "movies";
     btn.onclick = () => {
       setActiveNav(btn);
       loadItems(lib);
@@ -344,6 +358,23 @@ function groupBySeries(episodes) {
   });
 }
 
+// Nav badge counts: episodes → series count (matches the Recently Added TV
+// rail), movies/music → file count. Called from loadHome once items are in.
+function updateNavCounts(visible) {
+  const byLib = new Map();
+  for (const it of visible) {
+    if (!byLib.has(it.library)) byLib.set(it.library, []);
+    byLib.get(it.library).push(it);
+  }
+  nav.querySelectorAll("button[data-lib]").forEach((btn) => {
+    const its = byLib.get(btn.dataset.lib) || [];
+    const n = btn.dataset.kind === "tv"
+      ? new Set(its.map(seriesKey)).size
+      : its.length;
+    btn.textContent = `${btn.dataset.lib} (${n})`;
+  });
+}
+
 async function loadHome() {
   activeLib = null;
   grid.className = "home";
@@ -355,6 +386,7 @@ async function loadHome() {
 
   const visible = (items || []).filter((it) => it.state !== "missing");
   visible.forEach((it) => itemById.set(it.id, it));
+  updateNavCounts(visible);
   if (visible.length === 0) {
     grid.innerHTML = `<div class="home-empty"><img class="empty-emblem" src="/brand/emblem-512.png" alt=""><br>Nothing here yet — add a library with ⚙, then let Lumina scan.</div>`;
     return;
@@ -415,6 +447,35 @@ async function loadHome() {
       if (it) play(it);
     };
   });
+  enhanceRails();
+}
+
+// Plex/Netflix-style rail paging: glass ‹ › wedges at the rail edges that
+// scroll ~one viewport per click, hidden at the scroll ends.
+function enhanceRails() {
+  grid.querySelectorAll(".rail").forEach((rail) => {
+    const track = rail.querySelector(".rail-track");
+    if (!track || rail.querySelector(".rail-nav")) return;
+    const prev = document.createElement("button");
+    prev.className = "rail-nav prev off";
+    prev.innerHTML = "‹";
+    prev.setAttribute("aria-label", "Scroll back");
+    const next = document.createElement("button");
+    next.className = "rail-nav next";
+    next.innerHTML = "›";
+    next.setAttribute("aria-label", "Scroll forward");
+    const page = (dir) =>
+      track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: "smooth" });
+    prev.onclick = () => page(-1);
+    next.onclick = () => page(1);
+    const sync = () => {
+      prev.classList.toggle("off", track.scrollLeft <= 4);
+      next.classList.toggle("off", track.scrollLeft + track.clientWidth >= track.scrollWidth - 4);
+    };
+    track.addEventListener("scroll", sync, { passive: true });
+    rail.append(prev, next);
+    requestAnimationFrame(sync);
+  });
 }
 
 // --- playback --------------------------------------------------------------------
@@ -440,6 +501,8 @@ function absolutePositionS() { return sessionOffsetS + video.currentTime; }
 function stopPlayback() {
   reportPlayhead(true); // final flush before teardown
   clearTimeout(seekRestartTimer);
+  clearTimeout(idleTimer);
+  overlay.classList.remove("idle");
   if (currentHls) { currentHls.destroy(); currentHls = null; }
   video.pause();
   video.querySelectorAll("track").forEach((t) => t.remove());
@@ -457,6 +520,13 @@ async function play(item) {
   lastReportAt = 0;
   playerTitle.textContent = item.title;
   overlay.classList.remove("hidden");
+  pcRate.textContent = "1×";
+  pcVolume.value = String(video.volume);
+  seekPlayed.style.width = "0";
+  seekBuffered.style.width = "0";
+  pcTime.textContent = "0:00 / 0:00";
+  syncPlayButton();
+  pokeControls();
   forceTranscode.onchange = () => play(item);
 
   // Resume point from the journal: skip intros (<5s) and finished items.
@@ -614,6 +684,139 @@ function reportPlayhead(force) {
     }),
   }).catch(() => {}); // reporting must never break playback
 }
+
+// --- custom player chrome -----------------------------------------------------
+// Native controls are off; the bar below is the whole interface. Times are
+// always shown ABSOLUTE (HLS sessions start at an offset — the raw
+// video.currentTime would under-report after a seek-restart).
+
+function fmtClock(s) {
+  if (!isFinite(s) || s < 0) s = 0;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  return (h > 0 ? `${h}:${String(m).padStart(2, "0")}` : String(m)) +
+    `:${String(sec).padStart(2, "0")}`;
+}
+
+function displayPositionS() { return sessionOffsetS + (video.currentTime || 0); }
+function displayDurationS() { return absoluteDurationS || video.duration || 0; }
+
+function togglePlay() {
+  if (video.paused) video.play().catch(() => {});
+  else video.pause();
+}
+
+function syncPlayButton() {
+  pcPlay.textContent = video.paused ? "▶" : "⏸";
+}
+
+// Seek in absolute terms; restarts the HLS session when the target is past
+// what FFmpeg has produced (the seek-bar equivalent of restart-on-seek).
+function seekToAbsolute(targetAbs) {
+  const dur = displayDurationS();
+  if (!dur || !currentItem) return;
+  targetAbs = Math.min(Math.max(targetAbs, 0), Math.max(dur - 0.5, 0));
+  if (!isHls) {
+    video.currentTime = targetAbs;
+    return;
+  }
+  const sessionDur = video.duration || 0;
+  const rel = targetAbs - sessionOffsetS;
+  if (rel > sessionDur) {
+    clearTimeout(seekRestartTimer);
+    startHls(currentItem, targetAbs);
+  } else {
+    // Within the produced range: the "seeking" listener decides whether a
+    // restart is needed (target beyond the buffered frontier).
+    video.currentTime = Math.max(0, Math.min(rel, sessionDur));
+  }
+}
+
+function seekBy(deltaS) { seekToAbsolute(displayPositionS() + deltaS); }
+
+function updateSeekUI() {
+  const dur = displayDurationS();
+  const pos = displayPositionS();
+  if (dur > 0) {
+    seekPlayed.style.width = `${Math.min(100, (pos / dur) * 100)}%`;
+    let bufEndAbs = 0;
+    if (video.buffered.length > 0) {
+      bufEndAbs = video.buffered.end(video.buffered.length - 1);
+      if (isHls) bufEndAbs += sessionOffsetS;
+      bufEndAbs = Math.max(bufEndAbs, pos);
+    }
+    seekBuffered.style.width = `${Math.min(100, (bufEndAbs / dur) * 100)}%`;
+  }
+  pcTime.textContent = `${fmtClock(pos)} / ${fmtClock(dur)}`;
+}
+
+video.addEventListener("timeupdate", updateSeekUI);
+video.addEventListener("progress", updateSeekUI);
+video.addEventListener("durationchange", updateSeekUI);
+video.addEventListener("play", syncPlayButton);
+video.addEventListener("pause", syncPlayButton);
+video.addEventListener("volumechange", () => {
+  pcVolume.value = video.muted ? "0" : String(video.volume);
+});
+
+// Scrubbing: drag anywhere on the bar, pointer-captured so fast moves
+// outside the strip keep tracking.
+function fractionFromEvent(e) {
+  const r = seekBar.getBoundingClientRect();
+  return Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+}
+seekBar.addEventListener("pointerdown", (e) => {
+  seekBar.setPointerCapture(e.pointerId);
+  seekToAbsolute(fractionFromEvent(e) * displayDurationS());
+});
+seekBar.addEventListener("pointermove", (e) => {
+  if (e.buttons) seekToAbsolute(fractionFromEvent(e) * displayDurationS());
+});
+
+pcPlay.onclick = togglePlay;
+video.addEventListener("click", togglePlay);
+pcBack.onclick = () => seekBy(-10);
+pcFwd.onclick = () => seekBy(10);
+
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
+pcRate.onclick = () => {
+  const i = RATES.indexOf(video.playbackRate);
+  const next = RATES[(i + 1) % RATES.length];
+  video.playbackRate = next;
+  pcRate.textContent = `${next}×`;
+};
+
+pcVolume.oninput = () => {
+  video.muted = false;
+  video.volume = Number(pcVolume.value);
+};
+
+pcFull.onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else overlay.requestFullscreen().catch(() => {});
+};
+
+// Auto-hide: 3s of stillness while playing fades the chrome and the cursor;
+// any movement, or pausing, brings it back.
+let idleTimer = null;
+function pokeControls() {
+  overlay.classList.remove("idle");
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (!video.paused && !overlay.classList.contains("hidden")) {
+      overlay.classList.add("idle");
+    }
+  }, 3000);
+}
+overlay.addEventListener("mousemove", pokeControls);
+overlay.addEventListener("pointerdown", pokeControls);
+overlay.addEventListener("touchstart", pokeControls, { passive: true });
+video.addEventListener("pause", () => {
+  overlay.classList.remove("idle");
+  clearTimeout(idleTimer);
+});
+video.addEventListener("play", pokeControls);
 
 // --- library manager -----------------------------------------------------------
 
@@ -1039,7 +1242,26 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeCardMenu();
     closeModal();
+    return;
   }
+  // Player shortcuts — only while the overlay is up, and never while
+  // typing in the subtitle select or a form field.
+  if (overlay.classList.contains("hidden")) return;
+  const tag = (e.target.tagName || "").toUpperCase();
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  switch (e.key) {
+    case " ":
+    case "k":
+      e.preventDefault(); // space must not page-scroll underneath
+      togglePlay();
+      break;
+    case "ArrowLeft": seekBy(-10); break;
+    case "ArrowRight": seekBy(10); break;
+    case "f": pcFull.click(); break;
+    case "m": video.muted = !video.muted; break;
+    default: return;
+  }
+  pokeControls();
 });
 
 async function openInfoModal(it) {

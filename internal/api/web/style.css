@@ -271,6 +271,97 @@ nav button.active {
   font-size: 1.05rem;
   text-shadow: 0 1px 2px #000;
 }
+
+/* --- custom control chrome (native controls are off) -------------------- */
+#player-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 2.5rem 1.4rem 0.9rem;
+  background: linear-gradient(to top, rgba(4, 7, 12, 0.88), rgba(4, 7, 12, 0));
+  transition: opacity 240ms ease;
+}
+#player-bar {
+  position: relative;
+  z-index: 2;
+  transition: opacity 240ms ease;
+}
+/* Auto-hide: everything but the picture fades, cursor included. */
+#player-overlay.idle { cursor: none; }
+#player-overlay.idle #player-controls,
+#player-overlay.idle #player-bar {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#seek-bar {
+  position: relative;
+  height: 1.4rem;
+  cursor: pointer;
+  touch-action: none;
+}
+#seek-bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  transition: transform 140ms ease;
+}
+#seek-bar:hover::before { transform: translateY(-50%) scaleY(1.75); }
+#seek-buffered, #seek-played {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  width: 0;
+  pointer-events: none;
+  transition: transform 140ms ease;
+}
+#seek-bar:hover #seek-buffered, #seek-bar:hover #seek-played { transform: translateY(-50%) scaleY(1.75); }
+#seek-buffered { background: rgba(255, 255, 255, 0.32); }
+#seek-played { background: var(--accent, #af915f); }
+
+#controls-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding-top: 0.35rem;
+}
+#controls-row button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: var(--text);
+  min-width: 2.3rem;
+  height: 2.3rem;
+  padding: 0 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 160ms ease, transform 160ms ease;
+}
+#controls-row button:hover { background: rgba(255, 255, 255, 0.2); transform: scale(1.05); }
+#pc-play { font-size: 1rem; min-width: 2.6rem; height: 2.6rem; }
+#pc-time {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: 0.3rem;
+}
+.pc-spacer { flex: 1; }
+#pc-volume {
+  width: 5.2rem;
+  accent-color: var(--accent, #af915f);
+  cursor: pointer;
+}
 #media-details { padding: 0 1.2rem 1rem; color: var(--muted); font-size: 0.75rem; }
 #media-details pre { max-height: 30vh; overflow: auto; }
 
@@ -571,13 +662,13 @@ nav button.active {
 .hero .text-button:hover { background: rgba(255, 255, 255, 0.22); transform: scale(1.03); }
 .hero .text-button::before { content: none; }
 
-.rail { margin-top: 2.2rem; }
+.rail { margin-top: 2.2rem; position: relative; }
 .rail-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
-  margin: 0 1.4rem;
+  margin: 0 clamp(1rem, 4vw, 3rem);
   padding-top: 1rem;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -589,13 +680,42 @@ nav button.active {
   grid-auto-columns: minmax(220px, 24vw);
   gap: 1rem;
   overflow-x: auto;
-  padding: 1rem 1.4rem 1.4rem;
-  scroll-snap-type: x mandatory;
+  padding: 1rem clamp(1rem, 4vw, 3rem) 1.4rem;
+  /* scroll-padding keeps the first/last card clear of the edge when the
+     browser snap-adjusts; mandatory snapping itself is off (free film-strip
+     scrolling like Plex, arrows do the paging). */
+  scroll-padding: 0 clamp(1rem, 4vw, 3rem);
+  scroll-snap-type: x proximity;
   /* Seamless film-strip scrolling: no visible scrollbar chrome. */
   scrollbar-width: none;
 }
 .rail-track::-webkit-scrollbar { display: none; }
 .rail-track.posters { grid-auto-columns: minmax(160px, 13vw); }
+
+/* Rail paging arrows: glass wedges at the edges, visible on rail hover,
+   disabled at the scroll ends. */
+.rail-nav {
+  position: absolute;
+  top: 3.3rem;
+  bottom: 0.6rem;
+  width: 3rem;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  border: 0;
+  cursor: pointer;
+  font-size: 1.9rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  background: transparent;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.rail-nav.prev { left: 0; background: linear-gradient(to right, rgba(11, 18, 32, 0.9), rgba(11, 18, 32, 0)); }
+.rail-nav.next { right: 0; background: linear-gradient(to left, rgba(11, 18, 32, 0.9), rgba(11, 18, 32, 0)); }
+.rail:hover .rail-nav { opacity: 1; }
+.rail-nav.off { opacity: 0 !important; pointer-events: none; }
 .media-card {
   margin: 0;
   scroll-snap-align: start;
