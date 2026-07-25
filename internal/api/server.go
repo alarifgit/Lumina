@@ -69,6 +69,8 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	// Plex migration import
 	mux.HandleFunc("GET /api/v1/plex/test", s.plexTest)
 	mux.HandleFunc("POST /api/v1/plex/import", s.plexImport)
+	mux.HandleFunc("GET /api/v1/config/plex", s.plexConfigGet)
+	mux.HandleFunc("POST /api/v1/config/plex", s.plexConfigSave)
 
 	// *arr native webhooks + outbound status
 	mux.HandleFunc("POST /hooks/arr", arr.Handler(sc))
@@ -106,14 +108,42 @@ func (s *Server) listLibraries(w http.ResponseWriter, _ *http.Request) {
 		Exists  bool                `json:"exists"`
 	}
 	tiers := s.sc.Tiers()
+
+	// os.Stat on a network mount can block for seconds (NAS spin-up, SMB
+	// reconnect). Sequentially that's one stall PER LIBRARY — 20s+ boots
+	// were seen in the wild. Stat every root concurrently and cap the wait:
+	// the page loads in the time of the SLOWEST mount, not the sum, and a
+	// hung mount degrades to exists=false instead of hanging the UI.
+	type statResult struct {
+		i  int
+		ok bool
+	}
+	ch := make(chan statResult, len(s.cfg.Libraries))
+	for i, root := range s.cfg.Libraries {
+		go func(i int, path string) {
+			_, err := os.Stat(path)
+			ch <- statResult{i, err == nil}
+		}(i, root.Path)
+	}
+	exists := make([]bool, len(s.cfg.Libraries))
+	deadline := time.After(4 * time.Second)
+	for remaining := len(s.cfg.Libraries); remaining > 0; {
+		select {
+		case r := <-ch:
+			exists[r.i] = r.ok
+			remaining--
+		case <-deadline:
+			remaining = 0 // stragglers reported as not-visible
+		}
+	}
+
 	out := []lib{}
-	for _, root := range s.cfg.Libraries {
-		_, statErr := os.Stat(root.Path)
+	for i, root := range s.cfg.Libraries {
 		out = append(out, lib{
 			LibraryRoot: root,
 			Watcher:     tiers[root.Path],
 			Items:       len(s.store.List(root.Name)),
-			Exists:      statErr == nil,
+			Exists:      exists[i],
 		})
 	}
 	writeJSON(w, out)

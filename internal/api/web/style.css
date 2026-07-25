@@ -1241,3 +1241,50 @@ nav button.active { color: #fff; }
 @media (max-width: 640px) {
   .ep-thumb { width: 5.6rem; }
 }
+
+/* --- Lumina icon pack ---------------------------------------------------------
+   Generated line icons (assets/icon-sheet.png → scripts/make_icons.py),
+   used as currentColor masks: every icon inherits its button's text color,
+   so glass pills, gold eyebrows, and green watched badges all tint right. */
+.ic {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  background-color: currentColor;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  vertical-align: -0.16em;
+}
+.ic-play { -webkit-mask-image: url("/icons/ic-play.png"); mask-image: url("/icons/ic-play.png"); }
+.ic-pause { -webkit-mask-image: url("/icons/ic-pause.png"); mask-image: url("/icons/ic-pause.png"); }
+.ic-back10 { -webkit-mask-image: url("/icons/ic-back10.png"); mask-image: url("/icons/ic-back10.png"); }
+.ic-fwd10 { -webkit-mask-image: url("/icons/ic-fwd10.png"); mask-image: url("/icons/ic-fwd10.png"); }
+.ic-fullscreen { -webkit-mask-image: url("/icons/ic-fullscreen.png"); mask-image: url("/icons/ic-fullscreen.png"); }
+.ic-volume { -webkit-mask-image: url("/icons/ic-volume.png"); mask-image: url("/icons/ic-volume.png"); }
+.ic-subtitles { -webkit-mask-image: url("/icons/ic-subtitles.png"); mask-image: url("/icons/ic-subtitles.png"); }
+.ic-settings { -webkit-mask-image: url("/icons/ic-settings.png"); mask-image: url("/icons/ic-settings.png"); }
+.ic-download { -webkit-mask-image: url("/icons/ic-download.png"); mask-image: url("/icons/ic-download.png"); }
+.ic-user { -webkit-mask-image: url("/icons/ic-user.png"); mask-image: url("/icons/ic-user.png"); }
+.ic-close { -webkit-mask-image: url("/icons/ic-close.png"); mask-image: url("/icons/ic-close.png"); }
+.ic-back { -webkit-mask-image: url("/icons/ic-back.png"); mask-image: url("/icons/ic-back.png"); }
+.ic-search { -webkit-mask-image: url("/icons/ic-search.png"); mask-image: url("/icons/ic-search.png"); }
+.ic-info { -webkit-mask-image: url("/icons/ic-info.png"); mask-image: url("/icons/ic-info.png"); }
+.ic-edit { -webkit-mask-image: url("/icons/ic-edit.png"); mask-image: url("/icons/ic-edit.png"); }
+.ic-check { -webkit-mask-image: url("/icons/ic-check.png"); mask-image: url("/icons/ic-check.png"); }
+.ic-flip { transform: scaleX(-1); }
+/* Size adjustments where icons replace emoji glyphs. */
+.card-play .ic { width: 1.05rem; height: 1.05rem; }
+#controls-row .ic { font-size: 1rem; }
+#pc-volume-icon { color: rgba(255, 255, 255, 0.82); width: 1.1rem; height: 1.1rem; }
+.rail-nav .ic { font-size: 1.5rem; }
+.back-button .ic { margin-right: 0.15rem; }
+.watched .ic { width: 0.85rem; height: 0.85rem; vertical-align: 0; }
+.ep-watched .ic { width: 1rem; height: 1rem; vertical-align: 0; }
+#user-badge .ic, .user-chip .ic { margin-right: 0.1rem; }
+.text-button .ic { margin-right: 0.25rem; }
+.ghost-button .ic { margin-right: 0.2rem; }
+.lib-remove .ic { font-size: 0.8rem; }

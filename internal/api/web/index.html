@@ -13,16 +13,16 @@
 <header>
   <h1 id="logo-word"><img id="logo-lockup" src="/brand/wordmark.png" alt="Lumina"></h1>
   <nav id="libraries"></nav>
-  <button id="arr-button" title="Downloads & upcoming">⬇</button>
+  <button id="arr-button" title="Downloads & upcoming"><span class="ic ic-download"></span></button>
   <button id="user-badge" title="Switch user"></button>
-  <button id="libs-button" title="Settings">⚙</button>
+  <button id="libs-button" title="Settings"><span class="ic ic-settings"></span></button>
   <span id="status"></span>
 </header>
 
 <div id="settings-page" class="hidden">
   <div class="settings-head">
     <h2>Settings</h2>
-    <button id="settings-close" aria-label="Close settings" title="Close (Esc)">✕</button>
+    <button id="settings-close" aria-label="Close settings" title="Close (Esc)"><span class="ic ic-close"></span></button>
   </div>
   <div class="settings-body">
     <aside class="settings-nav">
@@ -88,7 +88,7 @@
     <label id="force-transcode-label">
       <input type="checkbox" id="force-transcode"> force transcode
     </label>
-    <button id="player-close" aria-label="Close player">✕</button>
+    <button id="player-close" aria-label="Close player"><span class="ic ic-close"></span></button>
   </div>
   <video id="video" autoplay crossorigin="anonymous"></video>
   <div id="player-controls">
@@ -97,15 +97,16 @@
       <div id="seek-played"></div>
     </div>
     <div id="controls-row">
-      <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)">▶</button>
-      <button id="pc-back" title="Back 10 seconds (←)">−10</button>
-      <button id="pc-fwd" title="Forward 10 seconds (→)">+10</button>
+      <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)"><span class="ic ic-play"></span></button>
+      <button id="pc-back" title="Back 10 seconds (←)"><span class="ic ic-back10"></span></button>
+      <button id="pc-fwd" title="Forward 10 seconds (→)"><span class="ic ic-fwd10"></span></button>
       <span id="pc-time">0:00 / 0:00</span>
       <span class="pc-spacer"></span>
       <select id="cc-select" class="hidden" title="Subtitles"></select>
       <button id="pc-rate" title="Playback speed">1×</button>
+      <span class="ic ic-volume" id="pc-volume-icon"></span>
       <input id="pc-volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
-      <button id="pc-full" aria-label="Fullscreen" title="Fullscreen (f)">⛶</button>
+      <button id="pc-full" aria-label="Fullscreen" title="Fullscreen (f)"><span class="ic ic-fullscreen"></span></button>
     </div>
   </div>
   <details id="media-details"><summary>Media info</summary><p id="media-overview"></p><pre id="media-info-json"></pre></details>

@@ -18,12 +18,14 @@ import (
 
 // IdentifyHint carries folder-structure knowledge from the scanner that a
 // bare filename cannot express: the series folder's cleaned title, the
-// "Season N" directory's number, and an absolute episode number for
-// fansub-style anime files with no SxxExx marker.
+// "Season N" directory's number, an absolute episode number for
+// fansub-style anime files with no SxxExx marker, and the folder's release
+// year — the disambiguator between same-titled series.
 type IdentifyHint struct {
 	Series     string
 	Season     int
 	AbsEpisode int
+	Year       int
 }
 
 type identifyReq struct {
@@ -205,7 +207,7 @@ func (w *Worker) identify(ctx context.Context, it library.Item, hint IdentifyHin
 		if title == "" {
 			return nil
 		}
-		m, err := w.tmdb.IdentifySeries(ctx, title)
+		m, err := w.tmdb.IdentifySeries(ctx, title, hint.Year)
 		if err != nil || m == nil {
 			return err
 		}

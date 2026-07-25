@@ -144,7 +144,12 @@ func (c *Client) searchCandidates(ctx context.Context, kind, query string, year 
 	}
 	q := url.Values{"query": {query}, "include_adult": {"false"}, "language": {c.Language}}
 	if year > 0 {
-		q.Set("year", fmt.Sprint(year))
+		// TMDB names the year filter differently per endpoint.
+		if kind == "tv" {
+			q.Set("first_air_date_year", fmt.Sprint(year))
+		} else {
+			q.Set("year", fmt.Sprint(year))
+		}
 	}
 	var res struct {
 		Results []struct {
@@ -205,22 +210,36 @@ func (c *Client) IdentifyMovie(ctx context.Context, title string, year int) (*li
 	return c.FetchByID(ctx, "movies", pick.id)
 }
 
-// IdentifySeries matches a series title. Exact normalized titles win; when
-// nothing matches exactly, the top search hit is accepted — series searches
-// routinely cross naming schemes (romaji vs English anime titles, "The
-// Office" UK/US), and episodes all share the one series identity, so a
-// rank-1 mistake is cheap to fix once. Episodes inherit the series artwork
-// and genres; per-episode titles arrive in a later phase.
-func (c *Client) IdentifySeries(ctx context.Context, title string) (*library.Metadata, error) {
-	cands, err := c.searchCandidates(ctx, "tv", title, 0)
+// IdentifySeries matches a series title, with an optional folder-year hint.
+// Exact normalized titles win; a known year must match exactly — the year
+// is the disambiguator between same-titled shows (a 2025 thriller vs a
+// 1982 game show), and a rank-1 guess against a contradictory year is how
+// libraries get mislabeled. Only when NO year is known does the top search
+// hit get accepted: series searches routinely cross naming schemes (romaji
+// vs English anime titles), and episodes all share the one series identity,
+// so a rank-1 mistake is cheap to fix once in the fix-match UI.
+func (c *Client) IdentifySeries(ctx context.Context, title string, year int) (*library.Metadata, error) {
+	cands, err := c.searchCandidates(ctx, "tv", title, year)
 	if err != nil {
 		return nil, err
 	}
-	if len(cands) == 0 {
-		return nil, nil
+	pick := decideAutoMatch(title, year, cands)
+	if pick == nil && year > 0 {
+		// First-air years differ by region surprisingly often: retry
+		// without TMDB's year bias, keeping OUR year check.
+		cands, err = c.searchCandidates(ctx, "tv", title, 0)
+		if err != nil {
+			return nil, err
+		}
+		pick = decideAutoMatch(title, year, cands)
 	}
-	pick := decideAutoMatch(title, 0, cands)
 	if pick == nil {
+		if year > 0 {
+			return nil, nil // known year, no exact match → human fix-match
+		}
+		if len(cands) == 0 {
+			return nil, nil
+		}
 		pick = &cands[0]
 	}
 	return c.FetchByID(ctx, "tv", pick.id)

@@ -98,7 +98,12 @@ func HintFor(rootPath, fullPath string, isTV bool) IdentifyHint {
 	if rel, err := filepath.Rel(rootPath, fullPath); err == nil {
 		comps := strings.Split(rel, string(filepath.Separator))
 		if len(comps) >= 2 {
-			h.Series = ParseFilename(comps[0]).Title
+			// "Countdown (2025)" → series "Countdown", year 2025: the folder
+			// year is the disambiguator between same-titled shows (the 2025
+			// thriller vs the 1982 game show), so keep it.
+			parsed := ParseFilename(comps[0])
+			h.Series = parsed.Title
+			h.Year = parsed.Year
 			if season := SeasonFromDir(comps[len(comps)-2]); season > 0 {
 				h.Season = season
 			}

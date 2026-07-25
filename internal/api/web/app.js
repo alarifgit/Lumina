@@ -60,6 +60,9 @@ let activeLib = null;
 // Every rendered item, by id — the context menu looks items up here
 // instead of re-fetching.
 const itemById = new Map();
+// The last home-view item set, so the nav (which can finish loading after
+// the home view at boot) can catch up its badge counts.
+let lastVisibleItems = [];
 
 // Transcode-session timeline state.
 let isHls = false;
@@ -159,7 +162,7 @@ async function loadUsers() {
 
 function renderUserBadge() {
   if (!currentUser) return;
-  userBadge.textContent = `👤 ${currentUser.name}`;
+  userBadge.innerHTML = `<span class="ic ic-user"></span> ${escapeHtml(currentUser.name)}`;
   localStorage.setItem("lumina.user", currentUser.id);
 }
 
@@ -225,11 +228,12 @@ async function loadLibraries() {
     nav.appendChild(btn);
   }
 
-  if (libs.length > 0) homeBtn.click();
-  else {
-    grid.className = "home";
-    grid.innerHTML = `<div class="home-empty"><img class="empty-emblem" src="/brand/emblem-512.png" alt=""><br>No libraries configured.<br>Open ⚙ Libraries to add one — no JSON editing, no restart.</div>`;
-  }
+  // Home is the default active segment; loadHome() runs in parallel at
+  // boot, so no synthetic click here (a click would double-fetch).
+  setActiveNav(homeBtn);
+  // Buttons just materialized — if loadHome already has items, the counts
+  // (and the glider) catch up now instead of waiting for the next visit.
+  if (lastVisibleItems.length > 0) updateNavCounts(lastVisibleItems);
 
   const caps = await api("/api/v1/system/capabilities");
   const enc = Object.entries(caps.encoders || {})
@@ -254,12 +258,13 @@ async function loadItems(lib) {
   activeLib = lib;
   backTarget = () => loadItems(lib); // detail pages return to this library
   closeSettings();
-  grid.className = "";
   const [items, phs] = await Promise.all([
     api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
   ]);
   playheads = phs || {};
+  // Mutate the grid only once the data has arrived (anti-flash).
+  grid.className = "";
   grid.innerHTML = "";
   const visible = (items || []).filter((it) => it.state !== "missing");
   if (visible.length === 0) {
@@ -296,7 +301,7 @@ async function loadItems(lib) {
                  onerror="this.remove()">`
             : `<span class="initials">${posterInitials(g.key)}</span>
                <span class="poster-title">${escapeHtml(g.key)}</span>`}
-          <button class="card-play" aria-label="Play next episode" title="Play next episode">▶</button>
+          <button class="card-play" aria-label="Play next episode" title="Play next episode"><span class="ic ic-play"></span></button>
           <span class="watermark">LUMINA</span>
           ${g.unwatched > 0 ? `<span class="count-badge lib-badge">${g.unwatched}</span>` : ""}
         </div>
@@ -330,9 +335,9 @@ async function loadItems(lib) {
                onerror="this.remove()">`
           : `<span class="initials">${posterInitials(it.title)}</span>
              <span class="poster-title">${it.title}</span>`}
-        <button class="card-play" aria-label="Play" title="Play">▶</button>
+        <button class="card-play" aria-label="Play" title="Play"><span class="ic ic-play"></span></button>
         <span class="watermark">LUMINA</span>
-        ${ph && ph.watched ? `<span class="watched" title="Watched">✓</span>` : ""}
+        ${ph && ph.watched ? `<span class="watched" title="Watched"><span class="ic ic-check"></span></span>` : ""}
         ${pct > 0 && !(ph && ph.watched)
           ? `<div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`
           : ""}
@@ -385,7 +390,7 @@ function homeCard(it, ph, poster = false, label = null) {
     <figure class="media-card" data-id="${it.id}">
       <div class="thumb">
         ${artHtml(it, poster ? "poster" : "backdrop")}
-        <button class="card-play" aria-label="Play" title="Play">▶</button>
+        <button class="card-play" aria-label="Play" title="Play"><span class="ic ic-play"></span></button>
         ${pct > 0 && !(ph && ph.watched) ? `<div class="progress-line"><i style="width:${pct}%"></i></div>` : ""}
         ${label && label.badge ? `<span class="count-badge">${escapeHtml(label.badge)}</span>` : ""}
       </div>
@@ -491,7 +496,7 @@ function openItem(it) {
 }
 
 function detailBackButton() {
-  return `<button class="back-button" id="detail-back">‹ Back</button>`;
+  return `<button class="back-button" id="detail-back"><span class="ic ic-back"></span> Back</button>`;
 }
 
 function wireDetailBack() {
@@ -517,9 +522,9 @@ function openMovieDetail(it) {
         <h2>${escapeHtml(it.title)}</h2>
         <p>${escapeHtml(it.overview || "No synopsis yet — identify this title with Fix match if it was missed.")}</p>
         <div class="detail-actions">
-          <button class="text-button" id="detail-play">▶ ${resumable ? `Resume · ${fmtLeftMs(ph)}` : "Play"}</button>
-          <button class="ghost-button" id="detail-info">ⓘ Media info</button>
-          <button class="ghost-button" id="detail-match">✎ Fix match</button>
+          <button class="text-button" id="detail-play"><span class="ic ic-play"></span> ${resumable ? `Resume · ${fmtLeftMs(ph)}` : "Play"}</button>
+          <button class="ghost-button" id="detail-info"><span class="ic ic-info"></span> Media info</button>
+          <button class="ghost-button" id="detail-match"><span class="ic ic-edit"></span> Fix match</button>
         </div>
       </div>
     </section>`;
@@ -556,7 +561,7 @@ function openSeries(key, anchor) {
         <h2>${escapeHtml(key)}</h2>
         <p>${escapeHtml(rep.overview || "")}</p>
         <div class="detail-actions">
-          <button class="text-button" id="detail-play">▶ ${playheads[next.id] && !playheads[next.id].watched && playheads[next.id].positionMs > 0
+          <button class="text-button" id="detail-play"><span class="ic ic-play"></span> ${playheads[next.id] && !playheads[next.id].watched && playheads[next.id].positionMs > 0
             ? `Resume ${seTag(next)}` : `Play ${seTag(next)}`}</button>
         </div>
       </div>
@@ -598,8 +603,8 @@ function openSeries(key, anchor) {
             ${pct > 0 && !(ph && ph.watched)
               ? `<div class="progress ep-progress"><div class="progress-fill" style="width:${pct}%"></div></div>` : ""}
           </div>
-          ${ph && ph.watched ? `<span class="ep-watched" title="Watched">✓</span>` : ""}
-          <button class="card-play ep-play" aria-label="Play" title="Play">▶</button>
+          ${ph && ph.watched ? `<span class="ep-watched" title="Watched"><span class="ic ic-check"></span></span>` : ""}
+          <button class="card-play ep-play" aria-label="Play" title="Play"><span class="ic ic-play"></span></button>
         </div>`;
     }).join("");
     listEl.querySelectorAll(".ep-row").forEach((row) => {
@@ -653,14 +658,18 @@ async function loadHome() {
   activeLib = null;
   backTarget = null; // home is the root view — detail pages return here
   closeSettings();
-  grid.className = "home";
+  // Don't touch the grid until the data is here: switching class/innerHTML
+  // before the fetch resolves is what caused the flash of broken layout
+  // when changing nav segments.
   const [items, phs] = await Promise.all([
     api("/api/v1/items"),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
   ]);
   playheads = phs || {};
+  grid.className = "home";
 
   const visible = (items || []).filter((it) => it.state !== "missing");
+  lastVisibleItems = visible;
   visible.forEach((it) => itemById.set(it.id, it));
   updateNavCounts(visible);
   if (visible.length === 0) {
@@ -693,7 +702,7 @@ async function loadHome() {
         <div class="eyebrow">${featuredPh ? "Resume" : "Featured"} · ${featured.kind === "episode" ? "Episode" : "Movie"}</div>
         <h2>${escapeHtml(featured.title)}</h2>
         <p>${escapeHtml(featured.overview || "Your library, direct from the source — no cloud account, no Plex pass, no transcode unless it has to.")}</p>
-        <button class="text-button" data-play="${featured.id}">▶ ${featuredPh ? "Resume" : "Play now"}</button>
+        <button class="text-button" data-play="${featured.id}"><span class="ic ic-play"></span> ${featuredPh ? "Resume" : "Play now"}</button>
       </div>
     </section>
     ${resume.length ? `
@@ -737,11 +746,11 @@ function enhanceRails() {
     if (!track || rail.querySelector(".rail-nav")) return;
     const prev = document.createElement("button");
     prev.className = "rail-nav prev off";
-    prev.innerHTML = "‹";
+    prev.innerHTML = '<span class="ic ic-back"></span>';
     prev.setAttribute("aria-label", "Scroll back");
     const next = document.createElement("button");
     next.className = "rail-nav next";
-    next.innerHTML = "›";
+    next.innerHTML = '<span class="ic ic-back ic-flip"></span>';
     next.setAttribute("aria-label", "Scroll forward");
     const page = (dir) =>
       track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: "smooth" });
@@ -989,7 +998,7 @@ function togglePlay() {
 }
 
 function syncPlayButton() {
-  pcPlay.textContent = video.paused ? "▶" : "⏸";
+  pcPlay.innerHTML = `<span class="ic ${video.paused ? "ic-play" : "ic-pause"}"></span>`;
 }
 
 // Seek in absolute terms; restarts the HLS session when the target is past
@@ -1130,6 +1139,7 @@ async function openSettings(sectionId) {
       libsStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
     }
   } else if (sectionId === "sec-integrations") {
+    prefillPlexConfig();
     loadArrStatus();
   } else if (sectionId === "sec-playback") {
     renderCapabilities();
@@ -1181,7 +1191,7 @@ async function renderUsers() {
     users = await api("/api/v1/users");
     el.innerHTML = users.map((u) =>
       `<button class="user-chip${currentUser && u.id === currentUser.id ? " active" : ""}"
-         data-uid="${u.id}">👤 ${escapeHtml(u.name)}</button>`).join("");
+         data-uid="${u.id}"><span class="ic ic-user"></span> ${escapeHtml(u.name)}</button>`).join("");
     el.querySelectorAll(".user-chip").forEach((chip) => {
       chip.onclick = () => {
         currentUser = users.find((u) => u.id === chip.dataset.uid) || currentUser;
@@ -1226,7 +1236,7 @@ function libraryRow(lib = { name: "", path: "", kind: "movies" }) {
       <button class="lib-up" title="Move up">▲</button>
       <button class="lib-down" title="Move down">▼</button>
     </span>
-    <button class="lib-remove" title="Remove">✕</button>`;
+    <button class="lib-remove" title="Remove"><span class="ic ic-close"></span></button>`;
   row.querySelector(".lib-remove").onclick = () => row.remove();
   // Row order IS the library order — it persists on save and drives the
   // nav order, home rails, and scan order.
@@ -1274,6 +1284,7 @@ libsSaveButton.onclick = async () => {
     libsStatus.innerHTML = `<span class="ok">Saved ${saved.length} librar${saved.length === 1 ? "y" : "ies"} — scanning…</span>${missingPathNote(saved)}`;
     renderLibraryRows(saved);
     await loadLibraries();
+    refreshCurrentView(); // loadLibraries no longer auto-loads the home view
   } catch (e) {
     libsStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
   } finally {
@@ -1332,9 +1343,30 @@ const plexApplyBtn = document.getElementById("plex-apply");
 plexUrl.value = localStorage.getItem("lumina.plexUrl") || "";
 plexToken.value = localStorage.getItem("lumina.plexToken") || "";
 
+// Server-saved connection wins over the browser's memory: the settings UI
+// prefills from lumina.json whenever the Integrations section opens.
+async function prefillPlexConfig() {
+  try {
+    const cfg = await api("/api/v1/config/plex");
+    if (cfg) {
+      if (cfg.url) plexUrl.value = cfg.url;
+      if (cfg.token) plexToken.value = cfg.token;
+    }
+  } catch { /* older server or no config — localStorage values stay */ }
+}
+
+function savePlexConfig() {
+  api("/api/v1/config/plex", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: plexUrl.value.trim(), token: plexToken.value.trim() }),
+  }).catch(() => {}); // saving must never block a sync run
+}
+
 function plexBody(apply) {
   localStorage.setItem("lumina.plexUrl", plexUrl.value);
   localStorage.setItem("lumina.plexToken", plexToken.value);
+  savePlexConfig(); // persist server-side too — survives browser/device changes
   return {
     url: plexUrl.value,
     token: plexToken.value,
@@ -1404,7 +1436,9 @@ document.getElementById("player-close").onclick = () => {
 (async () => {
   try {
     await loadUsers();
-    await loadLibraries();
+    // Libraries (nav) and home (content) load in parallel — the nav catches
+    // up its counts via lastVisibleItems when it lands second.
+    await Promise.all([loadLibraries(), loadHome()]);
   } catch (e) {
     grid.innerHTML = `<div id="empty">Failed to reach Lumina API: ${e.message}</div>`;
   }
@@ -1446,7 +1480,7 @@ function closeCardMenu() {
 function menuItem(label, fn) {
   const b = document.createElement("button");
   b.type = "button";
-  b.textContent = label;
+  b.innerHTML = label; // labels carry Lumina icon spans
   b.onclick = () => {
     closeCardMenu();
     fn();
@@ -1461,10 +1495,10 @@ function openCardMenu(x, y, it) {
   cardMenu = document.createElement("div");
   cardMenu.className = "card-menu";
   cardMenu.append(
-    menuItem(`▶ Play ${ph && !ph.watched && ph.positionMs > 0 ? "(resume)" : ""}`, () => play(it)),
-    menuItem("ⓘ Media info", () => openInfoModal(it)),
-    menuItem("✎ Fix match…", () => openMatchModal(it)),
-    menuItem("↻ Re-identify", async () => {
+    menuItem(`<span class="ic ic-play"></span> Play ${ph && !ph.watched && ph.positionMs > 0 ? "(resume)" : ""}`, () => play(it)),
+    menuItem(`<span class="ic ic-info"></span> Media info`, () => openInfoModal(it)),
+    menuItem(`<span class="ic ic-edit"></span> Fix match…`, () => openMatchModal(it)),
+    menuItem("Re-identify", async () => {
       try {
         await api(`/api/v1/items/${it.id}/metadata/refresh`, { method: "POST" });
         toast("Re-identification queued");
@@ -1475,19 +1509,19 @@ function openCardMenu(x, y, it) {
   );
   if (currentUser) {
     cardMenu.appendChild(menuItem(
-      ph && ph.watched ? "○ Mark unwatched" : "✓ Mark watched",
+      ph && ph.watched ? "Mark unwatched" : `<span class="ic ic-check"></span> Mark watched`,
       () => toggleWatched(it, !(ph && ph.watched)),
     ));
     if (ph && !ph.watched && ph.positionMs > 0) {
       // Plex's "Remove from Continue Watching": same journal write as
       // unwatched — zero position with a nonzero duration reads as
       // "no resume point".
-      cardMenu.appendChild(menuItem("✕ Remove from Continue Watching",
+      cardMenu.appendChild(menuItem(`<span class="ic ic-close"></span> Remove from Continue Watching`,
         () => toggleWatched(it, false)));
     }
   }
   if (it.paths && it.paths[0]) {
-    cardMenu.appendChild(menuItem("⧉ Copy file path", async () => {
+    cardMenu.appendChild(menuItem("Copy file path", async () => {
       try {
         await navigator.clipboard.writeText(it.paths[0]);
         toast("Path copied");
@@ -1561,7 +1595,7 @@ function openModal(titleText) {
     <div class="modal">
       <div class="modal-head">
         <h3></h3>
-        <button type="button" class="modal-close" title="Close">✕</button>
+        <button type="button" class="modal-close" title="Close"><span class="ic ic-close"></span></button>
       </div>
       <div class="modal-body"></div>
     </div>`;

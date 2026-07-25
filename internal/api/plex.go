@@ -4,9 +4,35 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"github.com/lumina-media/lumina/internal/config"
 	"github.com/lumina-media/lumina/internal/plex"
 )
+
+// GET /api/v1/config/plex — the saved Plex connection, so the settings UI
+// can prefill. Local single-user server: the token round-trips in full.
+func (s *Server) plexConfigGet(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.cfg.Plex)
+}
+
+// POST /api/v1/config/plex — persist URL + token to lumina.json (atomic
+// one-key write), then use them for all future syncs.
+func (s *Server) plexConfigSave(w http.ResponseWriter, r *http.Request) {
+	var body config.PlexConfig
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.URL = strings.TrimSpace(body.URL)
+	body.Token = strings.TrimSpace(body.Token)
+	if err := config.SavePlex(s.configPath, body); err != nil {
+		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.cfg.Plex = body
+	writeJSON(w, body)
+}
 
 func (s *Server) plexClient(urlOverride, tokenOverride string) *plex.Client {
 	url, token := urlOverride, tokenOverride
