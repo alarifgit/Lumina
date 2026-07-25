@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/lumina-media/lumina/internal/library"
@@ -59,6 +60,28 @@ func (s *Server) metadataSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, results)
+}
+
+// GET /api/v1/metadata/series/{tmdbId}/episodes — per-episode TMDB data
+// (names, overviews, stills, air dates) for the series detail page.
+// Server-side 24h memoized; costs 1 + N_seasons TMDB requests on a miss.
+func (s *Server) seriesEpisodes(w http.ResponseWriter, r *http.Request) {
+	if s.mw == nil || !s.mw.Available() {
+		http.Error(w, "metadata unavailable: no TMDB API key configured",
+			http.StatusServiceUnavailable)
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("tmdbId"))
+	if err != nil || id <= 0 {
+		http.Error(w, "need a positive numeric TMDB id", http.StatusBadRequest)
+		return
+	}
+	eps, err := s.mw.SeriesEpisodes(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"tmdbId": id, "episodes": eps})
 }
 
 // POST /api/v1/items/{id}/identify — apply an explicit TMDB id chosen in

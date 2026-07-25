@@ -10,6 +10,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lumina-media/lumina/internal/library"
@@ -34,10 +35,28 @@ type Worker struct {
 	tmdb  *Client
 	store library.Store
 	queue chan identifyReq
+
+	mu          sync.Mutex
+	seriesCache map[int]seriesCacheEntry
 }
 
+// seriesCacheEntry memoizes FetchSeriesEpisodes (1 + N TMDB requests per
+// series) for a day — episode lists change slowly, series pages are
+// visited often.
+type seriesCacheEntry struct {
+	eps []EpisodeInfo
+	at  time.Time
+}
+
+const seriesCacheTTL = 24 * time.Hour
+
 func NewWorker(tmdb *Client, store library.Store) *Worker {
-	return &Worker{tmdb: tmdb, store: store, queue: make(chan identifyReq, 512)}
+	return &Worker{
+		tmdb:        tmdb,
+		store:       store,
+		queue:       make(chan identifyReq, 512),
+		seriesCache: map[int]seriesCacheEntry{},
+	}
 }
 
 // Available reports whether the worker can identify (TMDB key present).
@@ -67,6 +86,29 @@ func (w *Worker) Search(ctx context.Context, kind, query string) ([]SearchResult
 		return nil, fmt.Errorf("no TMDB API key configured")
 	}
 	return w.tmdb.Search(ctx, kind, query)
+}
+
+// SeriesEpisodes returns TMDB per-episode metadata for a series, memoized
+// for 24h. The series page merges these onto scanned files by (season,
+// episode) — real episode names, overviews, and stills.
+func (w *Worker) SeriesEpisodes(ctx context.Context, tmdbID int) ([]EpisodeInfo, error) {
+	if !w.Available() {
+		return nil, fmt.Errorf("no TMDB API key configured")
+	}
+	w.mu.Lock()
+	if e, ok := w.seriesCache[tmdbID]; ok && time.Since(e.at) < seriesCacheTTL {
+		w.mu.Unlock()
+		return e.eps, nil
+	}
+	w.mu.Unlock()
+	eps, err := w.tmdb.FetchSeriesEpisodes(ctx, tmdbID)
+	if err != nil {
+		return nil, err
+	}
+	w.mu.Lock()
+	w.seriesCache[tmdbID] = seriesCacheEntry{eps: eps, at: time.Now()}
+	w.mu.Unlock()
+	return eps, nil
 }
 
 // ApplyMatch sets metadata for an EXPLICIT TMDB id, synchronously — the

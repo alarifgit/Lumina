@@ -13,40 +13,70 @@
 <header>
   <h1 id="logo-word"><img id="logo-lockup" src="/brand/wordmark.png" alt="Lumina"></h1>
   <nav id="libraries"></nav>
-  <button id="libs-button" title="Manage libraries">⚙</button>
-  <button id="plex-button" title="Import watch history from Plex">⇄</button>
   <button id="arr-button" title="Downloads & upcoming">⬇</button>
   <button id="user-badge" title="Switch user"></button>
+  <button id="libs-button" title="Settings">⚙</button>
   <span id="status"></span>
 </header>
-<div id="arr-panel" class="hidden"></div>
-<div id="libs-panel" class="hidden">
-  <h2>Libraries</h2>
-  <p class="libs-note">Paths are as Lumina sees them inside the container (e.g. <code>/media/movies</code>).</p>
-  <div id="libs-rows"></div>
-  <div class="lib-actions">
-    <button id="libs-add">Add library</button>
-    <button id="libs-save">Save &amp; scan</button>
+
+<div id="settings-page" class="hidden">
+  <div class="settings-head">
+    <h2>Settings</h2>
+    <button id="settings-close" aria-label="Close settings" title="Close (Esc)">✕</button>
   </div>
-  <div id="libs-status"></div>
-</div>
-<div id="plex-panel" class="hidden">
-  <h2>Import watch history from Plex</h2>
-  <div class="plex-form">
-    <input id="plex-url" placeholder="Plex URL (https://plex.example.com)">
-    <input id="plex-token" placeholder="Plex token" type="password">
-    <select id="plex-direction">
-      <option value="pull">Pull: Plex → Lumina</option>
-      <option value="push">Push: Lumina → Plex</option>
-      <option value="two-way">Two-way</option>
-    </select>
-    <div class="plex-actions">
-      <button id="plex-test">Test</button>
-      <button id="plex-preview">Preview</button>
-      <button id="plex-apply" disabled>Apply import</button>
+  <div class="settings-body">
+    <aside class="settings-nav">
+      <button data-section="sec-libraries" class="active">Libraries</button>
+      <button data-section="sec-integrations">Integrations</button>
+      <button data-section="sec-playback">Playback</button>
+      <button data-section="sec-users">Users</button>
+    </aside>
+    <div class="settings-sections">
+      <section id="sec-libraries">
+        <h3>Libraries</h3>
+        <p class="libs-note">Paths are as Lumina sees them inside the container (e.g. <code>/media/movies</code>). Row order is nav order.</p>
+        <div id="libs-rows"></div>
+        <div class="lib-actions">
+          <button id="libs-add">Add library</button>
+          <button id="libs-save">Save &amp; scan</button>
+        </div>
+        <div id="libs-status"></div>
+      </section>
+      <section id="sec-integrations" class="hidden">
+        <h3>Plex watch-history sync</h3>
+        <div class="plex-form">
+          <input id="plex-url" placeholder="Plex URL (https://plex.example.com)">
+          <input id="plex-token" placeholder="Plex token" type="password">
+          <select id="plex-direction">
+            <option value="pull">Pull: Plex → Lumina</option>
+            <option value="push">Push: Lumina → Plex</option>
+            <option value="two-way">Two-way</option>
+          </select>
+          <div class="plex-actions">
+            <button id="plex-test">Test</button>
+            <button id="plex-preview">Preview</button>
+            <button id="plex-apply" disabled>Apply import</button>
+          </div>
+        </div>
+        <div id="plex-result"></div>
+        <h3>Downloads &amp; upcoming</h3>
+        <div id="arr-content"><div class="arr-error">Loading…</div></div>
+      </section>
+      <section id="sec-playback" class="hidden">
+        <h3>Playback &amp; transcoding</h3>
+        <div id="caps-content"><div class="arr-error">Loading…</div></div>
+      </section>
+      <section id="sec-users" class="hidden">
+        <h3>Users</h3>
+        <p class="libs-note">Watch state is tracked per user. Click to switch.</p>
+        <div id="users-list"></div>
+        <div class="user-create">
+          <input id="user-new-name" placeholder="New user name">
+          <button id="user-create">Add user</button>
+        </div>
+      </section>
     </div>
   </div>
-  <div id="plex-result"></div>
 </div>
 
 <main id="grid" aria-live="polite"></main>

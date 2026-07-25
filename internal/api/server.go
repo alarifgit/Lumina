@@ -63,6 +63,7 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	mux.HandleFunc("GET /api/v1/items/{id}/subtitles/{subid}", s.subtitleVTT)
 	mux.HandleFunc("POST /api/v1/items/{id}/metadata/refresh", s.refreshMetadata)
 	mux.HandleFunc("GET /api/v1/metadata/search", s.metadataSearch)
+	mux.HandleFunc("GET /api/v1/metadata/series/{tmdbId}/episodes", s.seriesEpisodes)
 	mux.HandleFunc("POST /api/v1/items/{id}/identify", s.identifyItem)
 
 	// Plex migration import

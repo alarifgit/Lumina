@@ -72,12 +72,19 @@ let seekRestartTimer = null;
 // every MKV through as if it were a WebM — browsers then get raw MKV
 // streams they may demux but not fully decode (silent AC3, dead AV1).
 const DIRECT_EXTS = ["mp4", "m4v", "mov", "webm"];
-const DIRECT_VIDEO = ["h264", "vp8", "vp9", "av1"];
-// ac3/eac3 are deliberately absent: Chrome/Edge cannot decode them and
-// fail SILENTLY (video plays, no audio) — exactly the failure that
-// doesn't trigger the onerror → HLS fallback. DTS/TrueHD likewise go
-// to transcode, where FFmpeg outputs AAC.
-const DIRECT_AUDIO = ["aac", "mp3", "opus", "vorbis", "flac"];
+// Codec gates reflect what THIS browser can actually decode, not a fixed
+// allowlist: Edge/Safari (and Chrome with platform HEVC) direct-play HEVC
+// and AC-3/E-AC-3; probing canPlayType with real codec strings tells us.
+const CAN_HEVC = video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') !== "";
+const CAN_AC3 = video.canPlayType('audio/mp4; codecs="ac-3"') !== "";
+const CAN_EAC3 = video.canPlayType('audio/mp4; codecs="ec-3"') !== "";
+const DIRECT_VIDEO = ["h264", "vp8", "vp9", "av1", ...(CAN_HEVC ? ["hevc"] : [])];
+// DTS/TrueHD never direct-play: they fail SILENTLY (video plays, no audio)
+// which doesn't trigger the onerror → HLS fallback. AC-3/E-AC-3 join only
+// when the browser proves support; otherwise transcode, where FFmpeg
+// outputs AAC.
+const DIRECT_AUDIO = ["aac", "mp3", "opus", "vorbis", "flac",
+  ...(CAN_AC3 ? ["ac3"] : []), ...(CAN_EAC3 ? ["eac3"] : [])];
 
 async function api(path, opts = {}) {
   // A wedged server must never leave the UI sitting on "Saving…" forever.
@@ -170,11 +177,30 @@ userBadge.onclick = () => {
 function setActiveNav(btn) {
   nav.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
+  moveNavGlider();
 }
+
+// Segmented-control glider: the frosted pill that slides under the active
+// nav segment. Recomputed whenever segments change or the window resizes.
+function moveNavGlider() {
+  const glider = nav.querySelector(".seg-glider");
+  if (!glider) return;
+  const active = nav.querySelector("button.active");
+  if (!active) {
+    glider.style.opacity = "0";
+    return;
+  }
+  glider.style.opacity = "1";
+  // Movement animates via transform (no layout thrash); width snaps to the
+  // new segment — the slide makes the snap imperceptible.
+  glider.style.width = `${active.offsetWidth}px`;
+  glider.style.transform = `translateX(${active.offsetLeft}px)`;
+}
+window.addEventListener("resize", moveNavGlider);
 
 async function loadLibraries() {
   const libs = await api("/api/v1/libraries");
-  nav.innerHTML = "";
+  nav.innerHTML = '<span class="seg-glider"></span>';
 
   const homeBtn = document.createElement("button");
   homeBtn.textContent = "Home";
@@ -227,6 +253,7 @@ async function loadLibraries() {
 async function loadItems(lib) {
   activeLib = lib;
   backTarget = () => loadItems(lib); // detail pages return to this library
+  closeSettings();
   grid.className = "";
   const [items, phs] = await Promise.all([
     api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
@@ -542,19 +569,31 @@ function openSeries(key, anchor) {
   wireDetailBack();
   document.getElementById("detail-play").onclick = () => play(next);
 
+  // Real episode names/stills arrive asynchronously: rows render with
+  // filename-derived labels first, then re-render once TMDB answers.
+  // Absolute-numbered files (s=0) probe season 1 — many anime series are
+  // single-season on TMDB; a miss just keeps the filename label.
+  const epMeta = new Map(); // "SxE" -> { name, overview, stillUrl, airDate }
+  let activeSeason = nextSeason;
+
   const listEl = grid.querySelector(".ep-list");
   function renderSeason(s) {
+    activeSeason = s;
     listEl.innerHTML = seasons.get(s).map((it) => {
       const ph = playheads[it.id];
       const pct = ph && ph.durationMs > 0
         ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
       const se = episodeSE(it) || { s: 0, e: 0 };
+      const meta = epMeta.get(`${se.s > 0 ? se.s : 1}x${se.e}`);
+      const title = (meta && meta.name) || episodeLabel(it, key);
       return `
-        <div class="ep-row" data-id="${it.id}">
-          <span class="ep-num">${se.e || "–"}</span>
+        <div class="ep-row" data-id="${it.id}"${meta && meta.overview ? ` title="${escapeHtml(meta.overview)}"` : ""}>
+          <span class="ep-thumb">${meta && meta.stillUrl
+            ? `<img src="${meta.stillUrl}" loading="lazy" alt="" onerror="this.remove()"><i>${se.e || "–"}</i>`
+            : `<i class="num">${se.e || "–"}</i>`}</span>
           <div class="ep-meta">
-            <div class="ep-title">${escapeHtml(episodeLabel(it, key))}</div>
-            <div class="ep-sub">${[seTag(it), fmtBytes(it.sizeBytes),
+            <div class="ep-title">${escapeHtml(title)}</div>
+            <div class="ep-sub">${[seTag(it), meta && meta.airDate, fmtBytes(it.sizeBytes),
               ph && !ph.watched && pct > 0 ? fmtLeftMs(ph) : ""].filter(Boolean).join(" · ")}</div>
             ${pct > 0 && !(ph && ph.watched)
               ? `<div class="progress ep-progress"><div class="progress-fill" style="width:${pct}%"></div></div>` : ""}
@@ -578,6 +617,18 @@ function openSeries(key, anchor) {
       renderSeason(Number(btn.dataset.season));
     };
   });
+
+  if (rep.tmdbId) {
+    api(`/api/v1/metadata/series/${rep.tmdbId}/episodes`).then((data) => {
+      for (const e of (data && data.episodes) || []) {
+        epMeta.set(`${e.season}x${e.episode}`, e);
+      }
+      // Only repaint if the user is still on this series page.
+      if (grid.classList.contains("detail") && grid.contains(listEl)) {
+        renderSeason(activeSeason);
+      }
+    }).catch(() => {}); // no key / TMDB down → filename labels stay
+  }
 }
 
 // Nav badge counts: episodes → series count (matches the Recently Added TV
@@ -595,11 +646,13 @@ function updateNavCounts(visible) {
       : its.length;
     btn.textContent = `${btn.dataset.lib} (${n})`;
   });
+  moveNavGlider(); // count changes rewrap segment widths
 }
 
 async function loadHome() {
   activeLib = null;
   backTarget = null; // home is the root view — detail pages return here
+  closeSettings();
   grid.className = "home";
   const [items, phs] = await Promise.all([
     api("/api/v1/items"),
@@ -711,9 +764,11 @@ function canDirectPlay(info, item) {
   const ext = ((item.paths && item.paths[0]) || "").split(".").pop().toLowerCase();
   if (!DIRECT_EXTS.includes(ext)) return false;
   if (!DIRECT_VIDEO.includes(info.video.codec)) return false;
-  for (const a of info.audio || []) {
-    if (!DIRECT_AUDIO.includes(a.codec)) return false;
-  }
+  // Only the PRIMARY audio track gates: browsers play the container's
+  // default (first) audio stream, so a secondary AC3 commentary track
+  // shouldn't force a transcode of an otherwise direct-playable file.
+  const primary = (info.audio || [])[0];
+  if (primary && !DIRECT_AUDIO.includes(primary.codec)) return false;
   return true;
 }
 
@@ -1044,12 +1099,118 @@ video.addEventListener("pause", () => {
 });
 video.addEventListener("play", pokeControls);
 
-// --- library manager -----------------------------------------------------------
+// --- settings page ---------------------------------------------------------------
+// One full-page settings surface with sidebar sections; the section
+// contents keep their original element IDs, so all the existing wiring
+// (library rows, Plex import, *arr status) works unchanged.
 
+const settingsPage = document.getElementById("settings-page");
 const libsButton = document.getElementById("libs-button");
-const libsPanel = document.getElementById("libs-panel");
 const libsRows = document.getElementById("libs-rows");
 const libsStatus = document.getElementById("libs-status");
+
+function closeSettings() {
+  settingsPage.classList.add("hidden");
+}
+
+async function openSettings(sectionId) {
+  settingsPage.classList.remove("hidden");
+  settingsPage.querySelectorAll(".settings-nav button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.section === sectionId));
+  settingsPage.querySelectorAll(".settings-sections > section").forEach((sec) =>
+    sec.classList.toggle("hidden", sec.id !== sectionId));
+
+  if (sectionId === "sec-libraries") {
+    libsStatus.textContent = "";
+    try {
+      const libs = await api("/api/v1/libraries");
+      renderLibraryRows(libs);
+      libsStatus.innerHTML = missingPathNote(libs);
+    } catch (e) {
+      libsStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+    }
+  } else if (sectionId === "sec-integrations") {
+    loadArrStatus();
+  } else if (sectionId === "sec-playback") {
+    renderCapabilities();
+  } else if (sectionId === "sec-users") {
+    renderUsers();
+  }
+}
+
+settingsPage.querySelectorAll(".settings-nav button").forEach((b) => {
+  b.onclick = () => openSettings(b.dataset.section);
+});
+document.getElementById("settings-close").onclick = closeSettings;
+libsButton.onclick = () => openSettings("sec-libraries");
+
+// Playback section: the capabilities probe, rendered as a readable card
+// instead of a hover tooltip.
+async function renderCapabilities() {
+  const el = document.getElementById("caps-content");
+  try {
+    const caps = await api("/api/v1/system/capabilities");
+    const rows = [
+      ["ffmpeg", caps.ffmpegVersion || "—"],
+      ["VAAPI device", (caps.vaapi && caps.vaapi.device) || "—"],
+      ["Driver", caps.driver || "—"],
+      ["Hardware encoders", Object.entries(caps.encoders || {})
+        .map(([k, v]) => `${k} ${v ? "✓" : "✗"}`).join("   ")],
+      ["HDR tone mapping", caps.hdrToneMap ? "✓ supported" : "✗"],
+      ["Browser direct play", [
+        CAN_HEVC ? "HEVC ✓" : "HEVC ✗",
+        CAN_AC3 ? "AC-3 ✓" : "AC-3 ✗",
+        CAN_EAC3 ? "E-AC-3 ✓" : "E-AC-3 ✗",
+      ].join("   ")],
+    ];
+    const errs = Object.entries(caps.encoderErrors || {});
+    el.innerHTML = `
+      <dl class="info-grid">${rows.map(([k, v]) =>
+        `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join("")}</dl>
+      ${errs.length ? `<h4 class="caps-err-head">Encoder probe errors</h4>
+        <pre class="caps-errors">${escapeHtml(errs.map(([k, v]) => `${k}: ${v}`).join("\n"))}</pre>` : ""}`;
+  } catch (e) {
+    el.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+// Users section: switch or create watch-state identities.
+async function renderUsers() {
+  const el = document.getElementById("users-list");
+  try {
+    users = await api("/api/v1/users");
+    el.innerHTML = users.map((u) =>
+      `<button class="user-chip${currentUser && u.id === currentUser.id ? " active" : ""}"
+         data-uid="${u.id}">👤 ${escapeHtml(u.name)}</button>`).join("");
+    el.querySelectorAll(".user-chip").forEach((chip) => {
+      chip.onclick = () => {
+        currentUser = users.find((u) => u.id === chip.dataset.uid) || currentUser;
+        renderUserBadge();
+        renderUsers();
+      };
+    });
+  } catch (e) {
+    el.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+document.getElementById("user-create").onclick = async () => {
+  const input = document.getElementById("user-new-name");
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    const u = await api("/api/v1/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    input.value = "";
+    await renderUsers();
+    toast(`User added: ${u.name}`);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+};
 
 function libraryRow(lib = { name: "", path: "", kind: "movies" }) {
   const row = document.createElement("div");
@@ -1091,22 +1252,6 @@ function missingPathNote(libs) {
   return `<br><span class="err">Path not visible inside the container: ${escapeHtml(list)} — check the bind mount (e.g. /media/movies-anime, not /movies-anime).</span>`;
 }
 
-libsButton.onclick = async () => {
-  const opening = libsPanel.classList.contains("hidden");
-  libsPanel.classList.toggle("hidden");
-  arrPanel.classList.add("hidden");
-  plexPanel.classList.add("hidden");
-  if (!opening) return;
-  libsStatus.textContent = "";
-  try {
-    const libs = await api("/api/v1/libraries");
-    renderLibraryRows(libs);
-    libsStatus.innerHTML = missingPathNote(libs);
-  } catch (e) {
-    libsStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
-  }
-};
-
 document.getElementById("libs-add").onclick = () => libsRows.appendChild(libraryRow());
 
 const libsSaveButton = document.getElementById("libs-save");
@@ -1136,41 +1281,29 @@ libsSaveButton.onclick = async () => {
   }
 };
 
-document.addEventListener("click", (e) => {
-  if (!libsPanel.classList.contains("hidden") &&
-      !libsPanel.contains(e.target) && e.target !== libsButton) {
-    libsPanel.classList.add("hidden");
-  }
-});
-
-// --- *arr panel (downloads & upcoming) ---------------------------------------
+// --- *arr status (downloads & upcoming, inside Settings → Integrations) ---------
 
 const arrButton = document.getElementById("arr-button");
-const arrPanel = document.getElementById("arr-panel");
 
 function fmtPct(left, total) {
   if (!total) return "";
   return `${Math.round(((total - left) / total) * 100)}%`;
 }
 
-arrButton.onclick = async () => {
-  if (!arrPanel.classList.contains("hidden")) {
-    arrPanel.classList.add("hidden");
-    return;
-  }
-  libsPanel.classList.add("hidden");
-  plexPanel.classList.add("hidden");
-  arrPanel.innerHTML = `<h2>Downloads</h2><div class="arr-error">Loading…</div>`;
-  arrPanel.classList.remove("hidden");
+arrButton.onclick = () => openSettings("sec-integrations");
+
+async function loadArrStatus() {
+  const el = document.getElementById("arr-content");
+  el.innerHTML = `<div class="arr-error">Loading…</div>`;
   try {
     const statuses = await api("/api/v1/arr/status");
     if (statuses.length === 0) {
-      arrPanel.innerHTML = `<h2>Downloads</h2><div class="arr-error">No *arr instances configured.</div>`;
+      el.innerHTML = `<div class="arr-error">No *arr instances configured.</div>`;
       return;
     }
-    arrPanel.innerHTML = statuses.map((st) => {
+    el.innerHTML = statuses.map((st) => {
       if (!st.reachable) {
-        return `<h2>${st.name}</h2><div class="arr-error">unreachable — ${st.error || ""}</div>`;
+        return `<h4>${st.name}</h4><div class="arr-error">unreachable — ${st.error || ""}</div>`;
       }
       const queue = (st.queue || []).map((q) => `
         <div class="arr-row"><span class="t" title="${q.title}">${q.title}</span>
@@ -1178,27 +1311,18 @@ arrButton.onclick = async () => {
       const upcoming = (st.upcoming || []).slice(0, 8).map((c) => `
         <div class="arr-row"><span class="t">${c.title}${c.subtitle ? " · " + c.subtitle : ""}</span>
         <span class="r">${c.airDate}${c.hasFile ? " ✓" : ""}</span></div>`).join("");
-      return `<h2>${st.name} <span class="r" style="font-weight:400;color:var(--muted)">${st.version || ""}</span></h2>
-        ${queue ? `<h3>Queue</h3>${queue}` : ""}
-        ${upcoming ? `<h3>Next 7 days</h3>${upcoming}` : ""}
+      return `<h4>${st.name} <span class="r" style="font-weight:400;color:var(--muted)">${st.version || ""}</span></h4>
+        ${queue ? `<h5>Queue</h5>${queue}` : ""}
+        ${upcoming ? `<h5>Next 7 days</h5>${upcoming}` : ""}
         ${!queue && !upcoming ? `<div class="arr-error">Idle — nothing queued or upcoming.</div>` : ""}`;
     }).join("");
   } catch (e) {
-    arrPanel.innerHTML = `<h2>Downloads</h2><div class="arr-error">${e.message}</div>`;
+    el.innerHTML = `<div class="arr-error">${e.message}</div>`;
   }
-};
+}
 
-document.addEventListener("click", (e) => {
-  if (!arrPanel.classList.contains("hidden") &&
-      !arrPanel.contains(e.target) && e.target !== arrButton) {
-    arrPanel.classList.add("hidden");
-  }
-});
+// --- Plex import (inside Settings → Integrations) ------------------------------
 
-// --- Plex import panel -------------------------------------------------------
-
-const plexButton = document.getElementById("plex-button");
-const plexPanel = document.getElementById("plex-panel");
 const plexUrl = document.getElementById("plex-url");
 const plexToken = document.getElementById("plex-token");
 const plexDirection = document.getElementById("plex-direction");
@@ -1219,12 +1343,6 @@ function plexBody(apply) {
     apply,
   };
 }
-
-plexButton.onclick = () => {
-  plexPanel.classList.toggle("hidden");
-  arrPanel.classList.add("hidden");
-  libsPanel.classList.add("hidden");
-};
 
 document.getElementById("plex-test").onclick = async () => {
   plexResult.innerHTML = `<span class="plex-error">Testing…</span>`;
@@ -1274,13 +1392,6 @@ async function runPlexImport(apply) {
     plexResult.innerHTML = `<span class="plex-error">${e.message}</span>`;
   }
 }
-
-document.addEventListener("click", (e) => {
-  if (!plexPanel.classList.contains("hidden") &&
-      !plexPanel.contains(e.target) && e.target !== plexButton) {
-    plexPanel.classList.add("hidden");
-  }
-});
 
 document.getElementById("player-close").onclick = () => {
   overlay.classList.add("hidden");
@@ -1468,6 +1579,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeCardMenu();
     closeModal();
+    closeSettings();
     return;
   }
   // Player shortcuts — only while the overlay is up, and never while

@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	apiBase   = "https://api.themoviedb.org/3"
-	posterURL = "https://image.tmdb.org/t/p/w500"
+	apiBase     = "https://api.themoviedb.org/3"
+	posterURL   = "https://image.tmdb.org/t/p/w500"
 	backdropURL = "https://image.tmdb.org/t/p/w780"
+	stillURL    = "https://image.tmdb.org/t/p/w300"
 )
 
 // Client talks to TMDB. Available() is false without an API key —
@@ -325,6 +326,62 @@ func (c *Client) FetchByID(ctx context.Context, kind string, id int) (*library.M
 		m.Genres = append(m.Genres, g.Name)
 	}
 	return m, nil
+}
+
+// EpisodeInfo is one TMDB episode's display metadata — the series page
+// merges these onto scanned files by (season, episode).
+type EpisodeInfo struct {
+	Season   int    `json:"season"`
+	Episode  int    `json:"episode"`
+	Name     string `json:"name"`
+	Overview string `json:"overview,omitempty"`
+	StillURL string `json:"stillUrl,omitempty"`
+	AirDate  string `json:"airDate,omitempty"`
+}
+
+// FetchSeriesEpisodes walks every season of a series and returns per-episode
+// titles, overviews, stills and air dates. Costs 1 + len(seasons) requests —
+// callers should cache (the worker keeps a 24h in-memory cache).
+func (c *Client) FetchSeriesEpisodes(ctx context.Context, id int) ([]EpisodeInfo, error) {
+	var show struct {
+		Seasons []struct {
+			Number int `json:"season_number"`
+			Count  int `json:"episode_count"`
+		} `json:"seasons"`
+	}
+	if err := c.get(ctx, fmt.Sprintf("/tv/%d", id), url.Values{"language": {c.Language}}, &show); err != nil {
+		return nil, err
+	}
+	out := []EpisodeInfo{}
+	for _, sn := range show.Seasons {
+		if sn.Count == 0 {
+			continue
+		}
+		var season struct {
+			Episodes []struct {
+				Number   int    `json:"episode_number"`
+				Name     string `json:"name"`
+				Overview string `json:"overview"`
+				Still    string `json:"still_path"`
+				AirDate  string `json:"air_date"`
+			} `json:"episodes"`
+		}
+		if err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d", id, sn.Number),
+			url.Values{"language": {c.Language}}, &season); err != nil {
+			return nil, err
+		}
+		for _, ep := range season.Episodes {
+			info := EpisodeInfo{
+				Season: sn.Number, Episode: ep.Number,
+				Name: ep.Name, Overview: ep.Overview, AirDate: ep.AirDate,
+			}
+			if ep.Still != "" {
+				info.StillURL = stillURL + ep.Still
+			}
+			out = append(out, info)
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {

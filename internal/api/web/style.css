@@ -56,24 +56,52 @@ header.solid {
   width: auto;
   /* The PNG carries its own glow — no CSS drop-shadow (it would double). */
 }
-nav { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+/* Segmented glass control: one pill track, a frosted glider slides under
+   the active segment (Apple TV / Plex-style top bar). */
+nav {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  max-width: 52vw;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+nav::-webkit-scrollbar { display: none; }
+.seg-glider {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: transform 260ms var(--focus-ease), opacity 160ms ease;
+  pointer-events: none;
+}
 nav button {
+  position: relative;
+  z-index: 1;
   background: transparent;
-  /* Opacity states, not color swaps: inactive whispers, active speaks. */
-  color: rgba(255, 255, 255, 0.55);
   border: 1px solid transparent;
-  padding: 0.35rem 0.9rem;
+  /* Opacity states, not color swaps: inactive whispers, active speaks. */
+  color: rgba(255, 255, 255, 0.58);
+  padding: 0.35rem 1rem;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 0.9rem;
-  transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
+  font-size: 0.88rem;
+  white-space: nowrap;
+  transition: color 180ms ease;
 }
 nav button:hover { color: rgba(255, 255, 255, 0.95); }
-nav button.active {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.14);
-}
+nav button.active { color: #fff; }
 #status { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
 
 #user-badge {
@@ -381,7 +409,7 @@ nav button.active {
   object-fit: cover;
 }
 
-/* Downloads & upcoming panel (*arr status) */
+/* Downloads & upcoming (*arr status, inside Settings → Integrations) */
 #arr-button {
   background: transparent;
   border: 1px solid var(--muted);
@@ -392,25 +420,8 @@ nav button.active {
   font-size: 0.95rem;
 }
 #arr-button.has-queue { border-color: var(--accent); }
-#arr-panel {
-  position: fixed;
-  top: 56px;
-  right: 16px;
-  width: 380px;
-  max-width: 92vw;
-  max-height: 70vh;
-  overflow: auto;
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 1rem;
-  z-index: 50;
-  box-shadow: var(--glass-shadow);
-}
-#arr-panel h2 { font-size: 0.95rem; margin: 0 0 0.5rem; }
-#arr-panel h3 {
+#arr-content h4 { font-size: 0.95rem; margin: 1rem 0 0.5rem; }
+#arr-content h5 {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -423,35 +434,8 @@ nav button.active {
 .arr-error { color: var(--warn); font-size: 0.8rem; }
 #media-overview { font-size: 0.8rem; line-height: 1.45; max-width: 70ch; }
 
-/* Plex import panel */
-#plex-button {
-  background: transparent;
-  border: 1px solid var(--muted);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 0.25rem 0.6rem;
-  cursor: pointer;
-  font-size: 0.95rem;
-}
-#plex-panel {
-  position: fixed;
-  top: 56px;
-  right: 16px;
-  width: 460px;
-  max-width: 94vw;
-  max-height: 76vh;
-  overflow: auto;
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 1rem;
-  z-index: 50;
-  box-shadow: var(--glass-shadow);
-}
-#plex-panel h2 { font-size: 0.95rem; margin: 0 0 0.7rem; }
-.plex-form { display: flex; flex-direction: column; gap: 0.5rem; }
+/* Plex import form (inside Settings → Integrations) */
+.plex-form { display: flex; flex-direction: column; gap: 0.5rem; max-width: 460px; }
 .plex-form input, .plex-form select {
   background: var(--bg);
   color: var(--text);
@@ -489,7 +473,7 @@ nav button.active {
 #plex-result .act-unmatched { color: var(--warn); }
 .plex-error { color: var(--warn); }
 
-/* Library manager */
+/* Library manager rows (inside Settings → Libraries) */
 #libs-button {
   background: transparent;
   border: 1px solid var(--muted);
@@ -499,24 +483,6 @@ nav button.active {
   cursor: pointer;
   font-size: 0.95rem;
 }
-#libs-panel {
-  position: fixed;
-  top: 56px;
-  right: 16px;
-  width: 620px;
-  max-width: 96vw;
-  max-height: 76vh;
-  overflow: auto;
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 1rem;
-  z-index: 50;
-  box-shadow: var(--glass-shadow);
-}
-#libs-panel h2 { font-size: 0.95rem; margin: 0 0 0.4rem; }
 .libs-note { color: var(--muted); font-size: 0.78rem; margin: 0 0 0.8rem; }
 .libs-note code { color: var(--text); }
 .lib-row {
@@ -1136,3 +1102,142 @@ nav button.active {
 }
 .ep-watched { color: var(--ok); font-size: 1rem; }
 .ep-row .card-play { position: static; flex-shrink: 0; transform: none; }
+
+/* --- settings page ------------------------------------------------------------ */
+#settings-page {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow-y: auto;
+  background: rgba(9, 15, 24, 0.82);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+  backdrop-filter: blur(22px) saturate(1.2);
+}
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem clamp(1rem, 4vw, 3rem);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  position: sticky;
+  top: 0;
+  background: rgba(9, 15, 24, 0.6);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  z-index: 2;
+}
+.settings-head h2 { margin: 0; font-size: 1.15rem; letter-spacing: -0.02em; }
+#settings-close {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  width: 2.1rem;
+  height: 2.1rem;
+  color: var(--text);
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: background 180ms ease;
+}
+#settings-close:hover { background: rgba(255, 255, 255, 0.18); }
+.settings-body {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 2rem;
+  padding: 1.6rem clamp(1rem, 4vw, 3rem) 4rem;
+  max-width: 1100px;
+}
+.settings-nav { display: flex; flex-direction: column; gap: 0.25rem; position: sticky; top: 5.4rem; align-self: start; }
+.settings-nav button {
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.settings-nav button:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+.settings-nav button.active { background: rgba(255, 255, 255, 0.12); color: #fff; font-weight: 600; }
+.settings-sections h3 { margin: 0 0 0.9rem; font-size: 1rem; }
+.settings-sections section { max-width: 780px; }
+.caps-err-head { margin: 1.2rem 0 0.4rem; font-size: 0.85rem; color: var(--warn); }
+.caps-errors {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  max-height: 30vh;
+  overflow: auto;
+}
+#users-list { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
+.user-chip {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.user-chip:hover { background: rgba(255, 255, 255, 0.14); }
+.user-chip.active { background: var(--cream); border-color: transparent; color: #1a1409; font-weight: 600; }
+.user-create { display: flex; gap: 0.5rem; max-width: 380px; }
+.user-create input {
+  flex: 1;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+.user-create button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+@media (max-width: 720px) {
+  .settings-body { grid-template-columns: 1fr; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; position: static; }
+}
+
+/* Episode thumbnails on the series page: TMDB still (16:9) when available,
+   episode-number tile otherwise; the number overlays the still's corner. */
+.ep-thumb {
+  width: 7.5rem;
+  aspect-ratio: 16/9;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  background: rgba(255, 255, 255, 0.07);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.ep-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ep-thumb i { font-style: normal; color: var(--cream); font-weight: 650; font-variant-numeric: tabular-nums; }
+.ep-thumb img + i {
+  position: absolute;
+  left: 0.25rem;
+  bottom: 0.25rem;
+  background: rgba(0, 0, 0, 0.62);
+  border-radius: 5px;
+  padding: 0 0.3rem;
+  font-size: 0.68rem;
+  color: #fff;
+}
+@media (max-width: 640px) {
+  .ep-thumb { width: 5.6rem; }
+}
