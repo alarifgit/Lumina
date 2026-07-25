@@ -51,10 +51,10 @@ func Probe(ctx context.Context, ffmpegPath, renderDevice string) Capabilities {
 		VAAPI:         VAAPIResult{Device: renderDevice},
 	}
 
-	// Bare `ffmpeg -hide_banner` prints the version banner to stderr and
-	// exits non-zero (no output specified) — parse the output regardless
-	// of the exit code.
-	out, _ := run(ctx, ffmpegPath, "-hide_banner")
+	// `ffmpeg -version` prints the banner to stdout and exits 0.
+	// (Bare `ffmpeg -hide_banner` prints nothing — the banner is what
+	// -hide_banner hides, which is why this used to come back empty.)
+	out, _ := run(ctx, ffmpegPath, "-version")
 	if m := versionRe.FindStringSubmatch(out); m != nil {
 		caps.FFmpegVersion = m[1]
 	}
