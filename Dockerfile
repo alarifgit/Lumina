@@ -16,10 +16,17 @@ FROM debian:bookworm-slim
 # VAAPI drivers for both GPU vendors: mesa (AMD — e.g. G14 dGPU) and
 # iHD (Intel Arc/newer iGPUs, lives in non-free).
 ARG JELLYFIN_FFMPEG_VERSION=7.1.4-3
+# mesa-va-drivers from bookworm-BACKPORTS, not stable: bookworm stable ships
+# Mesa 22.3, which predates RDNA3 (gfx110x, e.g. ASUS G14 dGPU) VCN4 video
+# ENCODE support — device init succeeds but every encode fails EINVAL (-22).
 RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
       /etc/apt/sources.list.d/debian.sources \
+    && echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free non-free-firmware" \
+      > /etc/apt/sources.list.d/backports.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl vainfo mesa-va-drivers intel-media-va-driver-non-free \
+      ca-certificates curl vainfo intel-media-va-driver-non-free \
+    && apt-get install -y --no-install-recommends -t bookworm-backports \
+      mesa-va-drivers \
     && curl -fSL -o /tmp/jellyfin-ffmpeg.deb \
       "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JELLYFIN_FFMPEG_VERSION}/jellyfin-ffmpeg7_${JELLYFIN_FFMPEG_VERSION}-bookworm_amd64.deb" \
     && apt-get install -y --no-install-recommends /tmp/jellyfin-ffmpeg.deb \

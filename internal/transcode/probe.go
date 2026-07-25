@@ -150,14 +150,20 @@ func candidateDevices(preferred string) []string {
 
 // probeDriver asks vainfo which VA-API driver backs the device
 // ("Mesa Gallium driver ... for AMD" / "Intel iHD driver ..."). Best-effort:
-// a missing vainfo binary is not an error.
+// a missing vainfo binary is not an error — but it IS logged, because an
+// empty driver string during GPU debugging is otherwise a silent gap.
 func probeDriver(ctx context.Context, device string) string {
-	out, _ := run(ctx, "vainfo", "--display", "drm", "--device", device)
+	out, err := run(ctx, "vainfo", "--display", "drm", "--device", device)
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "vainfo: Driver version:") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "vainfo: Driver version:"))
 		}
+	}
+	if err != nil {
+		log.Printf("transcode: vainfo on %s failed: %v: %.200s", device, err, strings.TrimSpace(out))
+	} else {
+		log.Printf("transcode: vainfo on %s gave no driver line: %.200s", device, strings.TrimSpace(out))
 	}
 	return ""
 }
@@ -173,6 +179,9 @@ func testVAAPIEncode(ctx context.Context, ffmpeg, device, encoder string) (bool,
 		"-f", "lavfi", "-i", "color=black:size=160x96:duration=1:rate=1",
 		"-vf", "format=nv12,hwupload",
 		"-c:v", encoder,
+		// Rate control must be explicit: with no -qp/-b:v at all, radeonsi
+		// rejects the encode with EINVAL even when the hardware is fine.
+		"-qp", "22",
 		"-frames:v", "1",
 		"-f", "null", "-",
 	)
