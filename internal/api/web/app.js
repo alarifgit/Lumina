@@ -34,6 +34,13 @@ const pcTime = document.getElementById("pc-time");
 const pcRate = document.getElementById("pc-rate");
 const pcVolume = document.getElementById("pc-volume");
 const pcFull = document.getElementById("pc-full");
+const pcNext = document.getElementById("pc-next");
+const ccOpts = document.getElementById("cc-opts");
+const ccPop = document.getElementById("cc-pop");
+const playerSpinner = document.getElementById("player-spinner");
+const upNext = document.getElementById("up-next");
+const upNextTitle = document.getElementById("up-next-title");
+const upNextCount = document.getElementById("up-next-count");
 const seekBar = document.getElementById("seek-bar");
 const seekPlayed = document.getElementById("seek-played");
 const seekBuffered = document.getElementById("seek-buffered");
@@ -53,6 +60,11 @@ let currentItem = null;
 let currentUser = null;
 let users = [];
 let playheads = {};
+let myListIds = {}; // per-user bookmarks ("My List"), item id → true
+let heroTimer = null; // home hero carousel auto-advance
+let nextEp = null;    // next episode in order, for pc-next + "Up next"
+let upNextTimer = null;
+let upNextCountdown = null;
 let lastReportAt = 0;
 let resumeAtS = 0;
 let activeLib = null;
@@ -171,8 +183,7 @@ userBadge.onclick = () => {
   const i = users.findIndex((u) => u.id === currentUser.id);
   currentUser = users[(i + 1) % users.length];
   renderUserBadge();
-  if (activeLib) loadItems(activeLib);
-  else loadHome();
+  refreshCurrentView();
 };
 
 // --- browse --------------------------------------------------------------------
@@ -228,6 +239,17 @@ async function loadLibraries() {
     nav.appendChild(btn);
   }
 
+  // "My List" — per-user bookmarks, always the last segment.
+  const mlBtn = document.createElement("button");
+  mlBtn.textContent = "My List";
+  mlBtn.title = "Titles you bookmarked (right-click any card → Add to My List)";
+  mlBtn.dataset.kind = "mylist";
+  mlBtn.onclick = () => {
+    setActiveNav(mlBtn);
+    loadMyList();
+  };
+  nav.appendChild(mlBtn);
+
   // Home is the default active segment; loadHome() runs in parallel at
   // boot, so no synthetic click here (a click would double-fetch).
   setActiveNav(homeBtn);
@@ -258,11 +280,14 @@ async function loadItems(lib) {
   activeLib = lib;
   backTarget = () => loadItems(lib); // detail pages return to this library
   closeSettings();
-  const [items, phs] = await Promise.all([
+  closeSearch();
+  const [items, phs, ml] = await Promise.all([
     api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
+    currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
   ]);
   playheads = phs || {};
+  myListIds = ml || {};
   // Mutate the grid only once the data has arrived (anti-flash).
   grid.className = "";
   grid.innerHTML = "";
@@ -272,11 +297,19 @@ async function loadItems(lib) {
     return;
   }
   visible.forEach((it) => itemById.set(it.id, it));
+  renderLibraryCards(visible);
+}
 
-  if (lib.kind === "tv") {
+// Shared card renderer for the library + My List views: episodes group into
+// one card per series (Plex library view), everything else gets a movie card.
+function renderLibraryCards(visible) {
+  const episodes = visible.filter((it) => it.kind === "episode");
+  const others = visible.filter((it) => it.kind !== "episode");
+
+  if (episodes.length > 0) {
     // One card per series (Plex library view), not a wall of episode files.
     const groups = new Map();
-    for (const it of visible) {
+    for (const it of episodes) {
       const k = seriesKey(it);
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(it);
@@ -317,10 +350,9 @@ async function loadItems(lib) {
       card.dataset.id = g.rep.id;
       grid.appendChild(card);
     }
-    return;
   }
 
-  for (const it of visible) {
+  for (const it of others) {
     const ph = playheads[it.id];
     const pct = ph && ph.durationMs > 0
       ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
@@ -353,6 +385,53 @@ async function loadItems(lib) {
     card.onclick = () => openMovieDetail(it);
     card.dataset.id = it.id;
     grid.appendChild(card);
+  }
+}
+
+// --- My List (per-user bookmarks) -------------------------------------------
+
+async function loadMyList() {
+  activeLib = { name: "My List", kind: "mylist" };
+  backTarget = loadMyList;
+  closeSettings();
+  closeSearch();
+  const [items, phs, ml] = await Promise.all([
+    api("/api/v1/items"),
+    currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
+    currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
+  ]);
+  playheads = phs || {};
+  myListIds = ml || {};
+  // Mutate the grid only once the data has arrived (anti-flash).
+  grid.className = "";
+  grid.innerHTML = "";
+  const visible = (items || []).filter((it) => it.state !== "missing");
+  visible.forEach((it) => itemById.set(it.id, it));
+  const mine = visible.filter((it) => myListIds[it.id]);
+  if (mine.length === 0) {
+    grid.innerHTML = `<div id="empty">Nothing bookmarked yet — right-click any card → Add to My List.</div>`;
+    return;
+  }
+  renderLibraryCards(mine);
+}
+
+async function toggleMyList(it) {
+  if (!currentUser) {
+    toast("Pick a user first", "err");
+    return;
+  }
+  try {
+    const r = await api(`/api/v1/items/${it.id}/mylist`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: currentUser.id }),
+    });
+    if (r.added) myListIds[it.id] = true;
+    else delete myListIds[it.id];
+    toast(r.added ? "Added to My List" : "Removed from My List");
+    if (activeLib && activeLib.kind === "mylist") loadMyList(); // live update
+  } catch (e) {
+    toast(e.message, "err");
   }
 }
 
@@ -523,6 +602,7 @@ function openMovieDetail(it) {
         <p>${escapeHtml(it.overview || "No synopsis yet — identify this title with Fix match if it was missed.")}</p>
         <div class="detail-actions">
           <button class="text-button" id="detail-play"><span class="ic ic-play"></span> ${resumable ? `Resume · ${fmtLeftMs(ph)}` : "Play"}</button>
+          <button class="ghost-button" id="detail-mylist"><span class="ic ic-bookmark"></span> ${myListIds[it.id] ? "In My List" : "My List"}</button>
           <button class="ghost-button" id="detail-info"><span class="ic ic-info"></span> Media info</button>
           <button class="ghost-button" id="detail-match"><span class="ic ic-edit"></span> Fix match</button>
         </div>
@@ -532,6 +612,13 @@ function openMovieDetail(it) {
   document.getElementById("detail-play").onclick = () => play(it);
   document.getElementById("detail-info").onclick = () => openInfoModal(it);
   document.getElementById("detail-match").onclick = () => openMatchModal(it);
+  const mlDetailBtn = document.getElementById("detail-mylist");
+  mlDetailBtn.classList.toggle("active", !!myListIds[it.id]);
+  mlDetailBtn.onclick = async () => {
+    await toggleMyList(it);
+    mlDetailBtn.innerHTML = `<span class="ic ic-bookmark"></span> ${myListIds[it.id] ? "In My List" : "My List"}`;
+    mlDetailBtn.classList.toggle("active", !!myListIds[it.id]);
+  };
 }
 
 function openSeries(key, anchor) {
@@ -563,6 +650,7 @@ function openSeries(key, anchor) {
         <div class="detail-actions">
           <button class="text-button" id="detail-play"><span class="ic ic-play"></span> ${playheads[next.id] && !playheads[next.id].watched && playheads[next.id].positionMs > 0
             ? `Resume ${seTag(next)}` : `Play ${seTag(next)}`}</button>
+          <button class="ghost-button" id="detail-mylist"><span class="ic ic-bookmark"></span> ${myListIds[rep.id] ? "In My List" : "My List"}</button>
         </div>
       </div>
     </section>
@@ -573,6 +661,13 @@ function openSeries(key, anchor) {
     </section>`;
   wireDetailBack();
   document.getElementById("detail-play").onclick = () => play(next);
+  const mlSeriesBtn = document.getElementById("detail-mylist");
+  mlSeriesBtn.classList.toggle("active", !!myListIds[rep.id]);
+  mlSeriesBtn.onclick = async () => {
+    await toggleMyList(rep);
+    mlSeriesBtn.innerHTML = `<span class="ic ic-bookmark"></span> ${myListIds[rep.id] ? "In My List" : "My List"}`;
+    mlSeriesBtn.classList.toggle("active", !!myListIds[rep.id]);
+  };
 
   // Real episode names/stills arrive asynchronously: rows render with
   // filename-derived labels first, then re-render once TMDB answers.
@@ -658,14 +753,17 @@ async function loadHome() {
   activeLib = null;
   backTarget = null; // home is the root view — detail pages return here
   closeSettings();
+  closeSearch();
   // Don't touch the grid until the data is here: switching class/innerHTML
   // before the fetch resolves is what caused the flash of broken layout
   // when changing nav segments.
-  const [items, phs] = await Promise.all([
+  const [items, phs, ml] = await Promise.all([
     api("/api/v1/items"),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
+    currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
   ]);
   playheads = phs || {};
+  myListIds = ml || {};
   grid.className = "home";
 
   const visible = (items || []).filter((it) => it.state !== "missing");
@@ -692,18 +790,41 @@ async function loadHome() {
 
   const featured = resume.find((it) => it.backdropUrl) ||
     recent.find((it) => it.backdropUrl) || recent[0];
-  const featuredPh = playheads[featured.id];
+
+  // Hero carousel: up to 5 slides with real backdrops — what you're
+  // mid-way through first, then the newest additions. Falls back to the
+  // single featured item when nothing has backdrop art yet.
+  const slides = [];
+  const seenSlide = new Set();
+  for (const it of [...resume, ...recent]) {
+    if (!it.backdropUrl || seenSlide.has(it.id)) continue;
+    seenSlide.add(it.id);
+    slides.push(it);
+    if (slides.length >= 5) break;
+  }
+  if (slides.length === 0) slides.push(featured);
 
   grid.innerHTML = `
-    <section class="hero">
-      ${artHtml(featured, "backdrop")}
-      <div class="hero-scrim"></div>
-      <div class="hero-copy">
-        <div class="eyebrow">${featuredPh ? "Resume" : "Featured"} · ${featured.kind === "episode" ? "Episode" : "Movie"}</div>
-        <h2>${escapeHtml(featured.title)}</h2>
-        <p>${escapeHtml(featured.overview || "Your library, direct from the source — no cloud account, no Plex pass, no transcode unless it has to.")}</p>
-        <button class="text-button" data-play="${featured.id}"><span class="ic ic-play"></span> ${featuredPh ? "Resume" : "Play now"}</button>
-      </div>
+    <section class="hero carousel">
+      ${slides.map((it, i) => {
+        const ph = playheads[it.id];
+        return `
+        <div class="hero-slide${i === 0 ? " active" : ""}">
+          ${artHtml(it, "backdrop")}
+          <div class="hero-scrim"></div>
+          <div class="hero-copy">
+            <div class="eyebrow">${ph ? "Resume" : "Featured"} · ${it.kind === "episode" ? "Episode" : "Movie"}</div>
+            <h2>${escapeHtml(it.title)}</h2>
+            <p>${escapeHtml(it.overview || "Your library, direct from the source — no cloud account, no Plex pass, no transcode unless it has to.")}</p>
+            <button class="text-button" data-play="${it.id}"><span class="ic ic-play"></span> ${ph ? "Resume" : "Play now"}</button>
+          </div>
+        </div>`;
+      }).join("")}
+      ${slides.length > 1 ? `
+        <button class="hero-nav prev" aria-label="Previous slide"><span class="ic ic-back"></span></button>
+        <button class="hero-nav next" aria-label="Next slide"><span class="ic ic-back ic-flip"></span></button>
+        <div class="hero-dots">${slides.map((_, i) =>
+          `<button data-i="${i}" class="${i === 0 ? "active" : ""}" aria-label="Slide ${i + 1}"></button>`).join("")}</div>` : ""}
     </section>
     ${resume.length ? `
       <section class="rail">
@@ -724,8 +845,40 @@ async function loadHome() {
         <div class="rail-track posters">${recentMovies.slice(0, 24).map((it) => homeCard(it, playheads[it.id], true)).join("")}</div>
       </section>` : ""}`;
 
-  const heroBtn = grid.querySelector("[data-play]");
-  if (heroBtn) heroBtn.onclick = () => play(featured);
+  // Carousel wiring: crossfade slides, 8s auto-advance, pause on hover.
+  // If the user has navigated away the interval stops itself (the hero is
+  // no longer in the DOM).
+  const heroEl = grid.querySelector(".hero");
+  const slideEls = [...heroEl.querySelectorAll(".hero-slide")];
+  let heroIdx = 0;
+  const showSlide = (i) => {
+    if (!heroEl.isConnected) {
+      clearInterval(heroTimer);
+      heroTimer = null;
+      return;
+    }
+    heroIdx = (i + slideEls.length) % slideEls.length;
+    slideEls.forEach((s, j) => s.classList.toggle("active", j === heroIdx));
+    heroEl.querySelectorAll(".hero-dots button").forEach((d, j) =>
+      d.classList.toggle("active", j === heroIdx));
+  };
+  const startHeroTimer = () => {
+    clearInterval(heroTimer);
+    if (slideEls.length > 1) heroTimer = setInterval(() => showSlide(heroIdx + 1), 8000);
+  };
+  if (slideEls.length > 1) {
+    heroEl.querySelector(".hero-nav.prev").onclick = () => { showSlide(heroIdx - 1); startHeroTimer(); };
+    heroEl.querySelector(".hero-nav.next").onclick = () => { showSlide(heroIdx + 1); startHeroTimer(); };
+    heroEl.querySelectorAll(".hero-dots button").forEach((d) => {
+      d.onclick = () => { showSlide(Number(d.dataset.i)); startHeroTimer(); };
+    });
+    heroEl.addEventListener("mouseenter", () => clearInterval(heroTimer));
+    heroEl.addEventListener("mouseleave", startHeroTimer);
+    startHeroTimer();
+  }
+  heroEl.querySelectorAll("[data-play]").forEach((btn) => {
+    btn.onclick = () => play(byId[btn.dataset.play]);
+  });
   grid.querySelectorAll(".media-card").forEach((card) => {
     const it = byId[card.dataset.id];
     if (!it) return;
@@ -766,6 +919,104 @@ function enhanceRails() {
   });
 }
 
+// --- global search ---------------------------------------------------------------
+// Header magnifier opens a full-screen overlay (settings-page pattern).
+// Episodes collapse into one card per series; everything else is a movie card.
+
+const searchPage = document.getElementById("search-page");
+const searchInput = document.getElementById("search-input");
+const searchResults = document.getElementById("search-results");
+let searchTimer = null;
+
+function openSearch() {
+  closeSettings();
+  searchPage.classList.remove("hidden");
+  searchInput.focus();
+  if (searchInput.value.trim()) runSearch(searchInput.value.trim());
+}
+
+function closeSearch() {
+  searchPage.classList.add("hidden");
+}
+
+document.getElementById("search-button").onclick = () =>
+  searchPage.classList.contains("hidden") ? openSearch() : closeSearch();
+document.getElementById("search-close").onclick = closeSearch;
+
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = searchInput.value.trim();
+  if (!q) {
+    searchResults.innerHTML = `<div class="modal-note">Type to search your library.</div>`;
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(q), 250);
+});
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    clearTimeout(searchTimer);
+    runSearch(searchInput.value.trim());
+  }
+});
+
+async function runSearch(q) {
+  if (!q) return;
+  searchResults.innerHTML = `<div class="modal-note">Searching…</div>`;
+  let found;
+  try {
+    found = await api(`/api/v1/search?q=${encodeURIComponent(q)}`);
+  } catch (e) {
+    searchResults.innerHTML = `<div class="modal-note err">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (searchPage.classList.contains("hidden")) return; // closed mid-flight
+  (found || []).forEach((it) => itemById.set(it.id, it));
+
+  const episodes = (found || []).filter((it) => it.kind === "episode");
+  const movies = (found || []).filter((it) => it.kind !== "episode");
+  const groups = new Map();
+  for (const it of episodes) {
+    const k = seriesKey(it);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  const seriesCards = [...groups.entries()].map(([key, eps]) => ({
+    rep: eps.find((e) => e.posterUrl) || eps[0],
+    label: { title: key, sub: `${eps.length} episode${eps.length === 1 ? "" : "s"}`, badge: "" },
+  })).sort((a, b) => a.label.title.localeCompare(b.label.title));
+
+  if (seriesCards.length === 0 && movies.length === 0) {
+    searchResults.innerHTML = `<div class="modal-note">No results for “${escapeHtml(q)}”.</div>`;
+    return;
+  }
+  searchResults.innerHTML = `
+    ${seriesCards.length ? `
+      <section class="rail block">
+        <div class="rail-head"><h3>Series</h3><span>${seriesCards.length} match${seriesCards.length === 1 ? "" : "es"}</span></div>
+        <div class="rail-track posters wrap">${seriesCards.map((g) =>
+          homeCard(g.rep, playheads[g.rep.id], true, g.label)).join("")}</div>
+      </section>` : ""}
+    ${movies.length ? `
+      <section class="rail block">
+        <div class="rail-head"><h3>Movies &amp; more</h3><span>${movies.length}</span></div>
+        <div class="rail-track posters wrap">${movies.map((it) =>
+          homeCard(it, playheads[it.id], true)).join("")}</div>
+      </section>` : ""}`;
+  searchResults.querySelectorAll(".media-card").forEach((card) => {
+    const it = itemById.get(card.dataset.id);
+    if (!it) return;
+    card.querySelector(".card-play").onclick = (e) => {
+      e.stopPropagation();
+      closeSearch();
+      play(it);
+    };
+    card.onclick = () => {
+      closeSearch();
+      openItem(it);
+    };
+  });
+}
+
 // --- playback --------------------------------------------------------------------
 
 function canDirectPlay(info, item) {
@@ -799,6 +1050,8 @@ function stopPlayback() {
   video.removeAttribute("src");
   video.load();
   ccSelect.classList.add("hidden");
+  ccOpts.classList.add("hidden");
+  ccPop.classList.add("hidden");
   isHls = false;
   sessionOffsetS = 0;
   // NOTE: resumeAtS is set by play() AFTER this runs and consumed by
@@ -818,6 +1071,16 @@ async function play(item) {
   syncPlayButton();
   pokeControls();
   forceTranscode.onchange = () => play(item);
+
+  // Next-episode button + end-of-episode "Up next" (episodes only).
+  closeUpNext();
+  nextEp = null;
+  if (item.kind === "episode") {
+    const eps = seriesEpisodes(seriesKey(item), item.library);
+    const i = eps.findIndex((e) => e.id === item.id);
+    if (i >= 0 && i + 1 < eps.length) nextEp = eps[i + 1];
+  }
+  pcNext.classList.toggle("hidden", !nextEp);
 
   // Resume point from the journal: skip intros (<5s) and finished items.
   resumeAtS = 0;
@@ -932,9 +1195,11 @@ async function loadSubtitles(item) {
   });
   if (tracks.length === 0) {
     ccSelect.classList.add("hidden");
+    ccOpts.classList.add("hidden");
     return;
   }
   ccSelect.classList.remove("hidden");
+  ccOpts.classList.remove("hidden");
   // Forced/default tracks auto-enable (Plex behaviour); otherwise off.
   const def = tracks.findIndex((t) => t.default);
   if (def >= 0) selectTrack(def);
@@ -949,6 +1214,101 @@ function selectTrack(i) {
 
 ccSelect.onchange = () =>
   selectTrack(ccSelect.value === "" ? null : Number(ccSelect.value));
+
+// --- buffering spinner ----------------------------------------------------------
+// Shows while the video starves (startup, seek-restart, network stall).
+
+const showSpinner = () => playerSpinner.classList.remove("hidden");
+const hideSpinner = () => playerSpinner.classList.add("hidden");
+video.addEventListener("loadstart", showSpinner);
+video.addEventListener("waiting", showSpinner);
+video.addEventListener("stalled", showSpinner);
+video.addEventListener("playing", hideSpinner);
+video.addEventListener("canplay", hideSpinner);
+video.addEventListener("pause", hideSpinner);
+video.addEventListener("error", hideSpinner);
+video.addEventListener("emptied", hideSpinner);
+
+// --- next episode + "Up next" ------------------------------------------------------
+
+pcNext.onclick = () => {
+  if (nextEp) play(nextEp);
+};
+
+function closeUpNext() {
+  clearTimeout(upNextTimer);
+  clearInterval(upNextCountdown);
+  upNextTimer = null;
+  upNextCountdown = null;
+  upNext.classList.add("hidden");
+}
+
+function showUpNext() {
+  if (!nextEp) return;
+  upNextTitle.textContent = `${seriesKey(nextEp)} — ${seTag(nextEp)}`;
+  upNext.classList.remove("hidden");
+  pokeControls();
+  let left = 6;
+  upNextCount.textContent = `(${left}s)`;
+  upNextCountdown = setInterval(() => {
+    left -= 1;
+    upNextCount.textContent = left > 0 ? `(${left}s)` : "";
+  }, 1000);
+  upNextTimer = setTimeout(() => {
+    closeUpNext();
+    if (nextEp) play(nextEp);
+  }, 6000);
+}
+
+document.getElementById("up-next-play").onclick = () => {
+  closeUpNext();
+  if (nextEp) play(nextEp);
+};
+document.getElementById("up-next-cancel").onclick = closeUpNext;
+
+video.addEventListener("ended", () => {
+  reportPlayhead(true);
+  if (nextEp) showUpNext();
+});
+
+// --- subtitle appearance (size + background, persisted) ------------------------------
+
+function applySubPrefs() {
+  const size = localStorage.getItem("lumina.subSize") || "m";
+  const bg = localStorage.getItem("lumina.subBg") || "on";
+  overlay.classList.toggle("subs-s", size === "s");
+  overlay.classList.toggle("subs-m", size === "m");
+  overlay.classList.toggle("subs-l", size === "l");
+  overlay.classList.toggle("subs-nobg", bg === "off");
+  ccPop.querySelectorAll("[data-size]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.size === size));
+  ccPop.querySelectorAll("[data-bg]").forEach((b) =>
+    b.classList.toggle("active", b.dataset.bg === bg));
+}
+
+ccOpts.onclick = (e) => {
+  e.stopPropagation();
+  ccPop.classList.toggle("hidden");
+};
+ccPop.querySelectorAll("[data-size]").forEach((b) => {
+  b.onclick = () => {
+    localStorage.setItem("lumina.subSize", b.dataset.size);
+    applySubPrefs();
+  };
+});
+ccPop.querySelectorAll("[data-bg]").forEach((b) => {
+  b.onclick = () => {
+    localStorage.setItem("lumina.subBg", b.dataset.bg);
+    applySubPrefs();
+  };
+});
+document.addEventListener("click", (e) => {
+  if (!ccPop.classList.contains("hidden") &&
+      !ccPop.contains(e.target) && e.target !== ccOpts) {
+    ccPop.classList.add("hidden");
+  }
+});
+applySubPrefs();
 
 // --- watch-state reporting -----------------------------------------------------------
 
@@ -1428,13 +1788,24 @@ async function runPlexImport(apply) {
 document.getElementById("player-close").onclick = () => {
   overlay.classList.add("hidden");
   stopPlayback();
-  if (activeLib) loadItems(activeLib);
+  if (activeLib) refreshCurrentView();
 };
 
 // --- boot -----------------------------------------------------------------------------
 
 (async () => {
   try {
+    // Skeleton home while the API answers — hero block + two shimmer rails,
+    // replaced wholesale when loadHome() renders. First paint feels instant
+    // even when the libraries call takes seconds on a big SMB library.
+    grid.className = "home";
+    grid.innerHTML = `
+      <section class="hero skel skel-hero"></section>
+      ${[0, 1].map(() => `
+        <section class="rail">
+          <div class="rail-head"><div class="skel skel-line"></div></div>
+          <div class="rail-track">${'<div class="skel skel-card"></div>'.repeat(6)}</div>
+        </section>`).join("")}`;
     await loadUsers();
     // Libraries (nav) and home (content) load in parallel — the nav catches
     // up its counts via lastVisibleItems when it lands second.
@@ -1498,6 +1869,10 @@ function openCardMenu(x, y, it) {
     menuItem(`<span class="ic ic-play"></span> Play ${ph && !ph.watched && ph.positionMs > 0 ? "(resume)" : ""}`, () => play(it)),
     menuItem(`<span class="ic ic-info"></span> Media info`, () => openInfoModal(it)),
     menuItem(`<span class="ic ic-edit"></span> Fix match…`, () => openMatchModal(it)),
+    menuItem(myListIds[it.id]
+      ? `<span class="ic ic-bookmark"></span> Remove from My List`
+      : `<span class="ic ic-bookmark"></span> Add to My List`,
+      () => toggleMyList(it)),
     menuItem("Re-identify", async () => {
       try {
         await api(`/api/v1/items/${it.id}/metadata/refresh`, { method: "POST" });
@@ -1572,7 +1947,8 @@ async function toggleWatched(it, watched) {
 }
 
 function refreshCurrentView() {
-  if (activeLib) loadItems(activeLib);
+  if (activeLib && activeLib.kind === "mylist") loadMyList();
+  else if (activeLib) loadItems(activeLib);
   else loadHome();
 }
 
@@ -1614,6 +1990,8 @@ document.addEventListener("keydown", (e) => {
     closeCardMenu();
     closeModal();
     closeSettings();
+    closeSearch();
+    closeUpNext();
     return;
   }
   // Player shortcuts — only while the overlay is up, and never while

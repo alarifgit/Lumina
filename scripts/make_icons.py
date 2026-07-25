@@ -54,4 +54,19 @@ for r, row in enumerate(NAMES):
         keyed = key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS)
         keyed.save(OUT / f"ic-{name}.png")
         print("ic-%s.png" % name)
+
+# Bookmark icon: separate 1:1 generation, icon sits centered; erase the
+# "AI生成" watermark corner the same way before keying.
+bm = Image.open("assets/icon-bookmark-src.png").convert("RGB")
+bp = bm.load()
+for y in range(bm.size[1] - 130, bm.size[1]):
+    for x in range(0, 240):
+        bp[x, y] = NAVY
+# generous center crop around the ribbon
+bx, by = bm.size[0] // 2, bm.size[1] // 2
+half = int(bm.size[0] * 0.30)
+crop = bm.crop((bx - half, by - half, bx + half, by + half))
+key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS).save(OUT / "ic-bookmark.png")
+print("ic-bookmark.png")
+
 print("done ->", OUT)

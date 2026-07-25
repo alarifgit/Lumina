@@ -158,3 +158,41 @@ func numericUserID(id string) int64 {
 	fmt.Sscanf(id, "usr-%d", &n)
 	return n
 }
+
+// ToggleMyList flips one (user, item) bookmark and returns the NEW state.
+func (s *sqliteStore) ToggleMyList(userID, itemID string) (bool, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM mylist WHERE user_id=? AND item_id=?`,
+		numericUserID(userID), numericID(itemID))
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return false, nil // was present → now removed
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO mylist (user_id, item_id, added_at) VALUES (?, ?, ?)`,
+		numericUserID(userID), numericID(itemID), fmtTime(time.Now())); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MyListIDs returns the bookmarked item-ID set for one user.
+func (s *sqliteStore) MyListIDs(userID string) (map[string]bool, error) {
+	rows, err := s.db.Query(
+		`SELECT item_id FROM mylist WHERE user_id=?`, numericUserID(userID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		out[fmt.Sprintf("itm-%d", id)] = true
+	}
+	return out, rows.Err()
+}

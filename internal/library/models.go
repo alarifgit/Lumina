@@ -44,6 +44,11 @@ type Store interface {
 	// SetMetadata writes provider results (real title, year, artwork).
 	SetMetadata(id string, m Metadata) error
 
+	// My List (per-user bookmarks). Toggle returns the NEW membership
+	// state; MyListIDs returns the set the web client badges from.
+	ToggleMyList(userID, itemID string) (bool, error)
+	MyListIDs(userID string) (map[string]bool, error)
+
 	// FileState returns the last-indexed (size, mtime, hash) for a path —
 	// the scan accelerator that lets sweeps skip re-hashing unchanged files.
 	FileState(path string) (size, mtime int64, hash string, ok bool)

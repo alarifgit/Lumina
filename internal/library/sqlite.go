@@ -76,6 +76,14 @@ CREATE TABLE IF NOT EXISTS playheads (
     created_at  TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_playheads_user_item ON playheads(user_id, item_id, version);
+
+-- My List: per-user bookmarks (Plex's "Add to My List" / watchlist).
+CREATE TABLE IF NOT EXISTS mylist (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, item_id)
+);
 `
 
 // migrate handles post-Phase-1 schema drift: playheads created before

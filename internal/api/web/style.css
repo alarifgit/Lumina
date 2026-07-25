@@ -1275,6 +1275,7 @@ nav button.active { color: #fff; }
 .ic-info { -webkit-mask-image: url("/icons/ic-info.png"); mask-image: url("/icons/ic-info.png"); }
 .ic-edit { -webkit-mask-image: url("/icons/ic-edit.png"); mask-image: url("/icons/ic-edit.png"); }
 .ic-check { -webkit-mask-image: url("/icons/ic-check.png"); mask-image: url("/icons/ic-check.png"); }
+.ic-bookmark { -webkit-mask-image: url("/icons/ic-bookmark.png"); mask-image: url("/icons/ic-bookmark.png"); }
 .ic-flip { transform: scaleX(-1); }
 /* Size adjustments where icons replace emoji glyphs. */
 .card-play .ic { width: 1.05rem; height: 1.05rem; }
@@ -1288,3 +1289,256 @@ nav button.active { color: #fff; }
 .text-button .ic { margin-right: 0.25rem; }
 .ghost-button .ic { margin-right: 0.2rem; }
 .lib-remove .ic { font-size: 0.8rem; }
+
+
+/* --- parity round: carousel, search, my-list, player extras, skeletons ------ */
+
+/* Hero carousel: slides stack and crossfade via opacity only (no layout
+   transitions). The .hero base keeps its 62vh shell; slides fill it. */
+.hero.carousel { padding: 0; }
+.hero-slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 900ms ease;
+}
+.hero-slide.active { opacity: 1; pointer-events: auto; }
+.hero-slide > img, .hero-slide .proc-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hero-slide .hero-copy { position: relative; z-index: 1; height: 100%; }
+/* Inactive slides still occupy the layout via the first (active) slide;
+   give the hero shell an explicit sizer so absolute slides have height. */
+.hero.carousel::after {
+  content: "";
+  display: block;
+  min-height: 62vh;
+  visibility: hidden;
+}
+.hero-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 14, 22, 0.42);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 250ms ease, background 250ms ease;
+}
+.hero.carousel:hover .hero-nav { opacity: 1; }
+.hero-nav:hover { background: rgba(255, 255, 255, 0.16); }
+.hero-nav.prev { left: 1rem; }
+.hero-nav.next { right: 1rem; }
+.hero-nav .ic { width: 1.2rem; height: 1.2rem; }
+.hero-dots {
+  position: absolute;
+  right: 1.4rem;
+  bottom: 1.2rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.45rem;
+}
+.hero-dots button {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  transition: transform 250ms ease, background 250ms ease;
+}
+.hero-dots button.active {
+  background: var(--cream);
+  transform: scale(1.35);
+}
+
+/* Global search overlay — same frosted full-page treatment as settings. */
+#search-page {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(10, 15, 24, 0.9);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+  overflow-y: auto;
+  padding: clamp(1rem, 4vw, 3rem);
+}
+.search-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  max-width: 720px;
+  margin: 6vh auto 2rem;
+  padding: 0.9rem 1.2rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.search-head .ic-search { width: 1.15rem; height: 1.15rem; opacity: 0.7; }
+#search-input {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 1.1rem;
+}
+#search-input::placeholder { color: var(--muted); }
+#search-close {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+#search-close:hover { color: var(--text); }
+#search-results { max-width: 1400px; margin: 0 auto; }
+/* Search results render as WRAPPING card grids, not scroll rails. */
+.rail.block .rail-track {
+  overflow: visible;
+  flex-wrap: wrap;
+}
+.rail-track.wrap { flex-wrap: wrap; overflow: visible; }
+
+/* Buffering spinner: gold ring, transform-only animation. */
+#player-spinner {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  pointer-events: none;
+}
+.spin-ring {
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--cream);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* "Up next" post-play card (bottom-right, tvOS-style). */
+#up-next {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 6.5rem;
+  z-index: 4;
+}
+.up-next-card {
+  min-width: 260px;
+  padding: 1.1rem 1.3rem;
+  border-radius: 14px;
+  background: rgba(14, 19, 30, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.up-next-label {
+  color: var(--cream);
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.68rem;
+}
+.up-next-title {
+  margin: 0.35rem 0 0.8rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.up-next-actions { display: flex; gap: 1rem; align-items: center; }
+
+/* Subtitle appearance: size presets + optional backdrop, applied on the
+   overlay so ::cue rules below can scope through it. */
+#cc-opts {
+  background: none;
+  border: 0;
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: 6px;
+}
+#cc-opts:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+#cc-pop {
+  position: absolute;
+  bottom: 4.6rem;
+  right: 8rem;
+  z-index: 5;
+  padding: 0.7rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(14, 19, 30, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.cc-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.cc-pop-row span { width: 4.6rem; }
+.cc-pop-row button {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 0.2rem 0.6rem;
+  font: inherit;
+  cursor: pointer;
+}
+.cc-pop-row button.active {
+  border-color: var(--cream);
+  color: var(--cream);
+}
+.subs-s #video::cue { font-size: 0.85rem; }
+.subs-m #video::cue { font-size: 1.05rem; }
+.subs-l #video::cue { font-size: 1.35rem; }
+.subs-nobg #video::cue { background: none; }
+
+/* Bookmarked state on detail-page My List buttons. */
+.ghost-button.active {
+  border-color: var(--cream);
+  color: var(--cream);
+}
+
+/* Boot skeletons: pulse via opacity only. */
+.skel {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  animation: skelPulse 1.6s ease-in-out infinite;
+}
+@keyframes skelPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.skel-hero { min-height: 62vh; border-radius: 0; }
+.skel-line { width: 180px; height: 1rem; margin: 0.2rem 0; }
+.skel-card { width: 220px; height: 124px; flex: 0 0 auto; }

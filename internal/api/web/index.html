@@ -13,6 +13,7 @@
 <header>
   <h1 id="logo-word"><img id="logo-lockup" src="/brand/wordmark.png" alt="Lumina"></h1>
   <nav id="libraries"></nav>
+  <button id="search-button" title="Search"><span class="ic ic-search"></span></button>
   <button id="arr-button" title="Downloads & upcoming"><span class="ic ic-download"></span></button>
   <button id="user-badge" title="Switch user"></button>
   <button id="libs-button" title="Settings"><span class="ic ic-settings"></span></button>
@@ -79,6 +80,15 @@
   </div>
 </div>
 
+<div id="search-page" class="hidden">
+  <div class="search-head">
+    <span class="ic ic-search"></span>
+    <input id="search-input" type="search" placeholder="Search titles…" autocomplete="off">
+    <button id="search-close" aria-label="Close search" title="Close (Esc)"><span class="ic ic-close"></span></button>
+  </div>
+  <div id="search-results"><div class="modal-note">Type to search your library.</div></div>
+</div>
+
 <main id="grid" aria-live="polite"></main>
 
 <div id="player-overlay" class="hidden">
@@ -91,6 +101,17 @@
     <button id="player-close" aria-label="Close player"><span class="ic ic-close"></span></button>
   </div>
   <video id="video" autoplay crossorigin="anonymous"></video>
+  <div id="player-spinner" class="hidden"><div class="spin-ring"></div></div>
+  <div id="up-next" class="hidden">
+    <div class="up-next-card">
+      <div class="up-next-label">Up next</div>
+      <div class="up-next-title" id="up-next-title"></div>
+      <div class="up-next-actions">
+        <button class="text-button" id="up-next-play"><span class="ic ic-play"></span> Play now <span id="up-next-count"></span></button>
+        <button class="ghost-button" id="up-next-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
   <div id="player-controls">
     <div id="seek-bar" aria-label="Seek">
       <div id="seek-buffered"></div>
@@ -100,9 +121,21 @@
       <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)"><span class="ic ic-play"></span></button>
       <button id="pc-back" title="Back 10 seconds (←)"><span class="ic ic-back10"></span></button>
       <button id="pc-fwd" title="Forward 10 seconds (→)"><span class="ic ic-fwd10"></span></button>
+      <button id="pc-next" class="hidden" title="Next episode"><span class="ic ic-back ic-flip"></span></button>
       <span id="pc-time">0:00 / 0:00</span>
       <span class="pc-spacer"></span>
       <select id="cc-select" class="hidden" title="Subtitles"></select>
+      <button id="cc-opts" class="hidden" title="Subtitle appearance">Aa</button>
+      <div id="cc-pop" class="hidden">
+        <div class="cc-pop-row">
+          <span>Size</span>
+          <button data-size="s">S</button><button data-size="m" class="active">M</button><button data-size="l">L</button>
+        </div>
+        <div class="cc-pop-row">
+          <span>Background</span>
+          <button data-bg="on" class="active">On</button><button data-bg="off">Off</button>
+        </div>
+      </div>
       <button id="pc-rate" title="Playback speed">1×</button>
       <span class="ic ic-volume" id="pc-volume-icon"></span>
       <input id="pc-volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
