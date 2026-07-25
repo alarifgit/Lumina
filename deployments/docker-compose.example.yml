@@ -1,0 +1,40 @@
+services:
+  lumina:
+    build: ..
+    container_name: lumina
+    devices:
+      - /dev/dri:/dev/dri          # Intel/AMD GPU for VAAPI/QSV transcoding
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      # Optional: pin the host render group explicitly (entrypoint auto-detects)
+      # RENDER_GID: "109"
+      TZ: Europe/London
+    volumes:
+      - ./config:/config
+      # Local media, directly attached:
+      - /srv/media/movies:/media/movies
+      - /srv/media/tv:/media/tv
+      # SMB share mounted on the HOST, bind-mounted in (Lumina never speaks SMB):
+      - /mnt/nas/media:/media/nas
+    ports:
+      - "8096:8096"
+    restart: unless-stopped
+
+  # --- Reference *arr stack (optional) -------------------------------------
+  # Follow the single-/data-volume pattern so imports are atomic moves and
+  # path mapping stays trivial.
+  #
+  # sonarr:
+  #   image: lscr.io/linuxserver/sonarr:latest
+  #   volumes:
+  #     - ./sonarr:/config
+  #     - /srv/data:/data            # downloads + library under ONE root
+  #
+  # Then in Lumina's lumina.json:
+  #   "pathMappings": [{ "from": "/data/media", "to": "/media" }]
+  #
+  # And in Sonarr → Settings → Connect → + → Emby:
+  #   Host: lumina  Port: 8096  (API key: anything for now)
+  # Or Sonarr → Settings → Connect → + → Webhook:
+  #   URL: http://lumina:8096/hooks/arr

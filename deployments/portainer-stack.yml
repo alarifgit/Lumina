@@ -1,0 +1,67 @@
+# Portainer stack for Lumina (Go server) — mirrors the layout of the old
+# Codex/Next.js stack so it drops into the same host with the same mounts.
+#
+# Build first (from the Lumina repo root on the host):
+#   docker build -t lumina:latest .
+#
+# External port stays 3422 (as before) → http://docker-host:3422
+
+services:
+  lumina:
+    image: lumina:latest
+    container_name: lumina
+    restart: unless-stopped
+
+    ports:
+      - "3422:8096"
+
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "Europe/London"
+      # TMDB key can live here instead of lumina.json — env wins:
+      LUMINA_TMDB_KEY: "CHANGE_ME_OR_SET_IN_PORTAINER"
+      # Set only if the desired GPU is not mapped to renderD128:
+      # RENDER_GID: "109"   # normally auto-detected from the device node
+
+      # NOTE: polling for network mounts is AUTOMATIC now — the scanner
+      # reads /proc/mounts, sees cifs, and uses the Tier-3 mtime sweep.
+      # (Replaces the old LUMINA_WATCH_USE_POLLING flags.)
+
+    volumes:
+      - type: bind
+        source: "/home/chaosen3/DockerStorage/lumina"
+        target: /config
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: "/mnt/NASDRIVE/Movies"
+        target: /media/movies
+        read_only: true
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: "/mnt/NASDRIVE/Anime/Movies"
+        target: /media/movies-anime
+        read_only: true
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: "/mnt/NASDRIVE/TV Shows"
+        target: /media/tv
+        read_only: true
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: "/mnt/NASDRIVE/Anime/TV Shows"
+        target: /media/tv-anime
+        read_only: true
+        bind:
+          create_host_path: false
+
+    devices:
+      - "/dev/dri-dgpu:/dev/dri/renderD128"

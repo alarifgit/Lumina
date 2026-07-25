@@ -1,0 +1,22 @@
+{
+  "dataDir": "/config",
+  "httpAddr": ":8096",
+  "ffmpegPath": "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+  "ffprobePath": "/usr/lib/jellyfin-ffmpeg/ffprobe",
+  "sweepIntervalMinutes": 10,
+  "shimApiKey": "",
+  "tmdb": { "apiKey": "", "language": "en-US" },
+  "libraries": [
+    { "name": "Movies",   "path": "/media/movies", "kind": "movies" },
+    { "name": "TV Shows", "path": "/media/tv",     "kind": "tv" },
+    { "name": "NAS",      "path": "/media/nas",    "kind": "movies" }
+  ],
+  "pathMappings": [
+    { "from": "/data/media/movies", "to": "/media/movies" },
+    { "from": "/data/media/tv",     "to": "/media/tv" }
+  ],
+  "arr": [
+    { "name": "sonarr", "url": "http://sonarr:8989", "apiKey": "CHANGE_ME" },
+    { "name": "radarr", "url": "http://radarr:7878", "apiKey": "CHANGE_ME" }
+  ]
+}

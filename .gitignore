@@ -1,0 +1,23 @@
+# Local runtime state
+data/
+config/
+lumina.json
+deployments/lumina.host.json
+*.tmp
+*.log
+*.db
+*.db-*
+/lumina
+
+# Secrets — never commit these
+.env
+*.env
+!.env.example
+
+# Reference-only trees (not part of the Go rewrite)
+_reference/
+lumina_badattempt/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

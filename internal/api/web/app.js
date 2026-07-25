@@ -1,0 +1,1140 @@
+/* Lumina web client — browse + smart playback + watch state + subtitles.
+ *
+ * Playback:
+ *   - ffprobe decides direct play vs transcode; runtime failure of a
+ *     direct attempt falls back to HLS automatically.
+ *   - HLS runs in SESSIONS keyed by start offset (restart-on-seek):
+ *     seeking beyond produced segments restarts FFmpeg with -ss at the
+ *     absolute target. video.currentTime is session-relative; all
+ *     playhead reporting converts back to absolute time.
+ *
+ * Watch state: append-only journal server-side, keyed by content-hash
+ * identity. Reported every 10s / on pause / on close.
+ *
+ * Visual design (procedural posters, hue palette, grain, watermark)
+ * adapted from lumina_badattempt's ProceduralPoster + media-utils —
+ * the salvageable parts of that codebase, per the project README.
+ */
+
+const grid = document.getElementById("grid");
+const nav = document.getElementById("libraries");
+const statusEl = document.getElementById("status");
+const userBadge = document.getElementById("user-badge");
+const overlay = document.getElementById("player-overlay");
+const video = document.getElementById("video");
+const playerTitle = document.getElementById("player-title");
+const playerMode = document.getElementById("player-mode");
+const mediaInfoJson = document.getElementById("media-info-json");
+const forceTranscode = document.getElementById("force-transcode");
+const ccSelect = document.getElementById("cc-select");
+const headerEl = document.querySelector("header");
+
+window.addEventListener("scroll", () => {
+  headerEl.classList.toggle("solid", window.scrollY > 12);
+}, { passive: true });
+
+const REPORT_INTERVAL_MS = 10_000;
+const RESUME_MIN_S = 5;
+const WATCHED_FRACTION = 0.92;
+const SEEK_RESTART_MARGIN_S = 15; // seek past produced segments + margin → restart
+
+let currentHls = null;
+let currentItem = null;
+let currentUser = null;
+let users = [];
+let playheads = {};
+let lastReportAt = 0;
+let resumeAtS = 0;
+let activeLib = null;
+
+// Every rendered item, by id — the context menu looks items up here
+// instead of re-fetching.
+const itemById = new Map();
+
+// Transcode-session timeline state.
+let isHls = false;
+let sessionOffsetS = 0;     // absolute time at which the HLS session starts
+let absoluteDurationS = 0;  // from ffprobe (video.duration is session-relative)
+let seekRestartTimer = null;
+
+// Container gate uses the FILE EXTENSION, not ffprobe's format_name:
+// ffprobe reports MKV as "matroska,webm", so a substring match waves
+// every MKV through as if it were a WebM — browsers then get raw MKV
+// streams they may demux but not fully decode (silent AC3, dead AV1).
+const DIRECT_EXTS = ["mp4", "m4v", "mov", "webm"];
+const DIRECT_VIDEO = ["h264", "vp8", "vp9", "av1"];
+// ac3/eac3 are deliberately absent: Chrome/Edge cannot decode them and
+// fail SILENTLY (video plays, no audio) — exactly the failure that
+// doesn't trigger the onerror → HLS fallback. DTS/TrueHD likewise go
+// to transcode, where FFmpeg outputs AAC.
+const DIRECT_AUDIO = ["aac", "mp3", "opus", "vorbis", "flac"];
+
+async function api(path, opts = {}) {
+  // A wedged server must never leave the UI sitting on "Saving…" forever.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(path, { ...opts, signal: ctrl.signal });
+    if (res.status === 204) return null;
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    return res.json();
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("server took too long to respond — check docker logs");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// --- procedural posters (ported from badattempt's media-utils.ts) ------------
+
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function hueForTitle(title) { return 20 + (hashString(title) % 60); }
+
+function posterStyle(title) {
+  const h = hueForTitle(title);
+  const c1 = `hsl(${h} 38% 14%)`;
+  const c2 = `hsl(${(h + 24) % 360} 30% 22%)`;
+  const c3 = `hsl(${(h + 340) % 360} 45% 8%)`;
+  return `background: linear-gradient(155deg, ${c2} 0%, ${c1} 48%, ${c3} 100%);`;
+}
+
+function glowStyle(title) {
+  const h = hueForTitle(title);
+  return `background: radial-gradient(circle at 50% 30%, hsl(${h} 70% 75% / 0.35), transparent 60%);`;
+}
+
+function posterInitials(title) {
+  const words = title.replace(/[^a-zA-Z0-9 ]/g, "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "•";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+function fmtBytes(n) {
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(1)} ${u[i]}`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+// --- users -------------------------------------------------------------------
+
+async function loadUsers() {
+  users = await api("/api/v1/users");
+  const saved = localStorage.getItem("lumina.user");
+  currentUser = users.find((u) => u.id === saved) || users[0];
+  renderUserBadge();
+}
+
+function renderUserBadge() {
+  if (!currentUser) return;
+  userBadge.textContent = `👤 ${currentUser.name}`;
+  localStorage.setItem("lumina.user", currentUser.id);
+}
+
+userBadge.onclick = () => {
+  if (users.length < 2) return;
+  const i = users.findIndex((u) => u.id === currentUser.id);
+  currentUser = users[(i + 1) % users.length];
+  renderUserBadge();
+  if (activeLib) loadItems(activeLib);
+  else loadHome();
+};
+
+// --- browse --------------------------------------------------------------------
+
+function setActiveNav(btn) {
+  nav.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+}
+
+async function loadLibraries() {
+  const libs = await api("/api/v1/libraries");
+  nav.innerHTML = "";
+
+  const homeBtn = document.createElement("button");
+  homeBtn.textContent = "Home";
+  homeBtn.onclick = () => {
+    setActiveNav(homeBtn);
+    loadHome();
+  };
+  nav.appendChild(homeBtn);
+
+  for (const lib of libs) {
+    const btn = document.createElement("button");
+    btn.textContent = `${lib.name} (${lib.items})`;
+    btn.title = `${lib.path} — watcher: ${lib.watcher}`;
+    btn.onclick = () => {
+      setActiveNav(btn);
+      loadItems(lib);
+    };
+    nav.appendChild(btn);
+  }
+
+  if (libs.length > 0) homeBtn.click();
+  else {
+    grid.className = "home";
+    grid.innerHTML = `<div class="home-empty"><img class="empty-emblem" src="/brand/emblem-512.png" alt=""><br>No libraries configured.<br>Open ⚙ Libraries to add one — no JSON editing, no restart.</div>`;
+  }
+
+  const caps = await api("/api/v1/system/capabilities");
+  const enc = Object.entries(caps.encoders || {})
+    .map(([k, v]) => `${k}:${v ? "✓" : "✗"}`).join(" ");
+  const anyHW = Object.values(caps.encoders || {}).some(Boolean);
+  statusEl.textContent = caps.vaapi.available && anyHW
+    ? `VAAPI ✓ ${enc}${caps.hdrToneMap ? " HDR✓" : ""}`
+    : `software transcode ${enc}`;
+  // Why did an encoder fail? The probe now keeps FFmpeg's own answer —
+  // surface it on hover instead of making people dig through docker logs.
+  const errs = Object.entries(caps.encoderErrors || {})
+    .map(([k, v]) => `${k}: ${v}`).join("\n");
+  statusEl.title = [
+    caps.ffmpegVersion && `ffmpeg ${caps.ffmpegVersion}`,
+    caps.vaapi.device && `device ${caps.vaapi.device}`,
+    caps.driver && `driver: ${caps.driver}`,
+    errs,
+  ].filter(Boolean).join("\n");
+}
+
+async function loadItems(lib) {
+  activeLib = lib;
+  grid.className = "";
+  const [items, phs] = await Promise.all([
+    api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
+    currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
+  ]);
+  playheads = phs || {};
+  grid.innerHTML = "";
+  if (items.length === 0) {
+    grid.innerHTML = `<div id="empty">Nothing here yet — Lumina is scanning, or the path is empty.</div>`;
+    return;
+  }
+  for (const it of items) {
+    if (it.state === "missing") continue;
+    const ph = playheads[it.id];
+    const pct = ph && ph.durationMs > 0
+      ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
+    const identified = !!it.posterUrl;
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="poster" style="${posterStyle(it.title)}">
+        ${identified ? "" : `<div class="glow" style="${glowStyle(it.title)}"></div><div class="grain"></div>`}
+        ${identified
+          ? `<img class="poster-img" src="${it.posterUrl}" loading="lazy" alt=""
+               onerror="this.remove()">`
+          : `<span class="initials">${posterInitials(it.title)}</span>
+             <span class="poster-title">${it.title}</span>`}
+        <span class="watermark">LUMINA</span>
+        ${ph && ph.watched ? `<span class="watched" title="Watched">✓</span>` : ""}
+        ${pct > 0 && !(ph && ph.watched)
+          ? `<div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`
+          : ""}
+      </div>
+      <div class="meta">
+        <div class="title" title="${it.title}">${it.title}</div>
+        <div class="sub">${it.year ? it.year + " · " : ""}${fmtBytes(it.sizeBytes)}</div>
+      </div>`;
+    card.onclick = () => play(it);
+    card.dataset.id = it.id;
+    itemById.set(it.id, it);
+    grid.appendChild(card);
+  }
+}
+
+// --- home (artwork-led cover + rails) ---------------------------------------------
+
+function fmtLeftMs(ph) {
+  if (!ph || !ph.durationMs) return "";
+  const leftMs = Math.max(0, ph.durationMs - ph.positionMs);
+  const mins = Math.round(leftMs / 60000);
+  if (mins >= 60) return `${Math.floor(mins / 60)}h ${mins % 60}m left`;
+  return `${mins}m left`;
+}
+
+function artHtml(it, prefer = "poster") {
+  const url = prefer === "backdrop"
+    ? (it.backdropUrl || it.posterUrl)
+    : (it.posterUrl || it.backdropUrl);
+  const fallback = `<div class="proc-fallback" style="${posterStyle(it.title)}">${posterInitials(it.title)}</div>`;
+  return url
+    ? `${fallback}<img src="${url}" loading="lazy" alt="" onerror="this.remove()">`
+    : fallback;
+}
+
+function homeCard(it, ph, poster = false, label = null) {
+  const pct = ph && ph.durationMs > 0
+    ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
+  const left = fmtLeftMs(ph);
+  const sub = label && label.sub
+    ? label.sub
+    : ph && !ph.watched
+      ? [left, it.year].filter(Boolean).join(" · ")
+      : [it.year, fmtBytes(it.sizeBytes)].filter(Boolean).join(" · ");
+  const title = label && label.title ? label.title : it.title;
+  return `
+    <figure class="media-card" data-id="${it.id}">
+      <div class="thumb">
+        ${artHtml(it, poster ? "poster" : "backdrop")}
+        ${pct > 0 && !(ph && ph.watched) ? `<div class="progress-line"><i style="width:${pct}%"></i></div>` : ""}
+        ${label && label.badge ? `<span class="count-badge">${escapeHtml(label.badge)}</span>` : ""}
+      </div>
+      <figcaption>
+        <span class="t" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+        <span class="s">${escapeHtml(sub)}</span>
+      </figcaption>
+    </figure>`;
+}
+
+// Plex behaviour: Recently Added TV shows one card per series, not a wall of
+// identical posters for every new episode. Episodes carry SxxExx in the
+// title (scanner-side parse), so group on the prefix before that marker.
+const SERIES_RE = /\s*[-–—.:]?\s*[Ss](\d{1,3})[Ee](\d{1,4})\b/;
+
+function seriesKey(it) {
+  const m = it.title.match(SERIES_RE);
+  if (!m || m.index === 0) return it.title;
+  return it.title.slice(0, m.index).replace(/[\s\-–—.:]+$/, "") || it.title;
+}
+
+function episodeSE(it) {
+  const m = it.title.match(SERIES_RE);
+  return m ? { s: +m[1], e: +m[2] } : null;
+}
+
+// Group episodes (already sorted newest-first) into one entry per series.
+function groupBySeries(episodes) {
+  const groups = new Map();
+  for (const it of episodes) {
+    const k = seriesKey(it);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  }
+  return [...groups.entries()].map(([name, eps]) => {
+    let sMax = 0, eMax = 0;
+    for (const it of eps) {
+      const se = episodeSE(it);
+      if (se && (se.s > sMax || (se.s === sMax && se.e > eMax))) {
+        sMax = se.s; eMax = se.e;
+      }
+    }
+    const latest = sMax > 0 ? `S${sMax}E${eMax}` : "";
+    const sub = eps.length > 1
+      ? [latest && `up to ${latest}`, `${eps.length} new`].filter(Boolean).join(" · ")
+      : latest;
+    return { rep: eps[0], label: { title: name, sub, badge: eps.length > 1 ? `${eps.length}` : "" } };
+  });
+}
+
+async function loadHome() {
+  activeLib = null;
+  grid.className = "home";
+  const [items, phs] = await Promise.all([
+    api("/api/v1/items"),
+    currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
+  ]);
+  playheads = phs || {};
+
+  const visible = (items || []).filter((it) => it.state !== "missing");
+  visible.forEach((it) => itemById.set(it.id, it));
+  if (visible.length === 0) {
+    grid.innerHTML = `<div class="home-empty"><img class="empty-emblem" src="/brand/emblem-512.png" alt=""><br>Nothing here yet — add a library with ⚙, then let Lumina scan.</div>`;
+    return;
+  }
+
+  const byId = Object.fromEntries(visible.map((it) => [it.id, it]));
+  const recent = [...visible].sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+  const recentTV = recent.filter((it) => it.kind === "episode");
+  const recentMovies = recent.filter((it) => it.kind !== "episode");
+  const resume = visible
+    .filter((it) => {
+      const ph = playheads[it.id];
+      return ph && !ph.watched && ph.durationMs > 0 &&
+        ph.positionMs >= RESUME_MIN_S * 1000 &&
+        ph.positionMs / ph.durationMs < WATCHED_FRACTION;
+    })
+    .sort((a, b) => new Date(playheads[b.id].updatedAt) - new Date(playheads[a.id].updatedAt));
+
+  const featured = resume.find((it) => it.backdropUrl) ||
+    recent.find((it) => it.backdropUrl) || recent[0];
+  const featuredPh = playheads[featured.id];
+
+  grid.innerHTML = `
+    <section class="hero">
+      ${artHtml(featured, "backdrop")}
+      <div class="hero-scrim"></div>
+      <div class="hero-copy">
+        <div class="eyebrow">${featuredPh ? "Resume" : "Featured"} · ${featured.kind === "episode" ? "Episode" : "Movie"}</div>
+        <h2>${escapeHtml(featured.title)}</h2>
+        <p>${escapeHtml(featured.overview || "Your library, direct from the source — no cloud account, no Plex pass, no transcode unless it has to.")}</p>
+        <button class="text-button" data-play="${featured.id}">▶ ${featuredPh ? "Resume" : "Play now"}</button>
+      </div>
+    </section>
+    ${resume.length ? `
+      <section class="rail">
+        <div class="rail-head"><h3>Continue Watching</h3><span>${resume.length} in progress</span></div>
+        <div class="rail-track">${resume.slice(0, 16).map((it) => homeCard(it, playheads[it.id], false)).join("")}</div>
+      </section>` : ""}
+    ${recentTV.length ? (() => {
+      const groups = groupBySeries(recentTV);
+      return `
+      <section class="rail">
+        <div class="rail-head"><h3>Recently Added TV</h3><span>${groups.length} series · ${recentTV.length} episodes</span></div>
+        <div class="rail-track posters">${groups.slice(0, 16).map((g) => homeCard(g.rep, playheads[g.rep.id], true, g.label)).join("")}</div>
+      </section>`;
+    })() : ""}
+    ${recentMovies.length ? `
+      <section class="rail">
+        <div class="rail-head"><h3>Recently Added Movies</h3><span>${recentMovies.length} movies</span></div>
+        <div class="rail-track posters">${recentMovies.slice(0, 24).map((it) => homeCard(it, playheads[it.id], true)).join("")}</div>
+      </section>` : ""}`;
+
+  const heroBtn = grid.querySelector("[data-play]");
+  if (heroBtn) heroBtn.onclick = () => play(featured);
+  grid.querySelectorAll(".media-card").forEach((card) => {
+    card.onclick = () => {
+      const it = byId[card.dataset.id];
+      if (it) play(it);
+    };
+  });
+}
+
+// --- playback --------------------------------------------------------------------
+
+function canDirectPlay(info, item) {
+  if (!info.video) return false;
+  const ext = ((item.paths && item.paths[0]) || "").split(".").pop().toLowerCase();
+  if (!DIRECT_EXTS.includes(ext)) return false;
+  if (!DIRECT_VIDEO.includes(info.video.codec)) return false;
+  for (const a of info.audio || []) {
+    if (!DIRECT_AUDIO.includes(a.codec)) return false;
+  }
+  return true;
+}
+
+function setMode(label, cls) {
+  playerMode.textContent = label;
+  playerMode.className = `badge ${cls}`;
+}
+
+function absolutePositionS() { return sessionOffsetS + video.currentTime; }
+
+function stopPlayback() {
+  reportPlayhead(true); // final flush before teardown
+  clearTimeout(seekRestartTimer);
+  if (currentHls) { currentHls.destroy(); currentHls = null; }
+  video.pause();
+  video.querySelectorAll("track").forEach((t) => t.remove());
+  video.removeAttribute("src");
+  video.load();
+  ccSelect.classList.add("hidden");
+  isHls = false;
+  sessionOffsetS = 0;
+  // NOTE: resumeAtS is set by play() AFTER this runs and consumed by
+  // applyResume on loadedmetadata — do not reset it here.
+}
+
+async function play(item) {
+  currentItem = item;
+  lastReportAt = 0;
+  playerTitle.textContent = item.title;
+  overlay.classList.remove("hidden");
+  forceTranscode.onchange = () => play(item);
+
+  // Resume point from the journal: skip intros (<5s) and finished items.
+  resumeAtS = 0;
+  if (currentUser) {
+    try {
+      const ph = await api(`/api/v1/items/${item.id}/playhead?user=${currentUser.id}`);
+      if (ph && !ph.watched && ph.durationMs > 0) {
+        const posS = ph.positionMs / 1000;
+        if (posS >= RESUME_MIN_S) resumeAtS = posS;
+      }
+    } catch { /* no journal entry — start from 0 */ }
+  }
+
+  const info = await api(`/api/v1/items/${item.id}/info`);
+  mediaInfoJson.textContent = JSON.stringify(info, null, 2);
+  document.getElementById("media-overview").textContent = item.overview || "";
+  absoluteDurationS = info.durationS || 0;
+
+  loadSubtitles(item).catch(() => {});
+
+  if (!forceTranscode.checked && canDirectPlay(info, item)) {
+    startDirect(item);
+  } else {
+    startHls(item, resumeAtS);
+  }
+}
+
+function applyResume() {
+  // Direct play only: HLS sessions START at the resume offset instead.
+  if (isHls) return;
+  if (resumeAtS > 0 && video.duration && resumeAtS < video.duration * WATCHED_FRACTION) {
+    video.currentTime = resumeAtS;
+    resumeAtS = 0;
+  }
+}
+
+function startDirect(item) {
+  stopPlayback();
+  setMode("direct play", "direct");
+  video.onerror = () => startHls(item, video.currentTime || resumeAtS || 0);
+  video.src = `/api/v1/items/${item.id}/stream`;
+  video.play().catch(() => {});
+}
+
+async function startHls(item, startS) {
+  stopPlayback();
+  isHls = true;
+  sessionOffsetS = Math.max(0, startS || 0);
+  const qs = sessionOffsetS > 0 ? `?start=${Math.floor(sessionOffsetS)}` : "";
+  const url = `/api/v1/items/${item.id}/hls/index.m3u8${qs}`;
+
+  let mode = "software";
+  try {
+    await api(url); // ensures the session exists
+    const sessions = await api("/api/v1/system/sessions");
+    const sess = sessions.find((s) => s.key.startsWith(item.id));
+    if (sess) mode = sess.mode;
+  } catch { /* session may already exist */ }
+  if (mode === "copy") {
+    setMode("direct stream · remux", "direct");
+  } else {
+    setMode(`transcode · ${mode}`, mode === "vaapi" ? "" : "software");
+  }
+
+  if (window.Hls && Hls.isSupported()) {
+    currentHls = new Hls({ maxBufferLength: 60 });
+    currentHls.loadSource(url);
+    currentHls.attachMedia(video);
+    currentHls.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.currentTime = 0; // session timeline starts at the offset
+      video.play().catch(() => {});
+    });
+  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = url; // Safari native HLS
+    video.play().catch(() => {});
+  } else {
+    playerTitle.textContent = `${item.title} — this browser cannot play HLS`;
+  }
+}
+
+// Restart-on-seek: jumping beyond produced segments restarts FFmpeg
+// with -ss at the absolute target, instead of waiting minutes for the
+// transcode to catch up. Debounced so scrub-fires collapse into one restart.
+video.addEventListener("seeking", () => {
+  if (!isHls || !currentItem) return;
+  const target = absolutePositionS();
+  let bufferedEndAbs = sessionOffsetS;
+  if (video.buffered.length > 0) {
+    bufferedEndAbs = sessionOffsetS + video.buffered.end(video.buffered.length - 1);
+  }
+  if (target <= bufferedEndAbs + SEEK_RESTART_MARGIN_S) return;
+  clearTimeout(seekRestartTimer);
+  seekRestartTimer = setTimeout(() => startHls(currentItem, target), 350);
+});
+
+// --- subtitles --------------------------------------------------------------------
+
+async function loadSubtitles(item) {
+  const tracks = await api(`/api/v1/items/${item.id}/subtitles`);
+  ccSelect.innerHTML = '<option value="">Subtitles: off</option>';
+  tracks.forEach((t, i) => {
+    const el = document.createElement("track");
+    el.kind = "subtitles";
+    el.label = t.label;
+    if (t.language && t.language !== "und") el.srclang = t.language;
+    el.src = `/api/v1/items/${item.id}/subtitles/${t.id}`;
+    video.appendChild(el);
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = t.label;
+    ccSelect.appendChild(opt);
+  });
+  if (tracks.length === 0) {
+    ccSelect.classList.add("hidden");
+    return;
+  }
+  ccSelect.classList.remove("hidden");
+  // Forced/default tracks auto-enable (Plex behaviour); otherwise off.
+  const def = tracks.findIndex((t) => t.default);
+  if (def >= 0) selectTrack(def);
+}
+
+function selectTrack(i) {
+  [...video.textTracks].forEach((tt, j) => {
+    tt.mode = j === i ? "showing" : "hidden";
+  });
+  ccSelect.value = i == null ? "" : String(i);
+}
+
+ccSelect.onchange = () =>
+  selectTrack(ccSelect.value === "" ? null : Number(ccSelect.value));
+
+// --- watch-state reporting -----------------------------------------------------------
+
+video.addEventListener("loadedmetadata", applyResume);
+video.addEventListener("timeupdate", () => reportPlayhead(false));
+video.addEventListener("pause", () => reportPlayhead(true));
+
+function reportPlayhead(force) {
+  if (!currentUser || !currentItem) return;
+  if (!force && video.paused) return;
+  const durationS = absoluteDurationS || video.duration;
+  if (!durationS) return;
+  const now = Date.now();
+  if (!force && now - lastReportAt < REPORT_INTERVAL_MS) return;
+  lastReportAt = now;
+  api(`/api/v1/items/${currentItem.id}/playhead`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: currentUser.id,
+      positionMs: Math.round(absolutePositionS() * 1000),
+      durationMs: Math.round(durationS * 1000),
+    }),
+  }).catch(() => {}); // reporting must never break playback
+}
+
+// --- library manager -----------------------------------------------------------
+
+const libsButton = document.getElementById("libs-button");
+const libsPanel = document.getElementById("libs-panel");
+const libsRows = document.getElementById("libs-rows");
+const libsStatus = document.getElementById("libs-status");
+
+function libraryRow(lib = { name: "", path: "", kind: "movies" }) {
+  const row = document.createElement("div");
+  row.className = "lib-row";
+  row.innerHTML = `
+    <input class="lib-name" placeholder="Name (Movies)" value="${escapeHtml(lib.name)}">
+    <input class="lib-path" placeholder="/media/movies" value="${escapeHtml(lib.path)}">
+    <select class="lib-kind">
+      <option value="movies"${lib.kind === "tv" ? "" : " selected"}>Movies</option>
+      <option value="tv"${lib.kind === "tv" ? " selected" : ""}>TV</option>
+    </select>
+    <span class="lib-move">
+      <button class="lib-up" title="Move up">▲</button>
+      <button class="lib-down" title="Move down">▼</button>
+    </span>
+    <button class="lib-remove" title="Remove">✕</button>`;
+  row.querySelector(".lib-remove").onclick = () => row.remove();
+  // Row order IS the library order — it persists on save and drives the
+  // nav order, home rails, and scan order.
+  row.querySelector(".lib-up").onclick = () => {
+    if (row.previousElementSibling) libsRows.insertBefore(row, row.previousElementSibling);
+  };
+  row.querySelector(".lib-down").onclick = () => {
+    if (row.nextElementSibling) libsRows.insertBefore(row.nextElementSibling, row);
+  };
+  return row;
+}
+
+function renderLibraryRows(libs) {
+  libsRows.innerHTML = "";
+  for (const lib of libs || []) libsRows.appendChild(libraryRow(lib));
+  if (!libs || libs.length === 0) libsRows.appendChild(libraryRow());
+}
+
+function missingPathNote(libs) {
+  const missing = (libs || []).filter((l) => l.exists === false);
+  if (missing.length === 0) return "";
+  const list = missing.map((l) => `${l.name} (${l.path})`).join(", ");
+  return `<br><span class="err">Path not visible inside the container: ${escapeHtml(list)} — check the bind mount (e.g. /media/movies-anime, not /movies-anime).</span>`;
+}
+
+libsButton.onclick = async () => {
+  const opening = libsPanel.classList.contains("hidden");
+  libsPanel.classList.toggle("hidden");
+  arrPanel.classList.add("hidden");
+  plexPanel.classList.add("hidden");
+  if (!opening) return;
+  libsStatus.textContent = "";
+  try {
+    const libs = await api("/api/v1/libraries");
+    renderLibraryRows(libs);
+    libsStatus.innerHTML = missingPathNote(libs);
+  } catch (e) {
+    libsStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+};
+
+document.getElementById("libs-add").onclick = () => libsRows.appendChild(libraryRow());
+
+const libsSaveButton = document.getElementById("libs-save");
+libsSaveButton.onclick = async () => {
+  if (libsSaveButton.disabled) return;
+  const libs = [...libsRows.querySelectorAll(".lib-row")].map((row) => ({
+    name: row.querySelector(".lib-name").value.trim(),
+    path: row.querySelector(".lib-path").value.trim(),
+    kind: row.querySelector(".lib-kind").value,
+  })).filter((lib) => lib.name || lib.path);
+
+  libsSaveButton.disabled = true;
+  libsStatus.textContent = "Saving…";
+  try {
+    const saved = await api("/api/v1/config/libraries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(libs),
+    });
+    libsStatus.innerHTML = `<span class="ok">Saved ${saved.length} librar${saved.length === 1 ? "y" : "ies"} — scanning…</span>${missingPathNote(saved)}`;
+    renderLibraryRows(saved);
+    await loadLibraries();
+  } catch (e) {
+    libsStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  } finally {
+    libsSaveButton.disabled = false;
+  }
+};
+
+document.addEventListener("click", (e) => {
+  if (!libsPanel.classList.contains("hidden") &&
+      !libsPanel.contains(e.target) && e.target !== libsButton) {
+    libsPanel.classList.add("hidden");
+  }
+});
+
+// --- *arr panel (downloads & upcoming) ---------------------------------------
+
+const arrButton = document.getElementById("arr-button");
+const arrPanel = document.getElementById("arr-panel");
+
+function fmtPct(left, total) {
+  if (!total) return "";
+  return `${Math.round(((total - left) / total) * 100)}%`;
+}
+
+arrButton.onclick = async () => {
+  if (!arrPanel.classList.contains("hidden")) {
+    arrPanel.classList.add("hidden");
+    return;
+  }
+  libsPanel.classList.add("hidden");
+  plexPanel.classList.add("hidden");
+  arrPanel.innerHTML = `<h2>Downloads</h2><div class="arr-error">Loading…</div>`;
+  arrPanel.classList.remove("hidden");
+  try {
+    const statuses = await api("/api/v1/arr/status");
+    if (statuses.length === 0) {
+      arrPanel.innerHTML = `<h2>Downloads</h2><div class="arr-error">No *arr instances configured.</div>`;
+      return;
+    }
+    arrPanel.innerHTML = statuses.map((st) => {
+      if (!st.reachable) {
+        return `<h2>${st.name}</h2><div class="arr-error">unreachable — ${st.error || ""}</div>`;
+      }
+      const queue = (st.queue || []).map((q) => `
+        <div class="arr-row"><span class="t" title="${q.title}">${q.title}</span>
+        <span class="r">${fmtPct(q.sizeLeft, q.size)} ${q.timeLeft || q.status}</span></div>`).join("");
+      const upcoming = (st.upcoming || []).slice(0, 8).map((c) => `
+        <div class="arr-row"><span class="t">${c.title}${c.subtitle ? " · " + c.subtitle : ""}</span>
+        <span class="r">${c.airDate}${c.hasFile ? " ✓" : ""}</span></div>`).join("");
+      return `<h2>${st.name} <span class="r" style="font-weight:400;color:var(--muted)">${st.version || ""}</span></h2>
+        ${queue ? `<h3>Queue</h3>${queue}` : ""}
+        ${upcoming ? `<h3>Next 7 days</h3>${upcoming}` : ""}
+        ${!queue && !upcoming ? `<div class="arr-error">Idle — nothing queued or upcoming.</div>` : ""}`;
+    }).join("");
+  } catch (e) {
+    arrPanel.innerHTML = `<h2>Downloads</h2><div class="arr-error">${e.message}</div>`;
+  }
+};
+
+document.addEventListener("click", (e) => {
+  if (!arrPanel.classList.contains("hidden") &&
+      !arrPanel.contains(e.target) && e.target !== arrButton) {
+    arrPanel.classList.add("hidden");
+  }
+});
+
+// --- Plex import panel -------------------------------------------------------
+
+const plexButton = document.getElementById("plex-button");
+const plexPanel = document.getElementById("plex-panel");
+const plexUrl = document.getElementById("plex-url");
+const plexToken = document.getElementById("plex-token");
+const plexDirection = document.getElementById("plex-direction");
+const plexResult = document.getElementById("plex-result");
+const plexApplyBtn = document.getElementById("plex-apply");
+
+plexUrl.value = localStorage.getItem("lumina.plexUrl") || "";
+plexToken.value = localStorage.getItem("lumina.plexToken") || "";
+
+function plexBody(apply) {
+  localStorage.setItem("lumina.plexUrl", plexUrl.value);
+  localStorage.setItem("lumina.plexToken", plexToken.value);
+  return {
+    url: plexUrl.value,
+    token: plexToken.value,
+    userId: currentUser ? currentUser.id : "",
+    direction: plexDirection.value,
+    apply,
+  };
+}
+
+plexButton.onclick = () => {
+  plexPanel.classList.toggle("hidden");
+  arrPanel.classList.add("hidden");
+  libsPanel.classList.add("hidden");
+};
+
+document.getElementById("plex-test").onclick = async () => {
+  plexResult.innerHTML = `<span class="plex-error">Testing…</span>`;
+  try {
+    const q = new URLSearchParams({ url: plexUrl.value, token: plexToken.value });
+    const r = await api(`/api/v1/plex/test?${q}`);
+    plexResult.innerHTML = `<div class="summary">Connected to <b>${r.serverName || "Plex"}</b> — ${r.sections.length} movie/show section(s):
+      ${r.sections.map((s) => s.title).join(", ")}</div>`;
+  } catch (e) {
+    plexResult.innerHTML = `<span class="plex-error">${e.message}</span>`;
+  }
+};
+
+document.getElementById("plex-preview").onclick = () => runPlexImport(false);
+plexApplyBtn.onclick = () => runPlexImport(true);
+
+async function runPlexImport(apply) {
+  plexApplyBtn.disabled = true;
+  plexResult.innerHTML = `<span class="plex-error">${apply ? "Applying import…" : "Scanning Plex library…"}</span>`;
+  try {
+    const r = await api("/api/v1/plex/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(plexBody(apply)),
+    });
+    const rows = (r.items || []).map((it) => `
+      <tr><td title="${it.title}">${it.title}</td>
+      <td>${it.subtitle || ""}</td>
+      <td class="act-${it.action}">${it.action}</td>
+      <td>${it.method || "—"}</td></tr>`).join("");
+    plexResult.innerHTML = `
+      <div class="summary">
+        ${r.mode === "apply" ? "<b>Applied.</b> " : "<b>Preview</b> — nothing written. "}
+        Scanned <b>${r.scanned}</b> · matched <b>${r.matched}</b> ·
+        unmatched <b>${r.unmatched}</b> · already synced ${r.alreadySynced} ·
+        to mark in Lumina <b>${r.markedLumina}</b> · to scrobble ${r.scrobbledPlex}
+        ${r.errors.length ? `<br><span class="plex-error">${r.errors.length} error(s): ${r.errors[0]}</span>` : ""}
+      </div>
+      ${rows ? `<table>${rows}</table>` : ""}
+      ${r.itemsTruncated ? `<div class="plex-error">…list truncated</div>` : ""}`;
+    // Apply only unlocks after a preview with something to do.
+    if (!apply && (r.markedLumina > 0 || r.scrobbledPlex > 0)) {
+      plexApplyBtn.disabled = false;
+    }
+    if (apply && activeLib) loadItems(activeLib); // watched badges refresh
+  } catch (e) {
+    plexResult.innerHTML = `<span class="plex-error">${e.message}</span>`;
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (!plexPanel.classList.contains("hidden") &&
+      !plexPanel.contains(e.target) && e.target !== plexButton) {
+    plexPanel.classList.add("hidden");
+  }
+});
+
+document.getElementById("player-close").onclick = () => {
+  overlay.classList.add("hidden");
+  stopPlayback();
+  if (activeLib) loadItems(activeLib);
+};
+
+// --- boot -----------------------------------------------------------------------------
+
+(async () => {
+  try {
+    await loadUsers();
+    await loadLibraries();
+  } catch (e) {
+    grid.innerHTML = `<div id="empty">Failed to reach Lumina API: ${e.message}</div>`;
+  }
+})();
+
+// --- toasts -------------------------------------------------------------------------
+// Small, quiet confirmations for background actions (match applied, watched
+// toggled, scan queued). They stack bottom-right and dismiss themselves.
+
+function toast(msg, kind = "ok") {
+  let holder = document.getElementById("toasts");
+  if (!holder) {
+    holder = document.createElement("div");
+    holder.id = "toasts";
+    document.body.appendChild(holder);
+  }
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  holder.appendChild(el);
+  setTimeout(() => el.classList.add("gone"), 3600);
+  setTimeout(() => el.remove(), 4200);
+}
+
+// --- card context menu ---------------------------------------------------------------
+// Right-click (long-press equivalent later) on ANY card — home rails or
+// library grid — instead of a "..." button cluttering every poster.
+// Pattern: one menu element, event delegation, close on any outside event.
+
+let cardMenu = null;
+
+function closeCardMenu() {
+  if (cardMenu) {
+    cardMenu.remove();
+    cardMenu = null;
+  }
+}
+
+function menuItem(label, fn) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+  b.onclick = () => {
+    closeCardMenu();
+    fn();
+  };
+  return b;
+}
+
+function openCardMenu(x, y, it) {
+  closeCardMenu();
+  closeModal();
+  const ph = playheads[it.id];
+  cardMenu = document.createElement("div");
+  cardMenu.className = "card-menu";
+  cardMenu.append(
+    menuItem(`▶ Play ${ph && !ph.watched && ph.positionMs > 0 ? "(resume)" : ""}`, () => play(it)),
+    menuItem("ⓘ Media info", () => openInfoModal(it)),
+    menuItem("✎ Fix match…", () => openMatchModal(it)),
+    menuItem("↻ Re-identify", async () => {
+      try {
+        await api(`/api/v1/items/${it.id}/metadata/refresh`, { method: "POST" });
+        toast("Re-identification queued");
+      } catch (e) {
+        toast(e.message, "err");
+      }
+    }),
+  );
+  if (currentUser) {
+    cardMenu.appendChild(menuItem(
+      ph && ph.watched ? "○ Mark unwatched" : "✓ Mark watched",
+      () => toggleWatched(it, !(ph && ph.watched)),
+    ));
+  }
+  document.body.appendChild(cardMenu);
+  // Clamp inside the viewport (menu may open near the right/bottom edge).
+  const r = cardMenu.getBoundingClientRect();
+  cardMenu.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
+  cardMenu.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+}
+
+document.addEventListener("contextmenu", (e) => {
+  const card = e.target.closest(".card, .media-card");
+  if (!card || !card.dataset.id) return;
+  const it = itemById.get(card.dataset.id);
+  if (!it) return;
+  e.preventDefault();
+  openCardMenu(e.clientX, e.clientY, it);
+});
+document.addEventListener("click", (e) => {
+  if (cardMenu && !cardMenu.contains(e.target)) closeCardMenu();
+});
+document.addEventListener("scroll", closeCardMenu, { passive: true, capture: true });
+
+async function toggleWatched(it, watched) {
+  try {
+    await api(`/api/v1/items/${it.id}/playhead`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // The journal derives watched from position/duration (≥92%). A 1ms/1ms
+      // row reads as watched; 0/1 reads as unwatched with no resume point.
+      body: JSON.stringify({
+        userId: currentUser.id,
+        positionMs: watched ? 1 : 0,
+        durationMs: 1,
+      }),
+    });
+    playheads = await api(`/api/v1/users/${currentUser.id}/playheads`);
+    toast(watched ? "Marked watched" : "Marked unwatched");
+    refreshCurrentView();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+function refreshCurrentView() {
+  if (activeLib) loadItems(activeLib);
+  else loadHome();
+}
+
+// --- modals (info + fix match) ---------------------------------------------------------
+
+let activeModal = null;
+
+function closeModal() {
+  if (activeModal) {
+    activeModal.remove();
+    activeModal = null;
+  }
+}
+
+function openModal(titleText) {
+  closeModal();
+  const wrap = document.createElement("div");
+  wrap.className = "modal-wrap";
+  wrap.innerHTML = `
+    <div class="modal">
+      <div class="modal-head">
+        <h3></h3>
+        <button type="button" class="modal-close" title="Close">✕</button>
+      </div>
+      <div class="modal-body"></div>
+    </div>`;
+  wrap.querySelector("h3").textContent = titleText;
+  wrap.querySelector(".modal-close").onclick = closeModal;
+  wrap.onclick = (e) => {
+    if (e.target === wrap) closeModal();
+  };
+  document.body.appendChild(wrap);
+  activeModal = wrap;
+  return wrap.querySelector(".modal-body");
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeCardMenu();
+    closeModal();
+  }
+});
+
+async function openInfoModal(it) {
+  const body = openModal(it.title);
+  body.innerHTML = `<div class="modal-note">Probing file…</div>`;
+  let info = null;
+  try {
+    info = await api(`/api/v1/items/${it.id}/info`);
+  } catch (e) {
+    body.innerHTML = `<div class="modal-note err">ffprobe failed: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  const rows = [
+    ["Library", it.library],
+    ["Kind", it.kind],
+    ["Year", it.year || "—"],
+    ["Genres", (it.genres || []).join(", ") || "—"],
+    ["Size", fmtBytes(it.sizeBytes)],
+    ["Container", info.container],
+    ["Duration", info.durationS ? `${Math.round(info.durationS / 60)} min` : "—"],
+    ["TMDB", it.tmdbId ? `#${it.tmdbId}` : "unidentified"],
+  ];
+  if (info.video) {
+    rows.push(["Video", [info.video.codec, info.video.profile,
+      info.video.width && `${info.video.width}×${info.video.height}`,
+      info.hdr ? "HDR" : ""].filter(Boolean).join(" · ")]);
+  }
+  for (const a of info.audio || []) {
+    rows.push([`Audio ${a.index}`, [a.codec, a.channels ? `${a.channels}ch` : "", a.language].filter(Boolean).join(" · ")]);
+  }
+  for (const p of it.paths || []) {
+    rows.push(["Path", p]);
+  }
+  body.innerHTML = `
+    ${it.overview ? `<p class="modal-overview">${escapeHtml(it.overview)}</p>` : ""}
+    <dl class="info-grid">
+      ${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v ?? "—"))}</dd>`).join("")}
+    </dl>`;
+}
+
+// --- fix match ------------------------------------------------------------------------
+
+function titleForSearch(it) {
+  // "Series Name S02E04" → "Series Name"; trailing "(2023)" / ".2023." gone.
+  return it.title
+    .replace(/\s+S\d{1,2}E\d{1,3}.*$/i, "")
+    .replace(/[._]/g, " ")
+    .replace(/\s+\d{4}$/, "")
+    .trim();
+}
+
+async function openMatchModal(it) {
+  const kind = it.kind === "episode" ? "tv" : "movies";
+  const body = openModal(`Fix match — ${it.title}`);
+  body.innerHTML = `
+    <form class="match-form">
+      <input type="search" class="match-q" value="${escapeHtml(titleForSearch(it))}" placeholder="Search TMDB…">
+      <button type="submit" class="text-button">Search</button>
+    </form>
+    <div class="match-results"><div class="modal-note">Search TMDB, then click the right match.</div></div>`;
+
+  const qInput = body.querySelector(".match-q");
+  const results = body.querySelector(".match-results");
+
+  async function runSearch() {
+    const q = qInput.value.trim();
+    if (!q) return;
+    results.innerHTML = `<div class="modal-note">Searching…</div>`;
+    let found;
+    try {
+      found = await api(`/api/v1/metadata/search?kind=${kind}&q=${encodeURIComponent(q)}`);
+    } catch (e) {
+      results.innerHTML = `<div class="modal-note err">${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    if (!found || found.length === 0) {
+      results.innerHTML = `<div class="modal-note">No TMDB results for “${escapeHtml(q)}”.</div>`;
+      return;
+    }
+    results.innerHTML = "";
+    for (const r of found) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "match-row";
+      row.innerHTML = `
+        ${r.posterUrl
+          ? `<img src="${r.posterUrl}" alt="" loading="lazy" onerror="this.remove()">`
+          : `<span class="match-noimg" style="${posterStyle(r.title)}">${posterInitials(r.title)}</span>`}
+        <span class="match-meta">
+          <span class="match-title">${escapeHtml(r.title)}${r.year ? ` <em>${r.year}</em>` : ""}</span>
+          <span class="match-ov">${escapeHtml((r.overview || "").slice(0, 140))}${(r.overview || "").length > 140 ? "…" : ""}</span>
+        </span>`;
+      row.onclick = async () => {
+        row.disabled = true;
+        try {
+          const updated = await api(`/api/v1/items/${it.id}/identify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tmdbId: r.tmdbId }),
+          });
+          if (updated) itemById.set(updated.id, updated);
+          toast(`Matched: ${r.title}${r.year ? ` (${r.year})` : ""}`);
+          closeModal();
+          refreshCurrentView();
+        } catch (e) {
+          row.disabled = false;
+          toast(e.message, "err");
+        }
+      };
+      results.appendChild(row);
+    }
+  }
+
+  body.querySelector(".match-form").onsubmit = (e) => {
+    e.preventDefault();
+    runSearch();
+  };
+  runSearch(); // prefill + auto-search with the parsed title
+}

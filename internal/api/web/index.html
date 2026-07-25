@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumina</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/brand/android-chrome-192x192.png">
+<link rel="apple-touch-icon" href="/brand/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1 id="logo-word"><img id="logo-emblem" src="/brand/emblem-512.png" alt="">Lumina<span class="dot">.</span></h1>
+  <nav id="libraries"></nav>
+  <button id="libs-button" title="Manage libraries">⚙</button>
+  <button id="plex-button" title="Import watch history from Plex">⇄</button>
+  <button id="arr-button" title="Downloads & upcoming">⬇</button>
+  <button id="user-badge" title="Switch user"></button>
+  <span id="status"></span>
+</header>
+<div id="arr-panel" class="hidden"></div>
+<div id="libs-panel" class="hidden">
+  <h2>Libraries</h2>
+  <p class="libs-note">Paths are as Lumina sees them inside the container (e.g. <code>/media/movies</code>).</p>
+  <div id="libs-rows"></div>
+  <div class="lib-actions">
+    <button id="libs-add">Add library</button>
+    <button id="libs-save">Save &amp; scan</button>
+  </div>
+  <div id="libs-status"></div>
+</div>
+<div id="plex-panel" class="hidden">
+  <h2>Import watch history from Plex</h2>
+  <div class="plex-form">
+    <input id="plex-url" placeholder="Plex URL (https://plex.example.com)">
+    <input id="plex-token" placeholder="Plex token" type="password">
+    <select id="plex-direction">
+      <option value="pull">Pull: Plex → Lumina</option>
+      <option value="push">Push: Lumina → Plex</option>
+      <option value="two-way">Two-way</option>
+    </select>
+    <div class="plex-actions">
+      <button id="plex-test">Test</button>
+      <button id="plex-preview">Preview</button>
+      <button id="plex-apply" disabled>Apply import</button>
+    </div>
+  </div>
+  <div id="plex-result"></div>
+</div>
+
+<main id="grid" aria-live="polite"></main>
+
+<div id="player-overlay" class="hidden">
+  <div id="player-bar">
+    <span id="player-title"></span>
+    <span id="player-mode" class="badge"></span>
+    <select id="cc-select" class="hidden" title="Subtitles"></select>
+    <label id="force-transcode-label">
+      <input type="checkbox" id="force-transcode"> force transcode
+    </label>
+    <button id="player-close" aria-label="Close player">✕</button>
+  </div>
+  <video id="video" controls autoplay crossorigin="anonymous"></video>
+  <details id="media-details"><summary>Media info</summary><p id="media-overview"></p><pre id="media-info-json"></pre></details>
+</div>
+
+<script src="/hls.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
