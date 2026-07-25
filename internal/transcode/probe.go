@@ -172,11 +172,11 @@ func testVAAPIEncode(ctx context.Context, ffmpeg, device, encoder string) (bool,
 	out, err := run(ctx, ffmpeg,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+device,
-		// 160x96: both dimensions are multiples of 16. Some VAAPI drivers
-		// (Mesa radeonsi in particular) reject unaligned heights like 72
-		// with EINVAL (-22) — an alignment artifact of the probe itself,
-		// not a real encoder limitation.
-		"-f", "lavfi", "-i", "color=black:size=160x96:duration=1:rate=1",
+		// 320x128: inside Mesa radeonsi's encode constraints (both dims
+		// must be 128..4096 AND 16-aligned — a 128x72 or 160x96 test
+		// frame fails EINVAL "hardware does not support size" and the
+		// probe was reporting its own artifact as a GPU limitation).
+		"-f", "lavfi", "-i", "color=black:size=320x128:duration=1:rate=1",
 		"-vf", "format=nv12,hwupload",
 		"-c:v", encoder,
 		// Rate control must be explicit: with no -qp/-b:v at all, radeonsi
