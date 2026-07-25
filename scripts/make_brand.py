@@ -9,8 +9,23 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "brand-candidates" / "logo-emblem-serif.png"
 WORDMARK = ROOT / "brand-candidates" / "wordmark-gold.png"
+WORDMARK_BLACK = ROOT / "brand-candidates" / "wordmark-black.png"
 OUT = ROOT / "internal" / "api" / "web" / "brand"
 NAVY = (11, 18, 32)  # deep midnight navy, darker than --bg for icon contrast
+
+
+def black_to_alpha(im: Image.Image) -> Image.Image:
+    """Additive key for glow-on-black art: alpha = max(R,G,B), colours
+    UNTOUCHED. The glow was authored additively, so on a dark header the
+    semi-transparent pixels composite back to the original render.
+    (Un-premultiplying over-saturates gold into neon orange — don't.)"""
+    im = im.convert("RGBA")
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, _ = px[x, y]
+            px[x, y] = (r, g, b, max(r, g, b))
+    return im
 
 
 def white_to_alpha(im: Image.Image) -> Image.Image:
@@ -94,10 +109,13 @@ def main() -> None:
         icon = paste_centered(squircle(size), emblem, 0.78)
         icon.convert("RGB").save(OUT / name)
 
-    # Wordmark: the generator insists on a white background, so key it out,
-    # crop to the letterforms, and ship a transparent header lockup.
-    if WORDMARK.exists():
-        wm = white_to_alpha(Image.open(WORDMARK))
+    # Wordmark: glow-on-black keys cleanly (additive alpha); the older
+    # white-background render is the fallback. Crop above the watermark
+    # strip, then ship a tall transparent master for the header.
+    wm_src = WORDMARK_BLACK if WORDMARK_BLACK.exists() else WORDMARK
+    if wm_src.exists():
+        keyer = black_to_alpha if wm_src == WORDMARK_BLACK else white_to_alpha
+        wm = keyer(Image.open(wm_src))
         # Watermark sits in the bottom strip — clamp the bbox scan above it.
         px = wm.load()
         xs, ys = [], []
@@ -108,8 +126,8 @@ def main() -> None:
                     ys.append(y)
         if xs:
             wm = wm.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
-        wm.save(ROOT / "brand-candidates" / "wordmark-gold-transparent.png")
-        target_h = 256
+        wm.save(ROOT / "brand-candidates" / "wordmark-transparent.png")
+        target_h = 512
         wm.resize((int(target_h * wm.width / wm.height), target_h),
                   Image.LANCZOS).save(OUT / "wordmark.png")
 

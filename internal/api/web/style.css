@@ -52,9 +52,9 @@ header.solid {
   align-items: center;
 }
 #logo-lockup {
-  height: 2rem;
+  height: 2.75rem;
   width: auto;
-  filter: drop-shadow(0 0 8px rgba(175, 145, 95, 0.3));
+  /* The PNG carries its own glow — no CSS drop-shadow (it would double). */
 }
 nav { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 nav button {
