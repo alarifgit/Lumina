@@ -226,6 +226,7 @@ async function loadLibraries() {
 
 async function loadItems(lib) {
   activeLib = lib;
+  backTarget = () => loadItems(lib); // detail pages return to this library
   grid.className = "";
   const [items, phs] = await Promise.all([
     api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
@@ -233,12 +234,61 @@ async function loadItems(lib) {
   ]);
   playheads = phs || {};
   grid.innerHTML = "";
-  if (items.length === 0) {
+  const visible = (items || []).filter((it) => it.state !== "missing");
+  if (visible.length === 0) {
     grid.innerHTML = `<div id="empty">Nothing here yet — Lumina is scanning, or the path is empty.</div>`;
     return;
   }
-  for (const it of items) {
-    if (it.state === "missing") continue;
+  visible.forEach((it) => itemById.set(it.id, it));
+
+  if (lib.kind === "tv") {
+    // One card per series (Plex library view), not a wall of episode files.
+    const groups = new Map();
+    for (const it of visible) {
+      const k = seriesKey(it);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(it);
+    }
+    const series = [...groups.entries()].map(([key, eps]) => {
+      eps.sort(compareSE);
+      const rep = eps.find((e) => e.posterUrl) || eps[0];
+      const seasonCount = new Set(eps.map((e) => (episodeSE(e) || { s: 0 }).s)).size;
+      const unwatched = eps.filter((e) => !(playheads[e.id] && playheads[e.id].watched)).length;
+      return { key, eps, rep, seasonCount, unwatched };
+    }).sort((a, b) => a.key.localeCompare(b.key));
+
+    for (const g of series) {
+      const identified = !!g.rep.posterUrl;
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <div class="poster" style="${posterStyle(g.key)}">
+          ${identified ? "" : `<div class="glow" style="${glowStyle(g.key)}"></div><div class="grain"></div>`}
+          ${identified
+            ? `<img class="poster-img" src="${g.rep.posterUrl}" loading="lazy" alt=""
+                 onerror="this.remove()">`
+            : `<span class="initials">${posterInitials(g.key)}</span>
+               <span class="poster-title">${escapeHtml(g.key)}</span>`}
+          <button class="card-play" aria-label="Play next episode" title="Play next episode">▶</button>
+          <span class="watermark">LUMINA</span>
+          ${g.unwatched > 0 ? `<span class="count-badge lib-badge">${g.unwatched}</span>` : ""}
+        </div>
+        <div class="meta">
+          <div class="title" title="${escapeHtml(g.key)}">${escapeHtml(g.key)}</div>
+          <div class="sub">${g.eps.length} episode${g.eps.length === 1 ? "" : "s"}${g.seasonCount > 1 ? ` · ${g.seasonCount} seasons` : ""}</div>
+        </div>`;
+      card.querySelector(".card-play").onclick = (e) => {
+        e.stopPropagation();
+        play(nextEpisode(g.eps));
+      };
+      card.onclick = () => openSeries(g.key, g.rep);
+      card.dataset.id = g.rep.id;
+      grid.appendChild(card);
+    }
+    return;
+  }
+
+  for (const it of visible) {
     const ph = playheads[it.id];
     const pct = ph && ph.durationMs > 0
       ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
@@ -253,6 +303,7 @@ async function loadItems(lib) {
                onerror="this.remove()">`
           : `<span class="initials">${posterInitials(it.title)}</span>
              <span class="poster-title">${it.title}</span>`}
+        <button class="card-play" aria-label="Play" title="Play">▶</button>
         <span class="watermark">LUMINA</span>
         ${ph && ph.watched ? `<span class="watched" title="Watched">✓</span>` : ""}
         ${pct > 0 && !(ph && ph.watched)
@@ -263,9 +314,12 @@ async function loadItems(lib) {
         <div class="title" title="${it.title}">${it.title}</div>
         <div class="sub">${it.year ? it.year + " · " : ""}${fmtBytes(it.sizeBytes)}</div>
       </div>`;
-    card.onclick = () => play(it);
+    card.querySelector(".card-play").onclick = (e) => {
+      e.stopPropagation();
+      play(it);
+    };
+    card.onclick = () => openMovieDetail(it);
     card.dataset.id = it.id;
-    itemById.set(it.id, it);
     grid.appendChild(card);
   }
 }
@@ -304,6 +358,7 @@ function homeCard(it, ph, poster = false, label = null) {
     <figure class="media-card" data-id="${it.id}">
       <div class="thumb">
         ${artHtml(it, poster ? "poster" : "backdrop")}
+        <button class="card-play" aria-label="Play" title="Play">▶</button>
         ${pct > 0 && !(ph && ph.watched) ? `<div class="progress-line"><i style="width:${pct}%"></i></div>` : ""}
         ${label && label.badge ? `<span class="count-badge">${escapeHtml(label.badge)}</span>` : ""}
       </div>
@@ -358,6 +413,173 @@ function groupBySeries(episodes) {
   });
 }
 
+// --- detail pages (series drill-down + movie page) --------------------------------
+// The card contract: the ▶ badge plays immediately; the card body opens a
+// detail page. Episodes drill into their series; movies open a movie page.
+
+let backTarget = null; // set by loadHome/loadItems; detail pages return here
+
+function compareSE(a, b) {
+  const sa = episodeSE(a) || { s: 0, e: 0 };
+  const sb = episodeSE(b) || { s: 0, e: 0 };
+  return sa.s - sb.s || sa.e - sb.e || a.title.localeCompare(b.title);
+}
+
+function seriesEpisodes(key, library) {
+  return [...itemById.values()]
+    .filter((it) => it.kind === "episode" && it.state !== "missing" &&
+      seriesKey(it) === key && (!library || it.library === library))
+    .sort(compareSE);
+}
+
+// Plex's "play the series" = the next unwatched episode in S/E order.
+function nextEpisode(eps) {
+  return eps.find((it) => {
+    const ph = playheads[it.id];
+    return !(ph && ph.watched);
+  }) || eps[0];
+}
+
+function seTag(it) {
+  const se = episodeSE(it);
+  if (!se) return "";
+  return se.s > 0 ? `S${se.s}E${se.e}` : `E${se.e}`;
+}
+
+// "Bleach E362 · The Final Getsuga" → "The Final Getsuga"; bare markers
+// fall back to "Episode 362".
+function episodeLabel(it, key) {
+  let rem = it.title.startsWith(key) ? it.title.slice(key.length) : it.title;
+  rem = rem.replace(/^[\s\-–—.:]+/, "").trim();
+  const m = rem.match(SERIES_RE) || rem.match(ABS_EP_RE);
+  const name = m ? rem.replace(m[0], "").replace(/^[\s\-–—.:]+/, "").trim() : rem;
+  if (name) return name;
+  const se = episodeSE(it);
+  return se && se.e ? `Episode ${se.e}` : it.title;
+}
+
+function openItem(it) {
+  if (it.kind === "episode") openSeries(seriesKey(it), it);
+  else openMovieDetail(it);
+}
+
+function detailBackButton() {
+  return `<button class="back-button" id="detail-back">‹ Back</button>`;
+}
+
+function wireDetailBack() {
+  document.getElementById("detail-back").onclick = () =>
+    (backTarget || loadHome)();
+}
+
+function openMovieDetail(it) {
+  const ph = playheads[it.id];
+  const resumable = ph && !ph.watched && ph.durationMs > 0 &&
+    ph.positionMs >= RESUME_MIN_S * 1000 &&
+    ph.positionMs / ph.durationMs < WATCHED_FRACTION;
+  grid.className = "home detail";
+  window.scrollTo(0, 0);
+  grid.innerHTML = `
+    <section class="hero detail-hero">
+      ${artHtml(it, "backdrop")}
+      <div class="hero-scrim"></div>
+      <div class="hero-copy">
+        ${detailBackButton()}
+        <div class="eyebrow">${["Movie", it.year, (it.genres || []).slice(0, 3).join(" · ")]
+          .filter(Boolean).join("  ·  ")}</div>
+        <h2>${escapeHtml(it.title)}</h2>
+        <p>${escapeHtml(it.overview || "No synopsis yet — identify this title with Fix match if it was missed.")}</p>
+        <div class="detail-actions">
+          <button class="text-button" id="detail-play">▶ ${resumable ? `Resume · ${fmtLeftMs(ph)}` : "Play"}</button>
+          <button class="ghost-button" id="detail-info">ⓘ Media info</button>
+          <button class="ghost-button" id="detail-match">✎ Fix match</button>
+        </div>
+      </div>
+    </section>`;
+  wireDetailBack();
+  document.getElementById("detail-play").onclick = () => play(it);
+  document.getElementById("detail-info").onclick = () => openInfoModal(it);
+  document.getElementById("detail-match").onclick = () => openMatchModal(it);
+}
+
+function openSeries(key, anchor) {
+  const eps = seriesEpisodes(key, anchor.library);
+  if (eps.length === 0) return; // nothing to drill into — shouldn't happen
+  if (eps.length === 1) return openMovieDetail(anchor); // single file: no seasons to show
+  const rep = eps.find((it) => it.backdropUrl) || eps.find((it) => it.posterUrl) || eps[0];
+  const seasons = new Map();
+  for (const it of eps) {
+    const s = (episodeSE(it) || { s: 0 }).s;
+    if (!seasons.has(s)) seasons.set(s, []);
+    seasons.get(s).push(it);
+  }
+  const next = nextEpisode(eps);
+  const nextSeason = (episodeSE(next) || { s: 0 }).s;
+
+  grid.className = "home detail";
+  window.scrollTo(0, 0);
+  grid.innerHTML = `
+    <section class="hero detail-hero">
+      ${artHtml(rep, "backdrop")}
+      <div class="hero-scrim"></div>
+      <div class="hero-copy">
+        ${detailBackButton()}
+        <div class="eyebrow">${["Series", rep.year, `${seasons.size} season${seasons.size === 1 ? "" : "s"}`,
+          `${eps.length} episode${eps.length === 1 ? "" : "s"}`].filter(Boolean).join("  ·  ")}</div>
+        <h2>${escapeHtml(key)}</h2>
+        <p>${escapeHtml(rep.overview || "")}</p>
+        <div class="detail-actions">
+          <button class="text-button" id="detail-play">▶ ${playheads[next.id] && !playheads[next.id].watched && playheads[next.id].positionMs > 0
+            ? `Resume ${seTag(next)}` : `Play ${seTag(next)}`}</button>
+        </div>
+      </div>
+    </section>
+    <section class="episodes">
+      ${seasons.size > 1 ? `<div class="season-tabs">${[...seasons.keys()].map((s) =>
+        `<button data-season="${s}" class="${s === nextSeason ? "active" : ""}">${s > 0 ? `Season ${s}` : "Episodes"}</button>`).join("")}</div>` : ""}
+      <div class="ep-list"></div>
+    </section>`;
+  wireDetailBack();
+  document.getElementById("detail-play").onclick = () => play(next);
+
+  const listEl = grid.querySelector(".ep-list");
+  function renderSeason(s) {
+    listEl.innerHTML = seasons.get(s).map((it) => {
+      const ph = playheads[it.id];
+      const pct = ph && ph.durationMs > 0
+        ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
+      const se = episodeSE(it) || { s: 0, e: 0 };
+      return `
+        <div class="ep-row" data-id="${it.id}">
+          <span class="ep-num">${se.e || "–"}</span>
+          <div class="ep-meta">
+            <div class="ep-title">${escapeHtml(episodeLabel(it, key))}</div>
+            <div class="ep-sub">${[seTag(it), fmtBytes(it.sizeBytes),
+              ph && !ph.watched && pct > 0 ? fmtLeftMs(ph) : ""].filter(Boolean).join(" · ")}</div>
+            ${pct > 0 && !(ph && ph.watched)
+              ? `<div class="progress ep-progress"><div class="progress-fill" style="width:${pct}%"></div></div>` : ""}
+          </div>
+          ${ph && ph.watched ? `<span class="ep-watched" title="Watched">✓</span>` : ""}
+          <button class="card-play ep-play" aria-label="Play" title="Play">▶</button>
+        </div>`;
+    }).join("");
+    listEl.querySelectorAll(".ep-row").forEach((row) => {
+      const it = itemById.get(row.dataset.id);
+      if (!it) return;
+      row.querySelector(".ep-play").onclick = (e) => { e.stopPropagation(); play(it); };
+      row.onclick = () => play(it);
+    });
+  }
+  renderSeason(nextSeason);
+  grid.querySelectorAll(".season-tabs button").forEach((btn) => {
+    btn.onclick = () => {
+      grid.querySelectorAll(".season-tabs button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      renderSeason(Number(btn.dataset.season));
+    };
+  });
+}
+
 // Nav badge counts: episodes → series count (matches the Recently Added TV
 // rail), movies/music → file count. Called from loadHome once items are in.
 function updateNavCounts(visible) {
@@ -377,6 +599,7 @@ function updateNavCounts(visible) {
 
 async function loadHome() {
   activeLib = null;
+  backTarget = null; // home is the root view — detail pages return here
   grid.className = "home";
   const [items, phs] = await Promise.all([
     api("/api/v1/items"),
@@ -442,10 +665,13 @@ async function loadHome() {
   const heroBtn = grid.querySelector("[data-play]");
   if (heroBtn) heroBtn.onclick = () => play(featured);
   grid.querySelectorAll(".media-card").forEach((card) => {
-    card.onclick = () => {
-      const it = byId[card.dataset.id];
-      if (it) play(it);
+    const it = byId[card.dataset.id];
+    if (!it) return;
+    card.querySelector(".card-play").onclick = (e) => {
+      e.stopPropagation();
+      play(it);
     };
+    card.onclick = () => openItem(it);
   });
   enhanceRails();
 }
@@ -1167,7 +1393,7 @@ function openCardMenu(x, y, it) {
 }
 
 document.addEventListener("contextmenu", (e) => {
-  const card = e.target.closest(".card, .media-card");
+  const card = e.target.closest(".card, .media-card, .ep-row");
   if (!card || !card.dataset.id) return;
   const it = itemById.get(card.dataset.id);
   if (!it) return;
