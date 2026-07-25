@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/lumina-media/lumina/internal/library"
+	"github.com/lumina-media/lumina/internal/metadata"
 )
 
 // POST /api/v1/items/{id}/metadata/refresh — force re-identification.
@@ -18,7 +21,18 @@ func (s *Server) refreshMetadata(w http.ResponseWriter, r *http.Request) {
 			http.StatusServiceUnavailable)
 		return
 	}
-	s.mw.Enqueue(*it)
+	// Re-identification gets the same folder-structure hints as a scan:
+	// without them, absolute-numbered anime can never re-match.
+	hint := metadata.IdentifyHint{}
+	if it.Kind == library.KindEpisode && len(it.Paths) > 0 {
+		for _, root := range s.cfg.Libraries {
+			if root.Name == it.Library {
+				hint = metadata.HintFor(root.Path, it.Paths[0], true)
+				break
+			}
+		}
+	}
+	s.mw.EnqueueHint(*it, hint)
 	w.WriteHeader(http.StatusAccepted)
 }
 

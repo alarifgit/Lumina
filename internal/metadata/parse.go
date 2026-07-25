@@ -9,6 +9,7 @@
 package metadata
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -80,6 +81,37 @@ func ParseFilename(base string) Parsed {
 	p.Title = work
 	return p
 }
+
+// HintFor derives identification hints from a file's position inside a
+// library root — the Plex folder conventions the scanner and the manual
+// re-identify endpoint both rely on:
+//
+//	/TV/Bleach/Season 17/file.mkv → series "Bleach", season 17
+//	[Group] Show - 362.mkv        → absolute episode 362 (no SxxExx marker)
+//
+// isTV gates every hint: movies never get folder/absolute-episode treatment.
+func HintFor(rootPath, fullPath string, isTV bool) IdentifyHint {
+	h := IdentifyHint{}
+	if !isTV {
+		return h
+	}
+	if rel, err := filepath.Rel(rootPath, fullPath); err == nil {
+		comps := strings.Split(rel, string(filepath.Separator))
+		if len(comps) >= 2 {
+			h.Series = ParseFilename(comps[0]).Title
+			if season := SeasonFromDir(comps[len(comps)-2]); season > 0 {
+				h.Season = season
+			}
+		}
+	}
+	base := strings.TrimSuffix(filepath.Base(fullPath), filepath.Ext(fullPath))
+	if !episodeMarkerRe.MatchString(base) {
+		h.AbsEpisode = ParseAbsoluteEpisode(base)
+	}
+	return h
+}
+
+var episodeMarkerRe = regexp.MustCompile(`(?i)\bs\d{1,2}\s*e\d{1,4}\b`)
 
 // ParseAbsoluteEpisode extracts an absolute episode number from fansub-style
 // names ("[SubsPlease] Bleach - 362 (1080p) [ABCD1234]" → 362). Returns 0

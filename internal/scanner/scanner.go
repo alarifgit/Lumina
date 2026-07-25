@@ -427,34 +427,10 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 	// Unidentified items go to the metadata worker (no-op without a
 	// TMDB key; the worker also dedups naturally via SetMetadata).
 	if err == nil && it != nil && it.TMDBID == 0 && s.meta != nil {
-		// Folder structure is the authoritative series identity for TV:
-		// "/TV/Bleach/Season 17/file.mkv" → series "Bleach", season 17 —
-		// regardless of how the filename itself is written. Anime files
-		// without SxxExx markers get an absolute-episode hint instead
-		// ("[Group] Show - 362" → E362).
-		hint := metadata.IdentifyHint{}
-		if kind == library.KindEpisode {
-			if rel, rerr := filepath.Rel(root.Path, path); rerr == nil {
-				comps := strings.Split(rel, string(filepath.Separator))
-				if len(comps) >= 2 {
-					folder := metadata.ParseFilename(comps[0])
-					hint.Series = folder.Title
-					if season := metadata.SeasonFromDir(comps[len(comps)-2]); season > 0 {
-						hint.Season = season
-					}
-				}
-			}
-			base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			if !episodeMarkerRe.MatchString(base) {
-				hint.AbsEpisode = metadata.ParseAbsoluteEpisode(base)
-			}
-		}
-		s.meta.EnqueueHint(*it, hint)
+		s.meta.EnqueueHint(*it, metadata.HintFor(root.Path, path, kind == library.KindEpisode))
 	}
 	return err
 }
-
-var episodeMarkerRe = regexp.MustCompile(`(?i)\bs\d{1,2}\s*e\d{1,4}\b`)
 
 // ContentHash is the item's identity: sha256(size ‖ head 8MiB ‖ tail 8MiB).
 // Survives renames, moves, and remounts. TODO: blake3 for speed.
