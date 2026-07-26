@@ -155,6 +155,36 @@ docker compose -f deployments/docker-compose.example.yml up --build
 The container needs `--device=/dev/dri` for VAAPI; the entrypoint handles the
 host render-group GID automatically (or set `RENDER_GID`).
 
+### Transcode scratch directory
+
+HLS segments are written to `<data>/transcode` by default. Like Plex's
+"transcoder temporary directory", you can move that scratch space to fast
+local storage or RAM with `LUMINA_TRANSCODE_DIR` — never a network share:
+
+```yaml
+services:
+  lumina:
+    # ...
+    environment:
+      LUMINA_TRANSCODE_DIR: /transcode
+    tmpfs:
+      - /transcode:size=4g,mode=1777
+```
+
+tmpfs gives the fastest segment reads and zero SSD wear; 4 GB is plenty for
+several concurrent sessions (a 4K H.264 QP22 session peaks well under
+2 GB). A local SATA/NVMe directory works fine too.
+
+### Hardware acceleration notes (AMD RDNA)
+
+The startup probe asks vainfo which decode profiles the GPU actually has and
+picks the pipeline per file: full VAAPI when the GPU can decode the codec,
+**vaapi-hybrid** (software decode + GPU encode) when it can't. On RDNA2
+(e.g. RX 6800S / Navi 23) there is **no AV1 hardware decode** — AV1 files
+therefore always decode on CPU and encode on silicon. H.264/HEVC (incl.
+10-bit) decode and encode fully on the GPU. Check what your card reported:
+`GET /api/v1/system/capabilities` (`decoders` map).
+
 ## Verify the *arr integration
 
 1. Sonarr → Settings → Connect → + → **Emby** → host `lumina`, port `8096` → Test → Save.

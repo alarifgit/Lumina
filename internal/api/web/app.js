@@ -52,7 +52,6 @@ window.addEventListener("scroll", () => {
 const REPORT_INTERVAL_MS = 10_000;
 const RESUME_MIN_S = 5;
 const WATCHED_FRACTION = 0.92;
-const SEEK_RESTART_MARGIN_S = 15; // seek past produced segments + margin → restart
 
 let currentHls = null;
 let currentItem = null;
@@ -1165,7 +1164,17 @@ async function startHls(item, startS) {
   }
 
   if (window.Hls && Hls.isSupported()) {
-    currentHls = new Hls({ maxBufferLength: 60 });
+    currentHls = new Hls({
+      maxBufferLength: 60,
+      // The session playlist GROWS (no EXT-X-ENDLIST until ffmpeg finishes),
+      // which hls.js treats as a live stream. Default startPosition (-1)
+      // means "live edge" — playback opened ~12s into the content and
+      // hls.js kept re-syncing forward = the skip-ahead bug. Start at the
+      // session's t=0 and never live-edge-sync (Infinity: stall and buffer
+      // at the transcode frontier instead of jumping).
+      startPosition: 0,
+      liveSyncDurationCount: Infinity,
+    });
     currentHls.loadSource(url);
     currentHls.attachMedia(video);
     currentHls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1180,20 +1189,13 @@ async function startHls(item, startS) {
   }
 }
 
-// Restart-on-seek: jumping beyond produced segments restarts FFmpeg
-// with -ss at the absolute target, instead of waiting minutes for the
-// transcode to catch up. Debounced so scrub-fires collapse into one restart.
-video.addEventListener("seeking", () => {
-  if (!isHls || !currentItem) return;
-  const target = absolutePositionS();
-  let bufferedEndAbs = sessionOffsetS;
-  if (video.buffered.length > 0) {
-    bufferedEndAbs = sessionOffsetS + video.buffered.end(video.buffered.length - 1);
-  }
-  if (target <= bufferedEndAbs + SEEK_RESTART_MARGIN_S) return;
-  clearTimeout(seekRestartTimer);
-  seekRestartTimer = setTimeout(() => startHls(currentItem, target), 350);
-});
+// NOTE: there is deliberately no "seeking"-event restart listener. Every
+// user seek goes through seekToAbsolute (seek bar + keyboard), which
+// restarts ffmpeg directly when the target is past the produced frontier.
+// A passive listener ALSO fired when hls.js moved the playhead itself
+// (live-edge sync), mistook it for a user seek, and restarted ffmpeg in a
+// loop — the "skips ahead, then repeats, then stabilises" bug.
+
 
 // --- subtitles --------------------------------------------------------------------
 // Custom cue renderer (not native <track>). Two reasons:

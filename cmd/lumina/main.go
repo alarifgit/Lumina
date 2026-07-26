@@ -51,7 +51,14 @@ func main() {
 	sc := scanner.New(cfg, store, mw)
 	go sc.Run(ctx)
 
-	tm, err := transcode.NewManager(cfg.DataDir, cfg.FFmpegPath, caps.VAAPI.Device, caps)
+	// Transcode segment root: default <data>/transcode, overridable so the
+	// scratch space can live on fast local disk or tmpfs (Plex's "transcoder
+	// temporary directory" equivalent). Never point it at a network share.
+	transDir := os.Getenv("LUMINA_TRANSCODE_DIR")
+	if transDir == "" {
+		transDir = cfg.DataDir
+	}
+	tm, err := transcode.NewManager(transDir, cfg.FFmpegPath, caps.VAAPI.Device, caps)
 	if err != nil {
 		log.Fatalf("transcode manager: %v", err)
 	}

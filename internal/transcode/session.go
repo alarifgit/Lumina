@@ -147,7 +147,11 @@ func SessionKey(itemID string, startS float64) string {
 //	          re-encoded to AAC). Zero GPU, near-zero CPU — the workhorse
 //	          for MKV libraries, and the reason AC3/DTS files get sound.
 //	vaapi:    full GPU pipeline for everything that must be re-encoded
-//	          (HEVC, AV1, 10-bit, HDR), when the probe proved it works.
+//	          (HEVC, 10-bit, HDR), when the probe proved decode AND encode.
+//	vaapi-hybrid: software decode + GPU encode, chosen UP FRONT for codecs
+//	          the GPU can't decode (vainfo said so — e.g. AV1 on RDNA2).
+//	          Picking it immediately avoids a doomed full-vaapi attempt
+//	          that dies a few seconds in and restarts the session.
 //	software: libx264 — the honest fallback.
 func pipelineFor(caps Capabilities, info *media.Info) string {
 	if info != nil && info.Video != nil && info.Video.Codec == "h264" &&
@@ -155,6 +159,21 @@ func pipelineFor(caps Capabilities, info *media.Info) string {
 		return "copy"
 	}
 	if caps.VAAPI.Available && caps.Encoders["h264"] {
+		// 10-bit HEVC needs the Main10 decode profile specifically.
+		decodeKey := ""
+		if info != nil && info.Video != nil {
+			decodeKey = info.Video.Codec
+			if decodeKey == "hevc" && strings.Contains(info.Video.Profile, "10") {
+				decodeKey = "hevc10"
+			}
+		}
+		// caps.Decoders is nil when vainfo was unavailable → unknown → try
+		// full vaapi; the retry chain still protects us. But when vainfo
+		// DID answer and the codec is missing, trust it and go hybrid.
+		if caps.Decoders != nil && decodeKey != "" && !caps.Decoders[decodeKey] {
+			log.Printf("transcode: %s has no hardware decode profile on this GPU; using vaapi-hybrid", decodeKey)
+			return "vaapi-hybrid"
+		}
 		return "vaapi"
 	}
 	return "software"
@@ -377,7 +396,7 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		} else {
 			args = append(args, "-vf", "scale_vaapi=format=nv12")
 		}
-		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22")
+		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22", "-g", "96", "-keyint_min", "96")
 	} else if mode == "vaapi-hybrid" {
 		// Software decode → GPU encode: for codecs the GPU can't decode
 		// (AV1 on RDNA2, VP9 on some parts). Frames cross RAM once, the
@@ -387,16 +406,24 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		} else {
 			args = append(args, "-vf", "format=nv12,hwupload")
 		}
-		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22")
+		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22", "-g", "96", "-keyint_min", "96")
 	} else {
 		// Software HDR handling (proper zscale+tonemap filter graph) is a
 		// Phase 4 refinement; plain conversion is watchable but washed out.
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p")
+		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-g", "96", "-keyint_min", "96")
 	}
 	args = append(args,
 		"-c:a", "aac", "-ac", "2", "-b:a", "192k",
+		// Muxer headroom (Jellyfin uses the same 2048/5000000 pair): audio
+		// re-encode + video copy can otherwise stall the TS muxer.
+		"-max_muxing_queue_size", "2048", "-max_delay", "5000000",
 		"-f", "hls",
 		"-hls_time", "4",
+		// Keep EVERY segment in the playlist. ffmpeg's default list_size of
+		// 5 turns the playlist into a rolling 20-second live window — old
+		// segments are unlisted and deleted, the client gets dragged to the
+		// "live edge" and content appears to skip ahead. Jellyfin sets 0 too.
+		"-hls_list_size", "0",
 		// NO -hls_playlist_type: "vod" tells ffmpeg the playlist is static,
 		// and it withholds index.m3u8 until the ENTIRE file is processed —
 		// fine for a 2-minute clip, fatal for a 43-minute episode (the

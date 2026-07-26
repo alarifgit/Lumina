@@ -28,6 +28,7 @@ type Capabilities struct {
 	VAAPI         VAAPIResult       `json:"vaapi"`
 	Encoders      map[string]bool   `json:"encoders"`               // codec -> hardware encode works
 	EncoderErrors map[string]string `json:"encoderErrors,omitempty"` // codec -> ffmpeg's reason, when it fails
+	Decoders      map[string]bool   `json:"decoders,omitempty"`      // codec -> hardware decode profile present (vainfo VLD)
 	Driver        string            `json:"driver,omitempty"`        // vainfo driver string, e.g. radeonsi/iHD
 	HDRToneMap    bool              `json:"hdrToneMap"`
 	ProbedAt      time.Time         `json:"probedAt"`
@@ -120,7 +121,7 @@ func Probe(ctx context.Context, ffmpegPath, renderDevice string) Capabilities {
 				caps.EncoderErrors[codec] = reason
 			}
 		}
-		caps.Driver = probeDriver(ctx, device)
+		caps.Driver, caps.Decoders = probeDriver(ctx, device)
 		caps.HDRToneMap = caps.Encoders["hevc"] // Phase 4: real tonemap_vaapi filter test
 	}
 	return caps
@@ -149,23 +150,61 @@ func candidateDevices(preferred string) []string {
 }
 
 // probeDriver asks vainfo which VA-API driver backs the device
-// ("Mesa Gallium driver ... for AMD" / "Intel iHD driver ..."). Best-effort:
-// a missing vainfo binary is not an error — but it IS logged, because an
+// ("Mesa Gallium driver ... for AMD" / "Intel iHD driver ..."), and parses
+// the VAEntrypointVLD profile list into a per-codec hardware DECODE map.
+// The decode map is what lets the pipeline picker skip doomed attempts:
+// e.g. RDNA2 (RX 6800S, Navi 23) has NO AV1 decode profile, so AV1 files
+// go straight to vaapi-hybrid (software decode, silicon encode) instead of
+// dying in full-vaapi first and restarting mid-playback. Best-effort: a
+// missing vainfo binary is not an error — but it IS logged, because an
 // empty driver string during GPU debugging is otherwise a silent gap.
-func probeDriver(ctx context.Context, device string) string {
+func probeDriver(ctx context.Context, device string) (string, map[string]bool) {
 	out, err := run(ctx, "vainfo", "--display", "drm", "--device", device)
+	driver := ""
+	var decoders map[string]bool
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "vainfo: Driver version:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "vainfo: Driver version:"))
+			driver = strings.TrimSpace(strings.TrimPrefix(line, "vainfo: Driver version:"))
+			continue
+		}
+		// "VAProfileHEVCMain10 : VAEntrypointVLD" → decode support.
+		if !strings.HasPrefix(line, "VAProfile") || !strings.Contains(line, "VAEntrypointVLD") {
+			continue
+		}
+		profile := strings.TrimSpace(strings.SplitN(line, ":", 2)[0])
+		profile = strings.TrimPrefix(profile, "VAProfile")
+		if decoders == nil {
+			decoders = map[string]bool{}
+		}
+		switch {
+		case strings.HasPrefix(profile, "H264"):
+			decoders["h264"] = true
+		case strings.HasPrefix(profile, "HEVCMain10"):
+			decoders["hevc10"] = true
+			decoders["hevc"] = true
+		case strings.HasPrefix(profile, "HEVC"):
+			decoders["hevc"] = true
+		case strings.HasPrefix(profile, "VP9"):
+			decoders["vp9"] = true
+		case strings.HasPrefix(profile, "AV1"):
+			decoders["av1"] = true
+		case strings.HasPrefix(profile, "MPEG2"):
+			decoders["mpeg2video"] = true
+		case strings.HasPrefix(profile, "VC1"):
+			decoders["vc1"] = true
+		case strings.HasPrefix(profile, "VP8"):
+			decoders["vp8"] = true
+		case strings.HasPrefix(profile, "JPEGBaseline"):
+			decoders["mjpeg"] = true
 		}
 	}
 	if err != nil {
 		log.Printf("transcode: vainfo on %s failed: %v: %.200s", device, err, strings.TrimSpace(out))
-	} else {
+	} else if driver == "" {
 		log.Printf("transcode: vainfo on %s gave no driver line: %.200s", device, strings.TrimSpace(out))
 	}
-	return ""
+	return driver, decoders
 }
 
 func testVAAPIEncode(ctx context.Context, ffmpeg, device, encoder string) (bool, string) {
