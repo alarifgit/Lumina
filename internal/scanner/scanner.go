@@ -397,6 +397,13 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 	if root.Kind == "tv" {
 		kind = library.KindEpisode
 	}
+	// Plex-style extras folders ("Movie Name (2019)/Featurettes/PV 1.mkv"):
+	// bonus content, not a matchable title. Tag it and keep it out of the
+	// TMDB queue — these files can never be "identified".
+	extra := isExtrasPath(path)
+	if extra {
+		kind = library.KindExtra
+	}
 	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	it, err := s.store.UpsertByHash(hash, root.Name, func(it *library.Item) {
 		it.Kind = kind
@@ -426,10 +433,35 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 	})
 	// Unidentified items go to the metadata worker (no-op without a
 	// TMDB key; the worker also dedups naturally via SetMetadata).
-	if err == nil && it != nil && it.TMDBID == 0 && s.meta != nil {
+	// Extras are excluded by definition — TMDB has no entry for "Official PV 2".
+	if err == nil && it != nil && it.TMDBID == 0 && s.meta != nil && !extra {
 		s.meta.EnqueueHint(*it, metadata.HintFor(root.Path, path, kind == library.KindEpisode))
 	}
 	return err
+}
+
+// extrasDirs: folder names Plex/Jellyfin treat as bonus content.
+var extrasDirs = map[string]bool{
+	"extras": true, "featurettes": true, "specials": true,
+	"behind the scenes": true, "deleted scenes": true, "interviews": true,
+	"scenes": true, "shorts": true, "trailers": true, "bloopers": true,
+}
+
+// isExtrasPath reports whether any directory component of path is an
+// extras folder (case-insensitive).
+func isExtrasPath(path string) bool {
+	dir := filepath.Dir(path)
+	for {
+		base := strings.ToLower(filepath.Base(dir))
+		if extrasDirs[base] {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // ContentHash is the item's identity: sha256(size ‖ head 8MiB ‖ tail 8MiB).

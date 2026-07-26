@@ -29,7 +29,11 @@ import (
 )
 
 const (
-	idleTimeout  = 2 * time.Minute
+	// Paused playback makes NO segment requests — a 2-minute timeout killed
+	// the session under anyone who paused for a cup of tea, and playback
+	// broke on resume. 30 minutes matches Plex/Jellyfin patience; idle
+	// sessions cost only disk (ffmpeg has long finished) or one process.
+	idleTimeout  = 30 * time.Minute
 	reapInterval = 15 * time.Second
 	fileWaitMax  = 60 * time.Second
 )

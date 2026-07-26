@@ -1398,7 +1398,10 @@ video.addEventListener("pause", () => reportPlayhead(true));
 function reportPlayhead(force) {
   if (!currentUser || !currentItem) return;
   if (!force && video.paused) return;
-  const durationS = absoluteDurationS || video.duration;
+  // Duration must come from ffprobe. During a growing HLS session
+  // video.duration is only the produced frontier (or Infinity) — reporting
+  // it would poison the watched/resume math with a moving target.
+  const durationS = absoluteDurationS || (!isHls ? video.duration : 0);
   if (!durationS) return;
   const now = Date.now();
   if (!force && now - lastReportAt < REPORT_INTERVAL_MS) return;

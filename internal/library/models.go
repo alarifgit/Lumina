@@ -63,6 +63,10 @@ type Kind string
 const (
 	KindMovie   Kind = "movie"
 	KindEpisode Kind = "episode"
+	// KindExtra is bonus content in Plex-style extras folders (Featurettes/,
+	// Extras/, …) inside a movie/TV directory. Extras never go to the
+	// metadata worker — TMDB doesn't index stage greetings and PVs.
+	KindExtra Kind = "extra"
 )
 
 // ItemState implements the tombstone rule: a vanished file is "missing",
