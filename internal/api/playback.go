@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/lumina-media/lumina/internal/library"
-	"github.com/lumina-media/lumina/internal/media"
 	"github.com/lumina-media/lumina/internal/transcode"
 )
 
