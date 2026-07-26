@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/lumina-media/lumina/internal/library"
 	"github.com/lumina-media/lumina/internal/media"
@@ -172,4 +174,80 @@ func (s *Server) sessions(w http.ResponseWriter, _ *http.Request) {
 // needing docker exec.
 func (s *Server) sessionsDebug(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.tm.DebugSessions())
+}
+
+// GET /api/v1/system/activity — the Now Playing card's data: live
+// transcode sessions (mode, frontier, ffmpeg log) joined with item
+// titles/artwork, plus every user whose latest playhead report is fresh
+// enough to count as "currently watching".
+func (s *Server) activity(w http.ResponseWriter, _ *http.Request) {
+	type sessionView struct {
+		transcode.SessionDebug
+		ItemID    string `json:"itemId"`
+		OffsetS   int64  `json:"offsetS"`
+		Segments  int    `json:"segments"`
+		Title     string `json:"title,omitempty"`
+		PosterURL string `json:"posterUrl,omitempty"`
+		Kind      string `json:"kind,omitempty"`
+	}
+	type watchingView struct {
+		UserID     string    `json:"userId"`
+		UserName   string    `json:"userName"`
+		ItemID     string    `json:"itemId"`
+		Title      string    `json:"title"`
+		PosterURL  string    `json:"posterUrl,omitempty"`
+		Kind       string    `json:"kind"`
+		Mode       string    `json:"mode,omitempty"` // transcode mode, when a session is live
+		PositionMs int64     `json:"positionMs"`
+		DurationMs int64     `json:"durationMs"`
+		ReportedAt time.Time `json:"reportedAt"`
+	}
+
+	sessions := []sessionView{}
+	// modeByItem lets the watching list show HOW each item is being served.
+	modeByItem := map[string]string{}
+	for _, d := range s.tm.DebugSessions() {
+		v := sessionView{SessionDebug: d}
+		if i := strings.Index(d.Key, "@"); i > 0 {
+			v.ItemID = d.Key[:i]
+			v.OffsetS, _ = strconv.ParseInt(d.Key[i+1:], 10, 64)
+		}
+		for _, f := range d.Files {
+			if strings.HasSuffix(f, ".ts") {
+				v.Segments++
+			}
+		}
+		if it, err := s.store.Get(v.ItemID); err == nil && it != nil {
+			v.Title, v.PosterURL, v.Kind = it.Title, it.PosterURL, string(it.Kind)
+		}
+		if v.ItemID != "" && !d.Dead {
+			modeByItem[v.ItemID] = d.Mode
+		}
+		sessions = append(sessions, v)
+	}
+
+	userNames := map[string]string{}
+	if users, err := s.store.ListUsers(); err == nil {
+		for _, u := range users {
+			userNames[u.ID] = u.Name
+		}
+	}
+	watching := []watchingView{}
+	// Clients report every ~10s while playing; 2 minutes covers pauses
+	// between reports plus a stopped tab's final flush.
+	if reports, err := s.store.RecentPlayheads(time.Now().Add(-2 * time.Minute)); err == nil {
+		for _, r := range reports {
+			v := watchingView{
+				UserID: r.UserID, UserName: userNames[r.UserID],
+				ItemID: r.ItemID, PositionMs: r.PositionMs,
+				DurationMs: r.DurationMs, ReportedAt: r.ReportedAt,
+				Mode: modeByItem[r.ItemID],
+			}
+			if it, err := s.store.Get(r.ItemID); err == nil && it != nil {
+				v.Title, v.PosterURL, v.Kind = it.Title, it.PosterURL, string(it.Kind)
+			}
+			watching = append(watching, v)
+		}
+	}
+	writeJSON(w, map[string]any{"sessions": sessions, "watching": watching})
 }

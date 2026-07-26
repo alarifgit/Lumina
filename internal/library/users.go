@@ -153,6 +153,52 @@ func (s *sqliteStore) Playhead(userID, itemID string) (*Playhead, error) {
 	return &ph, nil
 }
 
+// PlayheadReport is one user's latest journal row for one item, with the
+// report time attached — the "who is watching what right now" view.
+type PlayheadReport struct {
+	UserID     string    `json:"userId"`
+	ItemID     string    `json:"itemId"`
+	PositionMs int64     `json:"positionMs"`
+	DurationMs int64     `json:"durationMs"`
+	ReportedAt time.Time `json:"reportedAt"`
+}
+
+// RecentPlayheads returns the LATEST report per (user, item) among rows
+// written since the cutoff. A client reports every ~10s during playback,
+// so a 2-minute window is exactly "currently watching".
+func (s *sqliteStore) RecentPlayheads(since time.Time) ([]PlayheadReport, error) {
+	rows, err := s.db.Query(
+		`SELECT p.user_id, p.item_id, p.position_ms, p.duration_ms, p.created_at
+		 FROM playheads p
+		 JOIN (
+		     SELECT user_id, item_id, MAX(version) AS v
+		     FROM playheads GROUP BY user_id, item_id
+		 ) latest ON latest.user_id = p.user_id AND latest.item_id = p.item_id
+		          AND latest.v = p.version
+		 WHERE p.created_at >= ?
+		 ORDER BY p.created_at DESC`, fmtTime(since))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PlayheadReport{}
+	for rows.Next() {
+		var uid, iid, pos, dur int64
+		var created string
+		if err := rows.Scan(&uid, &iid, &pos, &dur, &created); err != nil {
+			continue
+		}
+		out = append(out, PlayheadReport{
+			UserID:     fmt.Sprintf("usr-%d", uid),
+			ItemID:     fmt.Sprintf("itm-%d", iid),
+			PositionMs: pos,
+			DurationMs: dur,
+			ReportedAt: parseTime(created),
+		})
+	}
+	return out, rows.Err()
+}
+
 func numericUserID(id string) int64 {
 	var n int64
 	fmt.Sscanf(id, "usr-%d", &n)

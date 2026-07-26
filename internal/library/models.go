@@ -40,6 +40,9 @@ type Store interface {
 	Playheads(userID string) (map[string]Playhead, error)
 	// Playhead derives one (user, item) state; nil if never played.
 	Playhead(userID, itemID string) (*Playhead, error)
+	// RecentPlayheads returns the latest report per (user, item) written
+	// since the cutoff — the "now playing" view.
+	RecentPlayheads(since time.Time) ([]PlayheadReport, error)
 
 	// SetMetadata writes provider results (real title, year, artwork).
 	SetMetadata(id string, m Metadata) error

@@ -28,12 +28,19 @@
   </div>
   <div class="settings-body">
     <aside class="settings-nav">
+      <button data-section="sec-activity">Now Playing</button>
       <button data-section="sec-libraries" class="active">Libraries</button>
       <button data-section="sec-integrations">Integrations</button>
       <button data-section="sec-playback">Playback</button>
       <button data-section="sec-users">Users</button>
     </aside>
     <div class="settings-sections">
+      <section id="sec-activity" class="hidden">
+        <h3>Now playing</h3>
+        <div id="activity-watching"><div class="arr-error">Loading…</div></div>
+        <h3>Transcode sessions</h3>
+        <div id="activity-sessions"></div>
+      </section>
       <section id="sec-libraries">
         <h3>Libraries</h3>
         <p class="libs-note">Paths are as Lumina sees them inside the container (e.g. <code>/media/movies</code>). Row order is nav order.</p>

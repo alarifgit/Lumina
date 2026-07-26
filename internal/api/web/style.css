@@ -1219,6 +1219,67 @@ nav button.active { color: #fff; }
   overflow: auto;
 }
 #users-list { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
+
+/* --- now playing (activity) --- */
+.activity-grid { display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1rem; }
+.activity-card {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+.activity-poster {
+  width: 64px;
+  aspect-ratio: 2/3;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: none;
+}
+.activity-meta { flex: 1; min-width: 0; }
+.activity-title { font-weight: 600; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.activity-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0.45rem;
+}
+.activity-sub .ic { font-size: 1em; }
+.activity-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.activity-progress > div { height: 100%; background: var(--accent, #e5a00d); }
+.activity-time { color: var(--muted); font-size: 0.75rem; margin-top: 0.3rem; font-variant-numeric: tabular-nums; }
+.session-row {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+.session-head { display: flex; align-items: center; gap: 0.5rem; }
+.session-title { flex: 1; font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-sub { color: var(--muted); font-size: 0.78rem; margin-top: 0.3rem; font-variant-numeric: tabular-nums; }
+.session-log { margin-top: 0.45rem; }
+.session-log summary { cursor: pointer; color: var(--muted); font-size: 0.78rem; }
+.session-log pre {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.7rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 22vh;
+  overflow: auto;
+}
+
 .user-chip {
   background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.1);

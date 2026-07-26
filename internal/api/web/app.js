@@ -1562,6 +1562,8 @@ const libsStatus = document.getElementById("libs-status");
 
 function closeSettings() {
   settingsPage.classList.add("hidden");
+  clearInterval(activityTimer); // Now Playing stops polling when hidden
+  activityTimer = null;
 }
 
 async function openSettings(sectionId) {
@@ -1589,6 +1591,14 @@ async function openSettings(sectionId) {
     renderCapabilities();
   } else if (sectionId === "sec-users") {
     renderUsers();
+  } else if (sectionId === "sec-activity") {
+    renderActivity();
+    clearInterval(activityTimer);
+    activityTimer = setInterval(renderActivity, 5000); // live card
+  }
+  if (sectionId !== "sec-activity") {
+    clearInterval(activityTimer);
+    activityTimer = null;
   }
 }
 
@@ -1597,6 +1607,69 @@ settingsPage.querySelectorAll(".settings-nav button").forEach((b) => {
 });
 document.getElementById("settings-close").onclick = closeSettings;
 libsButton.onclick = () => openSettings("sec-libraries");
+
+// --- now playing (activity) ---------------------------------------------------
+// The transcoder-health view: who is watching what (fresh playhead
+// reports), and every ffmpeg session with its mode, frontier, and log
+// tail — no more docker logs for "why is this stuttering".
+
+let activityTimer = null;
+
+function activityModeBadge(mode) {
+  if (!mode) return `<span class="badge direct">direct play</span>`;
+  const gpu = mode === "vaapi" || mode === "vaapi-hybrid";
+  const label = { copy: "remux", "vaapi": "vaapi", "vaapi-hybrid": "hybrid" }[mode] || mode;
+  return `<span class="badge ${gpu ? "" : "software"}">${escapeHtml(label)}</span>`;
+}
+
+async function renderActivity() {
+  const watchEl = document.getElementById("activity-watching");
+  const sessEl = document.getElementById("activity-sessions");
+  let data;
+  try {
+    data = await api("/api/v1/system/activity");
+  } catch (e) {
+    watchEl.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+    return;
+  }
+  const watching = data.watching || [];
+  watchEl.innerHTML = watching.length === 0
+    ? `<p class="libs-note">Nothing is playing right now.</p>`
+    : `<div class="activity-grid">${watching.map((w) => {
+        const pct = w.durationMs > 0 ? Math.min(100, (w.positionMs / w.durationMs) * 100) : 0;
+        return `<div class="activity-card">
+          ${w.posterUrl ? `<img class="activity-poster" src="${w.posterUrl}" alt="" loading="lazy">` : ""}
+          <div class="activity-meta">
+            <div class="activity-title">${escapeHtml(w.title || w.itemId)}</div>
+            <div class="activity-sub">
+              <span class="ic ic-user"></span> ${escapeHtml(w.userName || w.userId)}
+              · ${w.kind === "episode" ? "Episode" : w.kind === "extra" ? "Extra" : "Movie"}
+              · ${activityModeBadge(w.mode)}
+            </div>
+            <div class="activity-progress"><div style="width:${pct}%"></div></div>
+            <div class="activity-time">${fmtClock(w.positionMs / 1000)} / ${fmtClock(w.durationMs / 1000)}</div>
+          </div>
+        </div>`;
+      }).join("")}</div>`;
+
+  const sessions = data.sessions || [];
+  sessEl.innerHTML = sessions.length === 0
+    ? `<p class="libs-note">No transcode sessions.</p>`
+    : sessions.map((s) => {
+        const status = s.completed ? "complete" : s.dead ? "dead" : "live";
+        return `<div class="session-row">
+          <div class="session-head">
+            ${activityModeBadge(s.mode)}
+            <span class="session-title">${escapeHtml(s.title || s.key)}</span>
+            <span class="badge ${status === "live" ? "direct" : status === "dead" ? "software" : ""}">${status}</span>
+          </div>
+          <div class="session-sub">
+            offset ${fmtClock(s.offsetS)} · ${s.segments} segments · idle ${s.idleSeconds}s
+          </div>
+          ${s.logTail ? `<details class="session-log"><summary>ffmpeg log</summary><pre>${escapeHtml(s.logTail)}</pre></details>` : ""}
+        </div>`;
+      }).join("");
+}
 
 // Playback section: the capabilities probe, rendered as a readable card
 // instead of a hover tooltip.
