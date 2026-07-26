@@ -24,7 +24,7 @@ func (s *Server) listSubtitles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusGone)
 		return
 	}
-	info, err := media.Probe(r.Context(), s.cfg.FFprobePath, path)
+	info, err := s.probeCached(r.Context(), it, path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

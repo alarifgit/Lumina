@@ -66,11 +66,16 @@ type probeOutput struct {
 }
 
 // Probe runs ffprobe on path. 30s budget: network mounts can stall.
+// probesize/analyzeduration are capped small: we only need container and
+// stream HEADERS (codec, profile, color tags), not decoded frames — the
+// defaults (5s of analysis) turned every uncached probe into a 7-second
+// SMB crawl.
 func Probe(ctx context.Context, ffprobePath, path string) (*Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, ffprobePath,
 		"-v", "error", "-print_format", "json",
+		"-probesize", "2M", "-analyzeduration", "1M",
 		"-show_format", "-show_streams", path)
 	out, err := cmd.Output()
 	if err != nil {

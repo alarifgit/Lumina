@@ -1098,7 +1098,7 @@ async function play(item) {
   document.getElementById("media-overview").textContent = item.overview || "";
   absoluteDurationS = info.durationS || 0;
 
-  loadSubtitles(item).catch(() => {});
+  loadSubtitles(item).catch((e) => console.warn("subtitle discovery failed:", e));
 
   if (!forceTranscode.checked && directPlayBlockers(info, item).length === 0) {
     startDirect(item);
@@ -1243,12 +1243,31 @@ async function selectTrack(i) {
   subCues = [];
   renderSubtitles();
   if (i == null || !currentItem) return;
+  // First selection of an embedded track pays a container scan (uncached);
+  // show the wait instead of looking broken. Cached tracks answer in ms.
+  ccSelect.disabled = true;
+  subOverlay.innerHTML = '<div class="sub-line sub-loading">Loading subtitles…</div>';
   try {
     const res = await fetch(`/api/v1/items/${currentItem.id}/subtitles/${subTracks[i].id}`);
     if (!res.ok) throw new Error(`subtitles ${res.status}`);
-    subCues = parseVTT(await res.text());
-    renderSubtitles();
-  } catch { /* track stays empty — the dropdown still offers a retry */ }
+    // The user may have switched tracks (or off) while we were fetching —
+    // only apply cues if this selection is still current.
+    const cues = parseVTT(await res.text());
+    if (activeSubTrack === i) {
+      subCues = cues;
+      renderSubtitles();
+    }
+  } catch (e) {
+    console.warn("subtitle load failed:", subTracks[i] && subTracks[i].id, e);
+    if (activeSubTrack === i) {
+      activeSubTrack = -1;
+      ccSelect.value = "";
+      subOverlay.innerHTML = '<div class="sub-line sub-loading">Subtitles failed to load — try again</div>';
+      setTimeout(renderSubtitles, 2500);
+    }
+  } finally {
+    ccSelect.disabled = false;
+  }
 }
 
 function parseVTT(text) {

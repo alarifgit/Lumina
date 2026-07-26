@@ -63,7 +63,7 @@ func (s *Server) itemInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusGone)
 		return
 	}
-	info, err := media.Probe(r.Context(), s.cfg.FFprobePath, path)
+	info, err := s.probeCached(r.Context(), it, path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -131,7 +131,7 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 	// requests arrive several times per minute and must stay cheap.
 	sess := s.tm.Get(key)
 	if sess == nil {
-		info, err := media.Probe(r.Context(), s.cfg.FFprobePath, path)
+		info, err := s.probeCached(r.Context(), it, path)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
