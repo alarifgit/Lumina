@@ -43,6 +43,9 @@ type Store interface {
 	// RecentPlayheads returns the latest report per (user, item) written
 	// since the cutoff — the "now playing" view.
 	RecentPlayheads(since time.Time) ([]PlayheadReport, error)
+	// CompactPlayheads reduces the journal to the newest row per
+	// (user,item) and checkpoints the WAL. Returns rows removed.
+	CompactPlayheads() (int64, error)
 
 	// SetMetadata writes provider results (real title, year, artwork).
 	SetMetadata(id string, m Metadata) error

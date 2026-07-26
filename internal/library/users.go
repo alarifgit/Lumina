@@ -166,17 +166,23 @@ type PlayheadReport struct {
 // RecentPlayheads returns the LATEST report per (user, item) among rows
 // written since the cutoff. A client reports every ~10s during playback,
 // so a 2-minute window is exactly "currently watching".
+//
+// The inner MAX(version) subquery is restricted to the same window: versions
+// are monotonic per (user,item), so any row newer than an in-window row is
+// itself in-window — the windowed MAX equals the global MAX for every pair
+// that has a recent row, without grouping the whole journal.
 func (s *sqliteStore) RecentPlayheads(since time.Time) ([]PlayheadReport, error) {
 	rows, err := s.db.Query(
 		`SELECT p.user_id, p.item_id, p.position_ms, p.duration_ms, p.created_at
 		 FROM playheads p
 		 JOIN (
 		     SELECT user_id, item_id, MAX(version) AS v
-		     FROM playheads GROUP BY user_id, item_id
+		     FROM playheads WHERE created_at >= ?
+		     GROUP BY user_id, item_id
 		 ) latest ON latest.user_id = p.user_id AND latest.item_id = p.item_id
 		          AND latest.v = p.version
 		 WHERE p.created_at >= ?
-		 ORDER BY p.created_at DESC`, fmtTime(since))
+		 ORDER BY p.created_at DESC`, fmtTime(since), fmtTime(since))
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +203,31 @@ func (s *sqliteStore) RecentPlayheads(since time.Time) ([]PlayheadReport, error)
 		})
 	}
 	return out, rows.Err()
+}
+
+// CompactPlayheads reduces the journal to the newest row per (user,item).
+// The journal is append-only (one row per ~10s of playback per viewer) and
+// history is NEVER read — every consumer derives state from MAX(version) —
+// so superseded rows are pure growth. Runs at boot and then daily from
+// main. Returns the number of rows removed.
+func (s *sqliteStore) CompactPlayheads() (int64, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM playheads
+		 WHERE version < (
+		     SELECT MAX(version) FROM playheads p2
+		     WHERE p2.user_id = playheads.user_id
+		       AND p2.item_id = playheads.item_id
+		 )`)
+	if err != nil {
+		return 0, err
+	}
+	removed, _ := res.RowsAffected()
+	// Hand the freed pages back: without a TRUNCATE checkpoint the -wal
+	// file retains the pre-delete page images indefinitely.
+	if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return removed, fmt.Errorf("wal checkpoint after compact: %w", err)
+	}
+	return removed, nil
 }
 
 func numericUserID(id string) int64 {

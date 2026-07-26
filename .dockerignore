@@ -1,0 +1,34 @@
+# Version control + docs — not needed to build the binary
+.git
+*.md
+
+# Reference-only trees (the codex "bad attempt" and extracted references).
+# These are the bulk of the checkout and were previously uploaded to the
+# daemon on every `docker build`.
+lumina_badattempt
+_reference
+
+# Design iteration + asset-generation tooling. The SHIPPED brand/icons
+# live in internal/api/web/{brand,icons} and are committed pre-generated.
+brand-candidates
+assets
+scripts
+
+# Local runtime state / secrets
+data
+config
+*.db
+*.db-*
+*.log
+lumina.json
+.env
+*.env
+
+# Deployment manifests — the image build only needs deployments/entrypoint.sh
+deployments/*.yml
+deployments/*.yaml
+deployments/*.json
+
+# Build files themselves
+Dockerfile
+.dockerignore

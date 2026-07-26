@@ -51,6 +51,33 @@ func main() {
 	sc := scanner.New(cfg, store, mw)
 	go sc.Run(ctx)
 
+	// Playhead-journal retention: the journal is append-only (a row every
+	// ~10s per active viewer) and its history is never read, so sweep it
+	// down to the latest row per (user,item) at boot and once a day —
+	// otherwise months of viewing turns into millions of dead rows and
+	// the MAX(version) joins behind Continue Watching degrade with it.
+	go func() {
+		compact := func() {
+			n, err := store.CompactPlayheads()
+			if err != nil {
+				log.Printf("lumina: compact playheads: %v", err)
+			} else if n > 0 {
+				log.Printf("lumina: playhead journal compacted, %d superseded rows removed", n)
+			}
+		}
+		compact()
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				compact()
+			}
+		}
+	}()
+
 	// Transcode segment root: default <data>/transcode, overridable so the
 	// scratch space can live on fast local disk or tmpfs (Plex's "transcoder
 	// temporary directory" equivalent). Never point it at a network share.
