@@ -6,7 +6,7 @@ tint it with `background: currentColor` + mask-image — the icons inherit
 button text color automatically, like Plex's icon font.
 """
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageFilter
 
 SRC = Path("assets/icon-sheet.png")
 OUT = Path("internal/api/web/icons")
@@ -19,8 +19,11 @@ NAMES = [
     ["download", "user", "close", "back"],
     ["search", "info", "edit", "check"],
 ]
-INSET = 0.16  # crop each cell to its central region (margins are ~25%)
+INSET = 0.10  # crop each cell to its central region (margins are ~25%);
+              # smaller inset = larger glyph inside the tile
 SIZE = 256    # output pixels per icon (used at <=48px in the UI)
+BOLD = 11     # alpha dilation (px at 256): thickens hairline strokes so the
+              # icons read at small display sizes
 
 img = Image.open(SRC).convert("RGB")
 W, H = img.size
@@ -46,12 +49,20 @@ def key_cell(crop: Image.Image) -> Image.Image:
             op[x, y] = (255, 255, 255, a)
     return out
 
+def bolden(icon: Image.Image) -> Image.Image:
+    """Dilate the alpha so hairline strokes survive small display sizes."""
+    if BOLD <= 0:
+        return icon
+    r, g, b, a = icon.split()
+    a = a.filter(ImageFilter.MaxFilter(BOLD))
+    return Image.merge("RGBA", (r, g, b, a))
+
 for r, row in enumerate(NAMES):
     for c, name in enumerate(row):
         x0, y0 = c * cell, r * cell
         ins = int(cell * INSET)
         crop = img.crop((x0 + ins, y0 + ins, x0 + cell - ins, y0 + cell - ins))
-        keyed = key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS)
+        keyed = bolden(key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS))
         keyed.save(OUT / f"ic-{name}.png")
         print("ic-%s.png" % name)
 
@@ -66,7 +77,7 @@ for y in range(bm.size[1] - 130, bm.size[1]):
 bx, by = bm.size[0] // 2, bm.size[1] // 2
 half = int(bm.size[0] * 0.30)
 crop = bm.crop((bx - half, by - half, bx + half, by + half))
-key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS).save(OUT / "ic-bookmark.png")
+bolden(key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS)).save(OUT / "ic-bookmark.png")
 print("ic-bookmark.png")
 
 print("done ->", OUT)

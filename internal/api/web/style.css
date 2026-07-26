@@ -1248,8 +1248,8 @@ nav button.active { color: #fff; }
    so glass pills, gold eyebrows, and green watched badges all tint right. */
 .ic {
   display: inline-block;
-  width: 1.05em;
-  height: 1.05em;
+  width: 1.2em;
+  height: 1.2em;
   background-color: currentColor;
   -webkit-mask-position: center;
   mask-position: center;
@@ -1278,17 +1278,17 @@ nav button.active { color: #fff; }
 .ic-bookmark { -webkit-mask-image: url("/icons/ic-bookmark.png"); mask-image: url("/icons/ic-bookmark.png"); }
 .ic-flip { transform: scaleX(-1); }
 /* Size adjustments where icons replace emoji glyphs. */
-.card-play .ic { width: 1.05rem; height: 1.05rem; }
-#controls-row .ic { font-size: 1rem; }
-#pc-volume-icon { color: rgba(255, 255, 255, 0.82); width: 1.1rem; height: 1.1rem; }
-.rail-nav .ic { font-size: 1.5rem; }
+.card-play .ic { width: 1.2rem; height: 1.2rem; }
+#controls-row .ic { font-size: 1.15rem; }
+#pc-volume-icon { color: rgba(255, 255, 255, 0.82); width: 1.25rem; height: 1.25rem; }
+.rail-nav .ic { font-size: 1.7rem; }
 .back-button .ic { margin-right: 0.15rem; }
-.watched .ic { width: 0.85rem; height: 0.85rem; vertical-align: 0; }
-.ep-watched .ic { width: 1rem; height: 1rem; vertical-align: 0; }
+.watched .ic { width: 0.95rem; height: 0.95rem; vertical-align: 0; }
+.ep-watched .ic { width: 1.1rem; height: 1.1rem; vertical-align: 0; }
 #user-badge .ic, .user-chip .ic { margin-right: 0.1rem; }
 .text-button .ic { margin-right: 0.25rem; }
 .ghost-button .ic { margin-right: 0.2rem; }
-.lib-remove .ic { font-size: 0.8rem; }
+.lib-remove .ic { font-size: 0.9rem; }
 
 
 /* --- parity round: carousel, search, my-list, player extras, skeletons ------ */
