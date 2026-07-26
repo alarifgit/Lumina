@@ -100,6 +100,16 @@ const CAN_HEVC = video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') !== ""
 // platforms where MSE HEVC still fails).
 const CAN_HEVC_MSE = window.MediaSource &&
   MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"');
+// Runtime kill-switch on top of the probe. The probe can LIE: Chrome has
+// reported MSE-supported for hvc1 and then rejected the buffer append, or
+// loaded the manifest and never produced a frame. The first REAL failure
+// during an HEVC rung flips this for the rest of the tab session
+// (sessionStorage) and every later play goes straight to h264.
+let hevcMseOk = CAN_HEVC_MSE && !sessionStorage.getItem("lumina.noHevc");
+function disableHevc() {
+  hevcMseOk = false;
+  try { sessionStorage.setItem("lumina.noHevc", "1"); } catch { /* private mode */ }
+}
 const CAN_AC3 = video.canPlayType('audio/mp4; codecs="ac-3"') !== "";
 const CAN_EAC3 = video.canPlayType('audio/mp4; codecs="ec-3"') !== "";
 const DIRECT_VIDEO = ["h264", "vp8", "vp9", "av1", ...(CAN_HEVC ? ["hevc"] : [])];
@@ -1164,13 +1174,15 @@ async function startHls(item, startS) {
   // Quality rung always rides the URL: it keys the server-side session
   // (item@offset@quality), so switching rungs never collides with a
   // session from another rung.
+  // wantHevc: constrained rungs encode HEVC (~half the bitrate at equal
+  // quality) when this client's MSE can play it — h264 stays the universal
+  // default, and hevcMseOk self-disables if a real playback ever fails.
+  const wantHevc = currentQuality !== "original" && hevcMseOk;
   const params = new URLSearchParams();
   if (sessionOffsetS > 0) params.set("start", String(Math.floor(sessionOffsetS)));
   if (currentQuality !== "original") {
     params.set("quality", currentQuality);
-    // Constrained rungs encode HEVC when this client's MSE can play it —
-    // ~half the bitrate at equal quality. h264 stays the universal default.
-    if (CAN_HEVC_MSE) params.set("codec", "hevc");
+    if (wantHevc) params.set("codec", "hevc");
   }
   const qs = params.toString() ? `?${params}` : "";
   const url = `/api/v1/items/${item.id}/hls/index.m3u8${qs}`;
@@ -1189,9 +1201,7 @@ async function startHls(item, startS) {
   if (!mode) {
     try {
       const sessions = await api("/api/v1/system/sessions");
-      const keyQuality = currentQuality +
-        (CAN_HEVC_MSE && currentQuality !== "original" ? "-hevc" : "");
-      const key = `${item.id}@${Math.floor(sessionOffsetS)}@${keyQuality}`;
+      const key = `${item.id}@${Math.floor(sessionOffsetS)}@${currentQuality}${wantHevc ? "-hevc" : ""}`;
       const sess = sessions.find((s) => s.key === key) ||
         sessions.find((s) => s.key.startsWith(item.id));
       if (sess) mode = sess.mode;
@@ -1199,7 +1209,7 @@ async function startHls(item, startS) {
   }
   if (!mode) mode = "software"; // unknown ≠ software, but badge needs a label
   const rung = currentQuality !== "original"
-    ? ` · ${currentQuality}${CAN_HEVC_MSE ? " hevc" : ""}` : "";
+    ? ` · ${currentQuality}${wantHevc ? " hevc" : ""}` : "";
   if (mode === "copy") {
     setMode("direct stream · remux", "direct");
   } else if (mode === "vaapi-hybrid") {
@@ -1220,6 +1230,7 @@ async function startHls(item, startS) {
       startPosition: 0,
       liveSyncDurationCount: Infinity,
     });
+    if (wantHevc) armHevcFallback(item, sessionOffsetS, currentHls);
     currentHls.loadSource(url);
     currentHls.attachMedia(video);
     currentHls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1228,10 +1239,45 @@ async function startHls(item, startS) {
     });
   } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
     video.src = url; // Safari native HLS
+    if (wantHevc) video.onerror = () => {
+      disableHevc();
+      startHls(item, sessionOffsetS);
+    };
     video.play().catch(() => {});
   } else {
     playerTitle.textContent = `${item.title} — this browser cannot play HLS`;
   }
+}
+
+// HEVC rungs: if the browser's MSE lied about hvc1 support, the failure
+// shows up either LOUD (fatal hls.js error — buffer-add codec reject,
+// manifest parse failure) or SILENT (manifest loads, no frame ever
+// appears — the "loads and loads forever" symptom). Catch both: kill HEVC
+// for the rest of the tab session and restart the same rung in h264.
+// Guarded by currentHls identity so a superseded session can't fire late
+// and restart playback the user already navigated away from.
+function armHevcFallback(item, startS, hls) {
+  let fired = false;
+  const stale = () => currentHls !== hls;
+  const fail = (why) => {
+    if (fired || stale()) return;
+    fired = true;
+    disableHevc();
+    console.warn(`lumina: hevc rung failed (${why}) — retrying in h264`);
+    startHls(item, startS);
+  };
+  hls.on(Hls.Events.ERROR, (_e, data) => {
+    if (data && data.fatal) fail(data.details || "hls error");
+  });
+  const watchdog = setTimeout(() => {
+    video.removeEventListener("playing", onPlaying);
+    if (!stale()) fail("no playback within 8s");
+  }, 8000);
+  const onPlaying = () => {
+    clearTimeout(watchdog); // real frames arrived — MSE was honest
+    video.removeEventListener("playing", onPlaying);
+  };
+  video.addEventListener("playing", onPlaying);
 }
 
 // NOTE: there is deliberately no "seeking"-event restart listener. Every
