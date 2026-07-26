@@ -41,6 +41,7 @@ type Server struct {
 	plexSyncMu      sync.Mutex
 	plexSyncLast    time.Time
 	plexSyncSummary string
+	plexReport      *plexSyncReportView // digest of the last import, for the UI
 }
 
 func New(cfg config.Config, configPath string, store library.Store, sc *scanner.Scanner, caps transcode.Capabilities, tm *transcode.Manager, mw *metadata.Worker) *Server {

@@ -80,8 +80,10 @@ nav::-webkit-scrollbar { display: none; }
   left: 0;
   width: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 4px 14px rgba(0, 0, 0, 0.35);
+  /* The active segment wears the wordmark's gold: a cream wash with a
+     gilded hairline, so the top bar reads as one family with the logo. */
+  background: rgba(252, 225, 182, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(252, 225, 182, 0.24), 0 4px 14px rgba(0, 0, 0, 0.35);
   opacity: 0;
   transition: transform 260ms var(--focus-ease), opacity 160ms ease;
   pointer-events: none;
@@ -100,8 +102,8 @@ nav button {
   white-space: nowrap;
   transition: color 180ms ease;
 }
-nav button:hover { color: rgba(255, 255, 255, 0.95); }
-nav button.active { color: #fff; }
+nav button:hover { color: var(--cream); }
+nav button.active { color: var(--cream); }
 
 /* Header action group (search / downloads / settings): the same segmented
    glass pill language as the nav, pushed to the right edge. */
@@ -129,19 +131,26 @@ nav button.active { color: #fff; }
   transition: color 180ms ease, background 180ms ease;
 }
 .seg-control button:hover {
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--cream);
+  background: rgba(252, 225, 182, 0.1);
 }
 
+/* The user badge lives INSIDE the seg-control now — same glass segment
+   language as its icon neighbours, wearing the wordmark's gold. */
 #user-badge {
   background: transparent;
-  border: 1px solid var(--accent);
-  color: var(--text);
-  padding: 0.3rem 0.8rem;
+  border: 1px solid transparent;
+  color: var(--cream);
+  padding: 0.35rem 0.8rem;
   border-radius: 999px;
   cursor: pointer;
   font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: color 180ms ease, background 180ms ease;
 }
+#user-badge:hover { background: rgba(252, 225, 182, 0.1); }
 
 #grid {
   display: grid;
@@ -499,6 +508,24 @@ nav button.active { color: #fff; }
   font-size: 0.85rem;
 }
 .plex-actions { display: flex; gap: 0.5rem; }
+/* Last-import digest: six-count strip, gold on the numbers. */
+.plex-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.5rem;
+  margin: 0.7rem 0;
+}
+.plex-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.plex-stat .v { font-size: 1.15rem; font-weight: 650; color: var(--cream); }
+.plex-stat .k { font-size: 0.72rem; color: var(--muted); }
 .plex-actions button {
   background: transparent;
   border: 1px solid var(--accent);
@@ -607,7 +634,9 @@ nav button.active { color: #fff; }
 #grid.home { display: block; padding: 0; }
 .hero {
   position: relative;
-  min-height: 62vh;
+  /* Scaled down from the original 62vh: the hero still leads the page but
+     leaves the first rail's cards visible in the default viewport. */
+  min-height: 46vh;
   overflow: hidden;
   background: var(--panel);
 }
@@ -631,7 +660,7 @@ nav button.active { color: #fff; }
   position: relative;
   z-index: 1;
   max-width: 780px;
-  padding: 17vh 1.4rem 5rem;
+  padding: 10vh 1.4rem 3.5rem;
   text-shadow: 1px 1px 5px rgba(0,0,0,0.7);
 }
 .eyebrow {
@@ -643,7 +672,7 @@ nav button.active { color: #fff; }
 }
 .hero-copy h2 {
   margin: 0.35rem 0 0.6rem;
-  font-size: clamp(2.2rem, 6vw, 5rem);
+  font-size: clamp(1.9rem, 4.5vw, 3.5rem);
   line-height: 0.95;
   letter-spacing: -0.045em;
   font-weight: 650;

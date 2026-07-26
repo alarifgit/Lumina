@@ -1992,13 +1992,17 @@ document.getElementById("arr-save").onclick = async () => {
   }
 };
 
-// Plex auto-sync loop state — one quiet line above the manual controls.
+// Plex auto-sync loop state + last-import digest (Settings → Integrations).
+// The digest turns imports from a black box into a report: counts, the
+// unmatched list, and the way out (re-identify, then the next sync matches).
 async function loadPlexSyncStatus() {
   const el = document.getElementById("plex-sync-status");
+  const rep = document.getElementById("plex-report");
   try {
     const st = await api("/api/v1/plex/syncstatus");
     if (!st.configured) {
       el.textContent = "Save a Plex URL + token and watch state auto-syncs here.";
+      rep.innerHTML = "";
       return;
     }
     const last = st.lastRun && !st.lastRun.startsWith("0001-")
@@ -2006,6 +2010,44 @@ async function loadPlexSyncStatus() {
     el.textContent = st.enabled
       ? `Auto-sync every ${st.intervalMinutes} min · last run: ${last}${st.summary ? ` — ${st.summary}` : ""}`
       : "Auto-sync disabled (syncIntervalMinutes < 0).";
+
+    const r = st.report;
+    if (!r) { rep.innerHTML = ""; return; }
+    const when = r.at ? new Date(r.at).toLocaleString() : "";
+    const counts = [
+      ["scanned", r.scanned], ["matched", r.matched],
+      ["marked watched", r.markedLumina], ["scrobbled", r.scrobbledPlex],
+      ["already synced", r.alreadySynced], ["unmatched", r.unmatched],
+    ].map(([k, v]) =>
+      `<div class="plex-stat"><span class="v">${v || 0}</span><span class="k">${k}</span></div>`).join("");
+    const unmatchedRows = (r.unmatchedItems || [])
+      .map((t) => `<div class="arr-row"><span class="t">${escapeHtml(t)}</span></div>`).join("");
+    rep.innerHTML = `
+      <div class="libs-note">Last ${r.mode === "auto" ? "auto-sync" : "manual import"}: ${when}${st.running ? " · a sync is running now…" : ""}</div>
+      <div class="plex-stats">${counts}</div>
+      ${r.unmatched > 0 ? `
+        <h5>Unmatched in Lumina (${r.unmatched})</h5>
+        ${unmatchedRows}
+        ${r.truncated ? `<div class="libs-note">List truncated — the rest are in the server log.</div>` : ""}
+        <p class="libs-note">Unmatched usually means the Lumina item has no TMDB id yet. Re-identify, and the next sync matches it.</p>
+        <div class="lib-actions"><button id="plex-rematch">Re-identify unmatched in Lumina</button></div>
+        <div id="plex-rematch-status" class="libs-note"></div>` : ""}
+      ${(r.errors || []).length ? `<h5>Errors</h5>${r.errors.map((e) => `<div class="arr-error">${escapeHtml(e)}</div>`).join("")}` : ""}`;
+    const rematchBtn = document.getElementById("plex-rematch");
+    if (rematchBtn) {
+      rematchBtn.onclick = async () => {
+        const stEl = document.getElementById("plex-rematch-status");
+        stEl.textContent = "Queueing…";
+        try {
+          const res = await api("/api/v1/metadata/rematch-unidentified", { method: "POST" });
+          stEl.textContent = res.queued > 0
+            ? `Queued ${res.queued} item(s) — matches land over the next minute, then the next sync picks them up.`
+            : "Nothing to re-identify — these Plex titles may not exist in your Lumina libraries at all.";
+        } catch (e) {
+          stEl.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+        }
+      };
+    }
   } catch { el.textContent = ""; }
 }
 
@@ -2149,7 +2191,12 @@ async function runPlexImport(apply) {
 function closePlayer() {
   overlay.classList.add("hidden");
   stopPlayback(); // flushes the final playhead report before teardown
+  // The watch state just changed — refresh wherever the user lands.
+  // Home (no activeLib) is where Continue Watching + the hero's RESUME
+  // card live, so closing back to home must rebuild it, not show the
+  // stale rails from page load.
   if (activeLib) refreshCurrentView();
+  else loadHome();
 }
 document.getElementById("player-close").onclick = closePlayer;
 // Stop = the transport-control way out (Plex convention): same flush +

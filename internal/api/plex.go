@@ -110,6 +110,12 @@ func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	// Only an APPLY becomes "the last sync" — previews are read-only
+	// rehearsals and must not overwrite the real status panel.
+	if body.Apply {
+		s.plexReport = reportView("manual", report)
+		s.plexSyncLast = time.Now()
+	}
 	writeJSON(w, report)
 }
 
@@ -158,6 +164,7 @@ func (s *Server) plexSyncAll(ctx context.Context) {
 	c := s.plexClient("", "")
 	marked := 0
 	pulled := 0
+	reps := []*plex.ImportReport{}
 	for _, u := range users {
 		report, err := plex.Import(ctx, c, s.store, u.ID, plex.Pull, true)
 		if err != nil {
@@ -166,17 +173,82 @@ func (s *Server) plexSyncAll(ctx context.Context) {
 		}
 		pulled++
 		marked += report.MarkedLumina
+		reps = append(reps, report)
 	}
 	s.plexSyncLast = time.Now()
+	s.plexReport = reportView("auto", reps...)
 	s.plexSyncSummary = fmt.Sprintf("pulled for %d user(s) · %d playhead(s) imported", pulled, marked)
 	log.Printf("plex: auto-sync: %s", s.plexSyncSummary)
 }
 
-// GET /api/v1/plex/syncstatus — loop state for the Integrations page.
+// plexSyncReportView is the compact, JSON-ready digest of the last import
+// (manual or scheduled) shown on the Integrations page. Aggregated across
+// users; unmatched rows are what the user acts on, so they get itemised
+// (capped) while everything else stays as counts.
+type plexSyncReportView struct {
+	At             time.Time `json:"at"`
+	Mode           string    `json:"mode"` // manual | auto
+	Scanned        int       `json:"scanned"`
+	Matched        int       `json:"matched"`
+	MarkedLumina   int       `json:"markedLumina"`
+	ScrobbledPlex  int       `json:"scrobbledPlex"`
+	AlreadySynced  int       `json:"alreadySynced"`
+	Unmatched      int       `json:"unmatched"`
+	Errors         []string  `json:"errors,omitempty"`
+	UnmatchedItems []string  `json:"unmatchedItems,omitempty"`
+	Truncated      bool      `json:"truncated"`
+}
+
+func reportView(mode string, reps ...*plex.ImportReport) *plexSyncReportView {
+	v := &plexSyncReportView{At: time.Now(), Mode: mode}
+	for _, r := range reps {
+		if r == nil {
+			continue
+		}
+		v.Scanned += r.Scanned
+		v.Matched += r.Matched
+		v.MarkedLumina += r.MarkedLumina
+		v.ScrobbledPlex += r.ScrobbledPlex
+		v.AlreadySynced += r.AlreadySynced
+		v.Unmatched += r.Unmatched
+		v.Errors = append(v.Errors, r.Errors...)
+		for _, it := range r.Items {
+			if it.Action != "unmatched" {
+				continue
+			}
+			if len(v.UnmatchedItems) >= 50 {
+				v.Truncated = true
+				continue
+			}
+			label := it.Title
+			if it.Subtitle != "" {
+				label += " · " + it.Subtitle
+			}
+			v.UnmatchedItems = append(v.UnmatchedItems, label)
+		}
+		if r.ItemsTruncated {
+			v.Truncated = true
+		}
+	}
+	return v
+}
+
+// GET /api/v1/plex/syncstatus — loop state + last-import digest for the
+// Integrations page. A running import holds plexSyncMu for a while, so the
+// read is TryLock-best-effort: busy = report omitted + running:true rather
+// than a hung HTTP request.
 func (s *Server) plexSyncStatus(w http.ResponseWriter, _ *http.Request) {
 	interval := s.cfg.Plex.SyncIntervalMinutes
 	if interval == 0 {
 		interval = 30
+	}
+	running := false
+	var report *plexSyncReportView
+	if s.plexSyncMu.TryLock() {
+		report = s.plexReport
+		s.plexSyncMu.Unlock()
+	} else {
+		running = true
 	}
 	writeJSON(w, map[string]any{
 		"configured":      s.cfg.Plex.URL != "" && s.cfg.Plex.Token != "",
@@ -184,5 +256,7 @@ func (s *Server) plexSyncStatus(w http.ResponseWriter, _ *http.Request) {
 		"intervalMinutes": interval,
 		"lastRun":         s.plexSyncLast,
 		"summary":         s.plexSyncSummary,
+		"running":         running,
+		"report":          report,
 	})
 }
