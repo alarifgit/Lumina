@@ -102,10 +102,38 @@ nav button {
 }
 nav button:hover { color: rgba(255, 255, 255, 0.95); }
 nav button.active { color: #fff; }
-#status { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
+
+/* Header action group (search / downloads / settings): the same segmented
+   glass pill language as the nav, pushed to the right edge. */
+.seg-control {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.seg-control button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.58);
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  display: grid;
+  place-items: center;
+  transition: color 180ms ease, background 180ms ease;
+}
+.seg-control button:hover {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.1);
+}
 
 #user-badge {
-  margin-left: auto;
   background: transparent;
   border: 1px solid var(--accent);
   color: var(--text);
@@ -114,7 +142,6 @@ nav button.active { color: #fff; }
   cursor: pointer;
   font-size: 0.85rem;
 }
-#user-badge + #status { margin-left: 0; }
 
 #grid {
   display: grid;
@@ -410,16 +437,6 @@ nav button.active { color: #fff; }
 }
 
 /* Downloads & upcoming (*arr status, inside Settings → Integrations) */
-#arr-button {
-  background: transparent;
-  border: 1px solid var(--muted);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 0.25rem 0.6rem;
-  cursor: pointer;
-  font-size: 0.95rem;
-}
-#arr-button.has-queue { border-color: var(--accent); }
 #arr-content h4 { font-size: 0.95rem; margin: 1rem 0 0.5rem; }
 #arr-content h5 {
   font-size: 0.75rem;
@@ -474,15 +491,6 @@ nav button.active { color: #fff; }
 .plex-error { color: var(--warn); }
 
 /* Library manager rows (inside Settings → Libraries) */
-#libs-button {
-  background: transparent;
-  border: 1px solid var(--muted);
-  color: var(--text);
-  border-radius: 8px;
-  padding: 0.25rem 0.6rem;
-  cursor: pointer;
-  font-size: 0.95rem;
-}
 .libs-note { color: var(--muted); font-size: 0.78rem; margin: 0 0 0.8rem; }
 .libs-note code { color: var(--text); }
 .lib-row {
@@ -1248,8 +1256,8 @@ nav button.active { color: #fff; }
    so glass pills, gold eyebrows, and green watched badges all tint right. */
 .ic {
   display: inline-block;
-  width: 1.2em;
-  height: 1.2em;
+  width: 1.32em;
+  height: 1.32em;
   background-color: currentColor;
   -webkit-mask-position: center;
   mask-position: center;
@@ -1278,17 +1286,17 @@ nav button.active { color: #fff; }
 .ic-bookmark { -webkit-mask-image: url("/icons/ic-bookmark.png"); mask-image: url("/icons/ic-bookmark.png"); }
 .ic-flip { transform: scaleX(-1); }
 /* Size adjustments where icons replace emoji glyphs. */
-.card-play .ic { width: 1.2rem; height: 1.2rem; }
-#controls-row .ic { font-size: 1.15rem; }
-#pc-volume-icon { color: rgba(255, 255, 255, 0.82); width: 1.25rem; height: 1.25rem; }
-.rail-nav .ic { font-size: 1.7rem; }
+.card-play .ic { width: 1.3rem; height: 1.3rem; }
+#controls-row .ic { font-size: 1.25rem; }
+#pc-volume-icon { color: rgba(255, 255, 255, 0.82); width: 1.35rem; height: 1.35rem; }
+.rail-nav .ic { font-size: 1.85rem; }
 .back-button .ic { margin-right: 0.15rem; }
-.watched .ic { width: 0.95rem; height: 0.95rem; vertical-align: 0; }
-.ep-watched .ic { width: 1.1rem; height: 1.1rem; vertical-align: 0; }
+.watched .ic { width: 1rem; height: 1rem; vertical-align: 0; }
+.ep-watched .ic { width: 1.2rem; height: 1.2rem; vertical-align: 0; }
 #user-badge .ic, .user-chip .ic { margin-right: 0.1rem; }
 .text-button .ic { margin-right: 0.25rem; }
 .ghost-button .ic { margin-right: 0.2rem; }
-.lib-remove .ic { font-size: 0.9rem; }
+.lib-remove .ic { font-size: 0.95rem; }
 
 
 /* --- parity round: carousel, search, my-list, player extras, skeletons ------ */
@@ -1343,7 +1351,7 @@ nav button.active { color: #fff; }
 .hero-nav:hover { background: rgba(255, 255, 255, 0.16); }
 .hero-nav.prev { left: 1rem; }
 .hero-nav.next { right: 1rem; }
-.hero-nav .ic { width: 1.2rem; height: 1.2rem; }
+.hero-nav .ic { width: 1.35rem; height: 1.35rem; }
 .hero-dots {
   position: absolute;
   right: 1.4rem;
@@ -1389,7 +1397,7 @@ nav button.active { color: #fff; }
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.14);
 }
-.search-head .ic-search { width: 1.15rem; height: 1.15rem; opacity: 0.7; }
+.search-head .ic-search { width: 1.3rem; height: 1.3rem; opacity: 0.7; }
 #search-input {
   flex: 1;
   background: none;

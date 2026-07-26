@@ -18,7 +18,6 @@
 
 const grid = document.getElementById("grid");
 const nav = document.getElementById("libraries");
-const statusEl = document.getElementById("status");
 const userBadge = document.getElementById("user-badge");
 const overlay = document.getElementById("player-overlay");
 const video = document.getElementById("video");
@@ -256,24 +255,6 @@ async function loadLibraries() {
   // Buttons just materialized — if loadHome already has items, the counts
   // (and the glider) catch up now instead of waiting for the next visit.
   if (lastVisibleItems.length > 0) updateNavCounts(lastVisibleItems);
-
-  const caps = await api("/api/v1/system/capabilities");
-  const enc = Object.entries(caps.encoders || {})
-    .map(([k, v]) => `${k}:${v ? "✓" : "✗"}`).join(" ");
-  const anyHW = Object.values(caps.encoders || {}).some(Boolean);
-  statusEl.textContent = caps.vaapi.available && anyHW
-    ? `VAAPI ✓ ${enc}${caps.hdrToneMap ? " HDR✓" : ""}`
-    : `software transcode ${enc}`;
-  // Why did an encoder fail? The probe now keeps FFmpeg's own answer —
-  // surface it on hover instead of making people dig through docker logs.
-  const errs = Object.entries(caps.encoderErrors || {})
-    .map(([k, v]) => `${k}: ${v}`).join("\n");
-  statusEl.title = [
-    caps.ffmpegVersion && `ffmpeg ${caps.ffmpegVersion}`,
-    caps.vaapi.device && `device ${caps.vaapi.device}`,
-    caps.driver && `driver: ${caps.driver}`,
-    errs,
-  ].filter(Boolean).join("\n");
 }
 
 async function loadItems(lib) {
