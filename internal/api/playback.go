@@ -118,13 +118,16 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 	}
 	// Restart-on-seek: ?start=<seconds> keys the session. A far-ahead seek
 	// in the client starts a NEW session at that offset; old ones idle out.
+	// ?quality=<rung> picks a bitrate ladder rung (see transcode.Ladder);
+	// anything but "original" forces a re-encode.
 	start := 0.0
 	if v := r.URL.Query().Get("start"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			start = f
 		}
 	}
-	key := transcode.SessionKey(it.ID, start)
+	q := transcode.ParseQuality(r.URL.Query().Get("quality"))
+	key := transcode.SessionKey(it.ID, start, q.ID)
 
 	// Session already running? Skip the ffprobe entirely — segment
 	// requests arrive several times per minute and must stay cheap.
@@ -135,7 +138,7 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		sess, err = s.tm.Ensure(it.ID, path, info, start)
+		sess, err = s.tm.Ensure(it.ID, path, info, start, q)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -184,6 +187,7 @@ func (s *Server) activity(w http.ResponseWriter, _ *http.Request) {
 		transcode.SessionDebug
 		ItemID    string `json:"itemId"`
 		OffsetS   int64  `json:"offsetS"`
+		Quality   string `json:"quality,omitempty"`
 		Segments  int    `json:"segments"`
 		Title     string `json:"title,omitempty"`
 		PosterURL string `json:"posterUrl,omitempty"`
@@ -207,9 +211,14 @@ func (s *Server) activity(w http.ResponseWriter, _ *http.Request) {
 	modeByItem := map[string]string{}
 	for _, d := range s.tm.DebugSessions() {
 		v := sessionView{SessionDebug: d}
-		if i := strings.Index(d.Key, "@"); i > 0 {
-			v.ItemID = d.Key[:i]
-			v.OffsetS, _ = strconv.ParseInt(d.Key[i+1:], 10, 64)
+		// Key format: item@offsetSeconds@qualityID (quality added later —
+		// tolerate 2-part legacy keys from before the restart).
+		if parts := strings.Split(d.Key, "@"); len(parts) >= 2 {
+			v.ItemID = parts[0]
+			v.OffsetS, _ = strconv.ParseInt(parts[1], 10, 64)
+			if len(parts) >= 3 {
+				v.Quality = parts[2]
+			}
 		}
 		for _, f := range d.Files {
 			if strings.HasSuffix(f, ".ts") {

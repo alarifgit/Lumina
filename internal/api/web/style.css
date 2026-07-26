@@ -291,7 +291,7 @@ nav button.active { color: #fff; }
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 #player-title { font-size: 1rem; font-weight: 600; }
-#cc-select {
+#cc-select, #pc-quality {
   background: var(--glass-bg);
   color: var(--text);
   border: 1px solid var(--glass-border);

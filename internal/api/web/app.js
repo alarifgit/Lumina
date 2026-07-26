@@ -80,6 +80,11 @@ let isHls = false;
 let sessionOffsetS = 0;     // absolute time at which the HLS session starts
 let absoluteDurationS = 0;  // from ffprobe (video.duration is session-relative)
 let seekRestartTimer = null;
+// Quality ladder rung ("original" | "1080p" | "720p" | "480p"). Persisted:
+// a user on a slow link shouldn't have to re-pick it every episode.
+let currentQuality = localStorage.getItem("lumina-quality") || "original";
+const pcQuality = document.getElementById("pc-quality");
+pcQuality.value = currentQuality;
 
 // Container gate uses the FILE EXTENSION, not ffprobe's format_name:
 // ffprobe reports MKV as "matroska,webm", so a substring match waves
@@ -1070,6 +1075,19 @@ async function play(item) {
   syncPlayButton();
   pokeControls();
   forceTranscode.onchange = () => play(item);
+  // Quality change = seamless restart at the current absolute position on
+  // the new rung's session (item@offset@quality keys keep them apart).
+  pcQuality.onchange = () => {
+    currentQuality = pcQuality.value;
+    localStorage.setItem("lumina-quality", currentQuality);
+    if (!currentItem) return;
+    if (isHls) {
+      startHls(currentItem, absolutePositionS());
+    } else if (currentQuality !== "original") {
+      startHls(currentItem, video.currentTime || 0); // direct → capped rung
+    }
+    // direct → original: keep direct playing; only the NEXT play uses it.
+  };
 
   // Next-episode button + end-of-episode "Up next" (episodes only).
   closeUpNext();
@@ -1100,14 +1118,19 @@ async function play(item) {
 
   loadSubtitles(item).catch((e) => console.warn("subtitle discovery failed:", e));
 
-  if (!forceTranscode.checked && directPlayBlockers(info, item).length === 0) {
+  // A constrained quality rung forces transcode (Plex behaviour): even a
+  // direct-playable file must be re-encoded to honour the bitrate cap.
+  if (!forceTranscode.checked && currentQuality === "original" &&
+      directPlayBlockers(info, item).length === 0) {
     startDirect(item);
   } else {
     // The "why" rides on the mode badge: hover "transcode · vaapi" to see
     // exactly which gate failed (container, video codec, audio codec).
     playerMode.title = forceTranscode.checked
       ? "force transcode is on"
-      : directPlayBlockers(info, item).join("\n");
+      : currentQuality !== "original"
+        ? `quality cap: ${pcQuality.selectedOptions[0]?.textContent || currentQuality}`
+        : directPlayBlockers(info, item).join("\n");
     startHls(item, resumeAtS);
   }
 }
@@ -1133,7 +1156,13 @@ async function startHls(item, startS) {
   stopPlayback();
   isHls = true;
   sessionOffsetS = Math.max(0, startS || 0);
-  const qs = sessionOffsetS > 0 ? `?start=${Math.floor(sessionOffsetS)}` : "";
+  // Quality rung always rides the URL: it keys the server-side session
+  // (item@offset@quality), so switching rungs never collides with a
+  // session from another rung.
+  const params = new URLSearchParams();
+  if (sessionOffsetS > 0) params.set("start", String(Math.floor(sessionOffsetS)));
+  if (currentQuality !== "original") params.set("quality", currentQuality);
+  const qs = params.toString() ? `?${params}` : "";
   const url = `/api/v1/items/${item.id}/hls/index.m3u8${qs}`;
 
   let mode = "";
@@ -1150,19 +1179,20 @@ async function startHls(item, startS) {
   if (!mode) {
     try {
       const sessions = await api("/api/v1/system/sessions");
-      const key = `${item.id}@${Math.floor(sessionOffsetS)}`;
+      const key = `${item.id}@${Math.floor(sessionOffsetS)}@${currentQuality}`;
       const sess = sessions.find((s) => s.key === key) ||
         sessions.find((s) => s.key.startsWith(item.id));
       if (sess) mode = sess.mode;
     } catch { /* session may already exist */ }
   }
   if (!mode) mode = "software"; // unknown ≠ software, but badge needs a label
+  const rung = currentQuality !== "original" ? ` · ${currentQuality}` : "";
   if (mode === "copy") {
     setMode("direct stream · remux", "direct");
   } else if (mode === "vaapi-hybrid") {
-    setMode("transcode · vaapi (gpu encode)", "");
+    setMode(`transcode · vaapi (gpu encode)${rung}`, "");
   } else {
-    setMode(`transcode · ${mode}`, mode === "vaapi" ? "" : "software");
+    setMode(`transcode · ${mode}${rung}`, mode === "vaapi" ? "" : "software");
   }
 
   if (window.Hls && Hls.isSupported()) {

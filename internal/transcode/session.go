@@ -137,11 +137,12 @@ func (m *Manager) DebugSessions() []SessionDebug {
 	return out
 }
 
-// SessionKey identifies one transcode session: item + start offset.
-// A seek beyond produced segments starts a NEW key (FFmpeg restarts with
-// -ss) while the old session idles out under the reaper.
-func SessionKey(itemID string, startS float64) string {
-	return fmt.Sprintf("%s@%d", itemID, int64(startS))
+// SessionKey identifies one transcode session: item + start offset +
+// quality rung. A seek beyond produced segments or a quality change starts
+// a NEW key (FFmpeg restarts) while the old session idles out under the
+// reaper.
+func SessionKey(itemID string, startS float64, qualityID string) string {
+	return fmt.Sprintf("%s@%d@%s", itemID, int64(startS), qualityID)
 }
 
 // pipelineFor picks the cheapest pipeline that still yields browser-safe
@@ -157,8 +158,10 @@ func SessionKey(itemID string, startS float64) string {
 //	          Picking it immediately avoids a doomed full-vaapi attempt
 //	          that dies a few seconds in and restarts the session.
 //	software: libx264 — the honest fallback.
-func pipelineFor(caps Capabilities, info *media.Info) string {
-	if info != nil && info.Video != nil && info.Video.Codec == "h264" &&
+func pipelineFor(caps Capabilities, info *media.Info, q Quality) string {
+	// Copy is Original-only: any bitrate/resolution cap means re-encode.
+	if !q.Constrained() &&
+		info != nil && info.Video != nil && info.Video.Codec == "h264" &&
 		!info.HDR && !strings.Contains(info.Video.Profile, "10") {
 		return "copy"
 	}
@@ -186,12 +189,12 @@ func pipelineFor(caps Capabilities, info *media.Info) string {
 // Ensure returns the live session for (item, startOffset), starting
 // FFmpeg if needed. If a previous VAAPI session died before producing
 // output, it retries once in software mode.
-func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS float64) (*Session, error) {
+func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS float64, q Quality) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := SessionKey(itemID, startS)
-	mode := pipelineFor(m.caps, info)
+	key := SessionKey(itemID, startS, q.ID)
+	mode := pipelineFor(m.caps, info, q)
 
 	if s, ok := m.sessions[key]; ok {
 		s.mu.Lock()
@@ -225,7 +228,7 @@ func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS floa
 		mode = next
 	}
 
-	s, err := m.start(key, inputPath, info, mode, startS)
+	s, err := m.start(key, inputPath, info, mode, startS, q)
 	if err != nil {
 		return nil, err
 	}
@@ -256,13 +259,13 @@ func sessionDirName(key string) string {
 	return strings.ReplaceAll(key, "@", "_")
 }
 
-func (m *Manager) start(key, inputPath string, info *media.Info, mode string, startS float64) (*Session, error) {
+func (m *Manager) start(key, inputPath string, info *media.Info, mode string, startS float64, q Quality) (*Session, error) {
 	dir := filepath.Join(m.root, sessionDirName(key))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	s := &Session{Key: key, Dir: dir, Mode: mode, lastTouch: time.Now()}
-	args := buildArgs(m.ffmpeg, m.device, inputPath, dir, mode, info, m.caps, startS)
+	args := buildArgs(m.ffmpeg, m.device, inputPath, dir, mode, info, m.caps, startS, q)
 	s.cmd = exec.Command(args[0], args[1:]...)
 	s.cmd.Stderr = &s.logTail
 	s.cmd.Stdout = &s.logTail
@@ -365,7 +368,7 @@ func (m *Manager) reaper() {
 //
 // Output is HLS (mpegts segments, 4s, independent segments) — the single
 // decision that keeps every browser/client happy.
-func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps Capabilities, startS float64) []string {
+func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps Capabilities, startS float64, q Quality) []string {
 	out := filepath.Join(dir, "index.m3u8")
 	args := []string{ffmpeg, "-hide_banner", "-loglevel", "warning", "-y"}
 
@@ -388,6 +391,27 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		"-map", "0:a:0?", // audio optional: survive silent files
 	)
 
+	// Quality rung: downscale expression (never upscale — min() with the
+	// source height) and bitrate cap for constrained rungs. Original keeps
+	// the unconstrained qp/crf quality mode.
+	scaleExpr := ""
+	if q.MaxHeight > 0 {
+		scaleExpr = fmt.Sprintf("'min(%d,ih)'", q.MaxHeight)
+	}
+	// encoderRateControl returns the args AFTER "-c:v <enc>": unconstrained
+	// quality (qp/crf 22) for Original, capped ABR for ladder rungs.
+	encoderRateControl := func() []string {
+		if q.VideoBps <= 0 {
+			if mode == "software" {
+				return []string{"-crf", "22"}
+			}
+			return []string{"-qp", "22"}
+		}
+		bps := strconv.FormatInt(q.VideoBps, 10)
+		buf := strconv.FormatInt(2*q.VideoBps, 10)
+		return []string{"-b:v", bps, "-maxrate", bps, "-bufsize", buf}
+	}
+
 	if mode == "copy" {
 		// Video passthrough: no filter graph, no re-encode. The TS muxer
 		// auto-inserts h264_mp4toannexb for AVCC (MP4/MKV) sources.
@@ -396,28 +420,54 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		// HDR→SDR tone mapping in GPU memory when the input needs it and
 		// the probe said the hardware can do it. Otherwise plain nv12.
 		if info != nil && info.HDR && caps.HDRToneMap {
-			args = append(args, "-vf", "tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709")
+			vf := "tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709"
+			if scaleExpr != "" {
+				vf += ",scale_vaapi=w=-2:h=" + scaleExpr
+			}
+			args = append(args, "-vf", vf)
+		} else if scaleExpr != "" {
+			args = append(args, "-vf", "scale_vaapi=format=nv12:w=-2:h="+scaleExpr)
 		} else {
 			args = append(args, "-vf", "scale_vaapi=format=nv12")
 		}
-		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22", "-g", "96", "-keyint_min", "96")
+		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high")
+		args = append(args, encoderRateControl()...)
+		args = append(args, "-g", "96", "-keyint_min", "96")
 	} else if mode == "vaapi-hybrid" {
 		// Software decode → GPU encode: for codecs the GPU can't decode
 		// (AV1 on RDNA2, VP9 on some parts). Frames cross RAM once, the
 		// expensive encode still happens on silicon.
 		if info != nil && info.HDR && caps.HDRToneMap {
-			args = append(args, "-vf", "format=p010le,hwupload,tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709")
+			vf := "format=p010le,hwupload,tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709"
+			if scaleExpr != "" {
+				vf += ",scale_vaapi=w=-2:h=" + scaleExpr
+			}
+			args = append(args, "-vf", vf)
+		} else if scaleExpr != "" {
+			// Scale in software BEFORE upload: cheaper than round-tripping.
+			args = append(args, "-vf", "format=nv12,scale=-2:"+scaleExpr+",hwupload")
 		} else {
 			args = append(args, "-vf", "format=nv12,hwupload")
 		}
-		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22", "-g", "96", "-keyint_min", "96")
+		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high")
+		args = append(args, encoderRateControl()...)
+		args = append(args, "-g", "96", "-keyint_min", "96")
 	} else {
 		// Software HDR handling (proper zscale+tonemap filter graph) is a
 		// Phase 4 refinement; plain conversion is watchable but washed out.
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-g", "96", "-keyint_min", "96")
+		if scaleExpr != "" {
+			args = append(args, "-vf", "scale=-2:"+scaleExpr)
+		}
+		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+		args = append(args, encoderRateControl()...)
+		args = append(args, "-g", "96", "-keyint_min", "96")
+	}
+	audioBps := q.AudioBps
+	if audioBps <= 0 {
+		audioBps = 192_000
 	}
 	args = append(args,
-		"-c:a", "aac", "-ac", "2", "-b:a", "192k",
+		"-c:a", "aac", "-ac", "2", "-b:a", strconv.FormatInt(audioBps, 10),
 		// Muxer headroom (Jellyfin uses the same 2048/5000000 pair): audio
 		// re-encode + video copy can otherwise stall the TS muxer.
 		"-max_muxing_queue_size", "2048", "-max_delay", "5000000",
