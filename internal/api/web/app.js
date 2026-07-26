@@ -1481,6 +1481,8 @@ async function openSettings(sectionId) {
     }
   } else if (sectionId === "sec-integrations") {
     prefillPlexConfig();
+    loadPlexSyncStatus();
+    renderArrEditor();
     loadArrStatus();
   } else if (sectionId === "sec-playback") {
     renderCapabilities();
@@ -1643,6 +1645,97 @@ function fmtPct(left, total) {
 }
 
 arrButton.onclick = () => openSettings("sec-integrations");
+
+// --- *arr instance editor (inside Settings → Integrations) ----------------------
+// Rows mirror the library editor: name / URL / API key, add + remove + save.
+// Saving persists server-side (lumina.json) and refreshes the status view.
+
+const arrRows = document.getElementById("arr-rows");
+const arrConfigStatus = document.getElementById("arr-config-status");
+
+function arrRowHtml(inst) {
+  return `
+    <div class="arr-edit-row">
+      <input class="arr-name" placeholder="sonarr" value="${escapeHtml(inst.name || "")}">
+      <input class="arr-url" placeholder="http://sonarr:8989" value="${escapeHtml(inst.url || "")}">
+      <input class="arr-key" placeholder="API key" type="password" value="${escapeHtml(inst.apiKey || "")}">
+      <button class="lib-remove" title="Remove"><span class="ic ic-close"></span></button>
+    </div>`;
+}
+
+async function renderArrEditor() {
+  arrConfigStatus.textContent = "";
+  let instances = [];
+  try {
+    instances = await api("/api/v1/config/arr");
+  } catch (e) {
+    arrConfigStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+  arrRows.innerHTML = (instances || []).map(arrRowHtml).join("") ||
+    `<div class="libs-note">No instances yet — add one, or keep webhooks-only.</div>`;
+  arrRows.querySelectorAll(".lib-remove").forEach((btn) => {
+    btn.onclick = () => btn.closest(".arr-edit-row").remove();
+  });
+}
+
+document.getElementById("arr-add").onclick = () => {
+  if (arrRows.querySelector(".libs-note")) arrRows.innerHTML = "";
+  arrRows.insertAdjacentHTML("beforeend", arrRowHtml({}));
+  const btn = arrRows.lastElementChild.querySelector(".lib-remove");
+  btn.onclick = () => btn.closest(".arr-edit-row").remove();
+};
+
+document.getElementById("arr-save").onclick = async () => {
+  const instances = [...arrRows.querySelectorAll(".arr-edit-row")].map((row) => ({
+    name: row.querySelector(".arr-name").value.trim(),
+    url: row.querySelector(".arr-url").value.trim(),
+    apiKey: row.querySelector(".arr-key").value.trim(),
+  })).filter((i) => i.url);
+  arrConfigStatus.textContent = "Saving…";
+  try {
+    await api("/api/v1/config/arr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(instances),
+    });
+    arrConfigStatus.textContent = `Saved ${instances.length} instance(s).`;
+    loadArrStatus();
+  } catch (e) {
+    arrConfigStatus.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+};
+
+// Plex auto-sync loop state — one quiet line above the manual controls.
+async function loadPlexSyncStatus() {
+  const el = document.getElementById("plex-sync-status");
+  try {
+    const st = await api("/api/v1/plex/syncstatus");
+    if (!st.configured) {
+      el.textContent = "Save a Plex URL + token and watch state auto-syncs here.";
+      return;
+    }
+    const last = st.lastRun && !st.lastRun.startsWith("0001-")
+      ? new Date(st.lastRun).toLocaleString() : "not yet";
+    el.textContent = st.enabled
+      ? `Auto-sync every ${st.intervalMinutes} min · last run: ${last}${st.summary ? ` — ${st.summary}` : ""}`
+      : "Auto-sync disabled (syncIntervalMinutes < 0).";
+  } catch { el.textContent = ""; }
+}
+
+// Re-identify everything TMDB hasn't matched (Settings → Libraries).
+document.getElementById("rematch-btn").onclick = async () => {
+  const el = document.getElementById("rematch-status");
+  el.textContent = "Queueing…";
+  try {
+    const r = await api("/api/v1/metadata/rematch-unidentified", { method: "POST" });
+    el.textContent = r.queued > 0
+      ? `Queued ${r.queued} item(s) — matches land over the next minute or so.`
+      : "Nothing unmatched — every active item has a TMDB id.";
+    if (r.queued > 0) setTimeout(() => refreshCurrentView(), 20000);
+  } catch (e) {
+    el.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+};
 
 async function loadArrStatus() {
   const el = document.getElementById("arr-content");

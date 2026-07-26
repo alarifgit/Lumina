@@ -11,6 +11,35 @@ import (
 	"github.com/lumina-media/lumina/internal/metadata"
 )
 
+// POST /api/v1/metadata/rematch-unidentified — requeue every ACTIVE item
+// that has no TMDB id. The button next to "matching improved" moments:
+// one click instead of right-clicking every straggler.
+func (s *Server) rematchUnidentified(w http.ResponseWriter, r *http.Request) {
+	if s.mw == nil || !s.mw.Available() {
+		http.Error(w, "metadata unavailable: no TMDB API key configured",
+			http.StatusServiceUnavailable)
+		return
+	}
+	queued := 0
+	for _, it := range s.store.List("") {
+		if it.State != library.StateActive || it.TMDBID != 0 {
+			continue
+		}
+		hint := metadata.IdentifyHint{}
+		if it.Kind == library.KindEpisode && len(it.Paths) > 0 {
+			for _, root := range s.cfg.Libraries {
+				if root.Name == it.Library {
+					hint = metadata.HintFor(root.Path, it.Paths[0], true)
+					break
+				}
+			}
+		}
+		s.mw.EnqueueHint(it, hint)
+		queued++
+	}
+	writeJSON(w, map[string]int{"queued": queued})
+}
+
 // POST /api/v1/items/{id}/metadata/refresh — force re-identification.
 func (s *Server) refreshMetadata(w http.ResponseWriter, r *http.Request) {
 	it := s.itemFor(w, r)

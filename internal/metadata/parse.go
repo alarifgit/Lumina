@@ -30,7 +30,17 @@ var (
 	seasonDirRe = regexp.MustCompile(`(?i)\bseason\s*(\d{1,2})\b`)
 	// Trailing checksum/crc bracket: "[ABCD1234]" / "(1080p)" leftovers.
 	trailingBracketRe = regexp.MustCompile(`[\[\(][^\[\]\(\)]*[\]\)]\s*$`)
+	// Bracketed annotation groups anywhere: "(Korean)", "(US)", "[BD]".
+	parenGroupRe = regexp.MustCompile(`\s*[\(\[][^\(\)\[\]]*[\)\]]`)
 )
+
+// StripParenGroups removes bracketed annotation groups — the fallback
+// search title when an annotated one ("The Glory (Korean)") finds nothing.
+// The annotated title is always tried FIRST: "The Office (US)" is a real
+// TMDB title, so stripping is the plan-B, never the default.
+func StripParenGroups(s string) string {
+	return strings.TrimSpace(strings.Join(strings.Fields(parenGroupRe.ReplaceAllString(s, "")), " "))
+}
 
 // Parsed is the identification hint extracted from a media filename.
 type Parsed struct {

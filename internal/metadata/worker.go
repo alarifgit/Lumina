@@ -208,8 +208,21 @@ func (w *Worker) identify(ctx context.Context, it library.Item, hint IdentifyHin
 			return nil
 		}
 		m, err := w.tmdb.IdentifySeries(ctx, title, hint.Year)
-		if err != nil || m == nil {
+		if err != nil {
 			return err
+		}
+		if m == nil {
+			// Folder annotations like "(Korean)" defeat the exact-title
+			// matcher and can zero out TMDB's own search — retry bare.
+			if stripped := StripParenGroups(title); stripped != "" && stripped != title {
+				m, err = w.tmdb.IdentifySeries(ctx, stripped, hint.Year)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		if m == nil {
+			return nil
 		}
 		// Episode items display as "Series Name S02E04 · The Last Dance"
 		// (or "Series Name E362" for absolute numbering).
@@ -223,8 +236,19 @@ func (w *Worker) identify(ctx context.Context, it library.Item, hint IdentifyHin
 		return nil
 	}
 	m, err := w.tmdb.IdentifyMovie(ctx, parsed.Title, parsed.Year)
-	if err != nil || m == nil {
+	if err != nil {
 		return err
+	}
+	if m == nil {
+		if stripped := StripParenGroups(parsed.Title); stripped != "" && stripped != parsed.Title {
+			m, err = w.tmdb.IdentifyMovie(ctx, stripped, parsed.Year)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if m == nil {
+		return nil
 	}
 	return w.store.SetMetadata(it.ID, *m)
 }

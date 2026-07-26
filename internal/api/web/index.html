@@ -43,9 +43,24 @@
           <button id="libs-save">Save &amp; scan</button>
         </div>
         <div id="libs-status"></div>
+        <h3>Metadata</h3>
+        <p class="libs-note">Re-run TMDB identification for everything that hasn't matched — useful after matching improves or a folder is renamed.</p>
+        <div class="lib-actions">
+          <button id="rematch-btn">Re-identify unmatched</button>
+        </div>
+        <div id="rematch-status"></div>
       </section>
       <section id="sec-integrations" class="hidden">
+        <h3>Radarr / Sonarr</h3>
+        <p class="libs-note">Instances behind the downloads queue &amp; upcoming calendar. Their Connect → Webhook should point at this server's <code>/hooks/arr</code>.</p>
+        <div id="arr-rows"></div>
+        <div class="lib-actions">
+          <button id="arr-add">Add instance</button>
+          <button id="arr-save">Save</button>
+        </div>
+        <div id="arr-config-status"></div>
         <h3>Plex watch-history sync</h3>
+        <div id="plex-sync-status" class="libs-note"></div>
         <div class="plex-form">
           <input id="plex-url" placeholder="Plex URL (https://plex.example.com)">
           <input id="plex-token" placeholder="Plex token" type="password">

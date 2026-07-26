@@ -2,9 +2,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/lumina-media/lumina/internal/config"
 	"github.com/lumina-media/lumina/internal/plex"
@@ -96,10 +100,89 @@ func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 	default:
 		dir = plex.Pull
 	}
+	if !s.plexSyncMu.TryLock() {
+		http.Error(w, "another Plex sync is running — try again in a moment", http.StatusConflict)
+		return
+	}
+	defer s.plexSyncMu.Unlock()
 	report, err := plex.Import(r.Context(), c, s.store, body.UserID, dir, body.Apply)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, report)
+}
+
+// RunPlexSync periodically PULLS Plex watch state for every user, so
+// Continue Watching stays warm without a manual import. Interval comes
+// from plex.syncIntervalMinutes: 0 = 30-minute default, negative = off.
+// The first run fires 45s after boot rather than a full interval in.
+func (s *Server) RunPlexSync(ctx context.Context) {
+	interval := s.cfg.Plex.SyncIntervalMinutes
+	if interval == 0 {
+		interval = 30
+	}
+	if interval < 0 {
+		log.Printf("plex: periodic watch-state sync disabled")
+		return
+	}
+	log.Printf("plex: periodic watch-state sync every %d min", interval)
+	ticker := time.NewTicker(time.Duration(interval) * time.Minute)
+	defer ticker.Stop()
+	first := time.NewTimer(45 * time.Second)
+	defer first.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+			s.plexSyncAll(ctx)
+		case <-ticker.C:
+			s.plexSyncAll(ctx)
+		}
+	}
+}
+
+func (s *Server) plexSyncAll(ctx context.Context) {
+	if s.cfg.Plex.URL == "" || s.cfg.Plex.Token == "" {
+		return
+	}
+	if !s.plexSyncMu.TryLock() {
+		return // a manual import owns the lock this tick
+	}
+	defer s.plexSyncMu.Unlock()
+	users, err := s.store.ListUsers()
+	if err != nil || len(users) == 0 {
+		return
+	}
+	c := s.plexClient("", "")
+	marked := 0
+	pulled := 0
+	for _, u := range users {
+		report, err := plex.Import(ctx, c, s.store, u.ID, plex.Pull, true)
+		if err != nil {
+			log.Printf("plex: auto-sync %s: %v", u.ID, err)
+			continue
+		}
+		pulled++
+		marked += report.MarkedLumina
+	}
+	s.plexSyncLast = time.Now()
+	s.plexSyncSummary = fmt.Sprintf("pulled for %d user(s) · %d playhead(s) imported", pulled, marked)
+	log.Printf("plex: auto-sync: %s", s.plexSyncSummary)
+}
+
+// GET /api/v1/plex/syncstatus — loop state for the Integrations page.
+func (s *Server) plexSyncStatus(w http.ResponseWriter, _ *http.Request) {
+	interval := s.cfg.Plex.SyncIntervalMinutes
+	if interval == 0 {
+		interval = 30
+	}
+	writeJSON(w, map[string]any{
+		"configured":      s.cfg.Plex.URL != "" && s.cfg.Plex.Token != "",
+		"enabled":         interval > 0,
+		"intervalMinutes": interval,
+		"lastRun":         s.plexSyncLast,
+		"summary":         s.plexSyncSummary,
+	})
 }

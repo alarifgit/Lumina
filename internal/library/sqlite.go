@@ -104,6 +104,16 @@ func (s *sqliteStore) migrate() error {
 			return err
 		}
 	}
+	// Artwork quality bump (w780 → w1280 backdrops): stored URLs carry the
+	// size in the path, so rewrite in place instead of re-fetching 6k items.
+	// Idempotent — runs on every boot, rewrites only what still matches.
+	for _, q := range []string{
+		`UPDATE items SET backdrop_url = REPLACE(backdrop_url, '/t/p/w780/', '/t/p/w1280/') WHERE backdrop_url LIKE '%/t/p/w780/%'`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migrate artwork urls: %w", err)
+		}
+	}
 	return nil
 }
 

@@ -63,6 +63,7 @@ func main() {
 	}
 
 	srv := api.New(cfg, *configPath, store, sc, caps, tm, mw)
+	go srv.RunPlexSync(ctx)
 	go func() {
 		log.Printf("lumina: listening on %s", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil {

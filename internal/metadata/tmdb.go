@@ -22,8 +22,8 @@ import (
 const (
 	apiBase     = "https://api.themoviedb.org/3"
 	posterURL   = "https://image.tmdb.org/t/p/w500"
-	backdropURL = "https://image.tmdb.org/t/p/w780"
-	stillURL    = "https://image.tmdb.org/t/p/w300"
+	backdropURL = "https://image.tmdb.org/t/p/w1280"
+	stillURL    = "https://image.tmdb.org/t/p/w780"
 )
 
 // Client talks to TMDB. Available() is false without an API key —

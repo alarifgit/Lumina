@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lumina-media/lumina/internal/arr"
@@ -34,6 +35,12 @@ type Server struct {
 	tm         *transcode.Manager
 	mw         *metadata.Worker
 	http       *http.Server
+
+	// Periodic Plex watch-state pull. plexSyncMu also guards against a
+	// manual import overlapping the loop (imports are not re-entrant).
+	plexSyncMu      sync.Mutex
+	plexSyncLast    time.Time
+	plexSyncSummary string
 }
 
 func New(cfg config.Config, configPath string, store library.Store, sc *scanner.Scanner, caps transcode.Capabilities, tm *transcode.Manager, mw *metadata.Worker) *Server {
@@ -74,6 +81,10 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	mux.HandleFunc("POST /api/v1/plex/import", s.plexImport)
 	mux.HandleFunc("GET /api/v1/config/plex", s.plexConfigGet)
 	mux.HandleFunc("POST /api/v1/config/plex", s.plexConfigSave)
+	mux.HandleFunc("GET /api/v1/config/arr", s.arrConfigGet)
+	mux.HandleFunc("POST /api/v1/config/arr", s.arrConfigSave)
+	mux.HandleFunc("GET /api/v1/plex/syncstatus", s.plexSyncStatus)
+	mux.HandleFunc("POST /api/v1/metadata/rematch-unidentified", s.rematchUnidentified)
 
 	// *arr native webhooks + outbound status
 	mux.HandleFunc("POST /hooks/arr", arr.Handler(sc))
