@@ -189,11 +189,21 @@ func pipelineFor(caps Capabilities, info *media.Info, q Quality) string {
 // Ensure returns the live session for (item, startOffset), starting
 // FFmpeg if needed. If a previous VAAPI session died before producing
 // output, it retries once in software mode.
-func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS float64, q Quality) (*Session, error) {
+func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS float64, q Quality, hevc bool) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := SessionKey(itemID, startS, q.ID)
+	keyID := q.ID
+	if hevc {
+		keyID += "-hevc"
+	}
+	key := SessionKey(itemID, startS, keyID)
+	// Degrade honestly: a HEVC rung on a GPU that can't encode HEVC just
+	// becomes the h264 rung — same ladder position, wider compatibility.
+	if hevc && !m.caps.Encoders["hevc"] {
+		log.Printf("transcode: %s requested HEVC but the GPU can't encode it; using h264", key)
+		hevc = false
+	}
 	mode := pipelineFor(m.caps, info, q)
 
 	if s, ok := m.sessions[key]; ok {
@@ -228,7 +238,7 @@ func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS floa
 		mode = next
 	}
 
-	s, err := m.start(key, inputPath, info, mode, startS, q)
+	s, err := m.start(key, inputPath, info, mode, startS, q, hevc)
 	if err != nil {
 		return nil, err
 	}
@@ -259,13 +269,13 @@ func sessionDirName(key string) string {
 	return strings.ReplaceAll(key, "@", "_")
 }
 
-func (m *Manager) start(key, inputPath string, info *media.Info, mode string, startS float64, q Quality) (*Session, error) {
+func (m *Manager) start(key, inputPath string, info *media.Info, mode string, startS float64, q Quality, hevc bool) (*Session, error) {
 	dir := filepath.Join(m.root, sessionDirName(key))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	s := &Session{Key: key, Dir: dir, Mode: mode, lastTouch: time.Now()}
-	args := buildArgs(m.ffmpeg, m.device, inputPath, dir, mode, info, m.caps, startS, q)
+	args := buildArgs(m.ffmpeg, m.device, inputPath, dir, mode, info, m.caps, startS, q, hevc)
 	s.cmd = exec.Command(args[0], args[1:]...)
 	s.cmd.Stderr = &s.logTail
 	s.cmd.Stdout = &s.logTail
@@ -368,7 +378,7 @@ func (m *Manager) reaper() {
 //
 // Output is HLS (mpegts segments, 4s, independent segments) — the single
 // decision that keeps every browser/client happy.
-func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps Capabilities, startS float64, q Quality) []string {
+func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps Capabilities, startS float64, q Quality, hevc bool) []string {
 	out := filepath.Join(dir, "index.m3u8")
 	args := []string{ffmpeg, "-hide_banner", "-loglevel", "warning", "-y"}
 
@@ -412,6 +422,15 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		return []string{"-b:v", bps, "-maxrate", bps, "-bufsize", buf}
 	}
 
+	// HEVC rungs: same ladder position, roughly half the bitrate. VAAPI
+	// encodes Main profile (HDR was already tone-mapped to 8-bit nv12);
+	// the software path swaps libx264 for libx265. The hvc1 tag is what
+	// lets fMP4 players accept the stream.
+	videoEncoder, encoderProfile := "h264_vaapi", "high"
+	if hevc {
+		videoEncoder, encoderProfile = "hevc_vaapi", "main"
+	}
+
 	if mode == "copy" {
 		// Video passthrough: no filter graph, no re-encode. The TS muxer
 		// auto-inserts h264_mp4toannexb for AVCC (MP4/MKV) sources.
@@ -430,7 +449,7 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		} else {
 			args = append(args, "-vf", "scale_vaapi=format=nv12")
 		}
-		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high")
+		args = append(args, "-c:v", videoEncoder, "-profile:v", encoderProfile)
 		args = append(args, encoderRateControl()...)
 		args = append(args, "-g", "96", "-keyint_min", "96")
 	} else if mode == "vaapi-hybrid" {
@@ -449,7 +468,7 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		} else {
 			args = append(args, "-vf", "format=nv12,hwupload")
 		}
-		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high")
+		args = append(args, "-c:v", videoEncoder, "-profile:v", encoderProfile)
 		args = append(args, encoderRateControl()...)
 		args = append(args, "-g", "96", "-keyint_min", "96")
 	} else {
@@ -458,7 +477,11 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		if scaleExpr != "" {
 			args = append(args, "-vf", "scale=-2:"+scaleExpr)
 		}
-		args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+		softEncoder, softProfile := "libx264", "high"
+		if hevc {
+			softEncoder, softProfile = "libx265", "main"
+		}
+		args = append(args, "-c:v", softEncoder, "-preset", "veryfast", "-profile:v", softProfile, "-pix_fmt", "yuv420p")
 		args = append(args, encoderRateControl()...)
 		args = append(args, "-g", "96", "-keyint_min", "96")
 	}
@@ -485,9 +508,22 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 		// after the first segment and grows; seeking works for anything
 		// already produced, which is exactly our session model.
 		"-hls_flags", "independent_segments",
-		"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
-		out,
 	)
+	if hevc {
+		// HEVC needs fMP4 HLS: Chrome/Safari MSE won't take HEVC in MPEG-TS.
+		// The hvc1 tag and an init segment make it a well-behaved fMP4 stream.
+		args = append(args,
+			"-tag:v", "hvc1",
+			"-hls_segment_type", "fmp4",
+			"-hls_fmp4_init_filename", "init.mp4",
+			"-hls_segment_filename", filepath.Join(dir, "seg_%05d.m4s"),
+		)
+	} else {
+		args = append(args,
+			"-hls_segment_filename", filepath.Join(dir, "seg_%05d.ts"),
+		)
+	}
+	args = append(args, out)
 	return args
 }
 

@@ -95,6 +95,11 @@ const DIRECT_EXTS = ["mp4", "m4v", "mov", "webm"];
 // allowlist: Edge/Safari (and Chrome with platform HEVC) direct-play HEVC
 // and AC-3/E-AC-3; probing canPlayType with real codec strings tells us.
 const CAN_HEVC = video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') !== "";
+// HLS runs through MSE, not the media element — the HEVC-rung gate must
+// ask MediaSource directly (Chrome reports canPlayType=true on some
+// platforms where MSE HEVC still fails).
+const CAN_HEVC_MSE = window.MediaSource &&
+  MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"');
 const CAN_AC3 = video.canPlayType('audio/mp4; codecs="ac-3"') !== "";
 const CAN_EAC3 = video.canPlayType('audio/mp4; codecs="ec-3"') !== "";
 const DIRECT_VIDEO = ["h264", "vp8", "vp9", "av1", ...(CAN_HEVC ? ["hevc"] : [])];
@@ -1161,7 +1166,12 @@ async function startHls(item, startS) {
   // session from another rung.
   const params = new URLSearchParams();
   if (sessionOffsetS > 0) params.set("start", String(Math.floor(sessionOffsetS)));
-  if (currentQuality !== "original") params.set("quality", currentQuality);
+  if (currentQuality !== "original") {
+    params.set("quality", currentQuality);
+    // Constrained rungs encode HEVC when this client's MSE can play it —
+    // ~half the bitrate at equal quality. h264 stays the universal default.
+    if (CAN_HEVC_MSE) params.set("codec", "hevc");
+  }
   const qs = params.toString() ? `?${params}` : "";
   const url = `/api/v1/items/${item.id}/hls/index.m3u8${qs}`;
 
@@ -1179,14 +1189,17 @@ async function startHls(item, startS) {
   if (!mode) {
     try {
       const sessions = await api("/api/v1/system/sessions");
-      const key = `${item.id}@${Math.floor(sessionOffsetS)}@${currentQuality}`;
+      const keyQuality = currentQuality +
+        (CAN_HEVC_MSE && currentQuality !== "original" ? "-hevc" : "");
+      const key = `${item.id}@${Math.floor(sessionOffsetS)}@${keyQuality}`;
       const sess = sessions.find((s) => s.key === key) ||
         sessions.find((s) => s.key.startsWith(item.id));
       if (sess) mode = sess.mode;
     } catch { /* session may already exist */ }
   }
   if (!mode) mode = "software"; // unknown ≠ software, but badge needs a label
-  const rung = currentQuality !== "original" ? ` · ${currentQuality}` : "";
+  const rung = currentQuality !== "original"
+    ? ` · ${currentQuality}${CAN_HEVC_MSE ? " hevc" : ""}` : "";
   if (mode === "copy") {
     setMode("direct stream · remux", "direct");
   } else if (mode === "vaapi-hybrid") {

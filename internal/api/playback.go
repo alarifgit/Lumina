@@ -127,7 +127,16 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	q := transcode.ParseQuality(r.URL.Query().Get("quality"))
-	key := transcode.SessionKey(it.ID, start, q.ID)
+	// &codec=hevc: ladder rungs may encode HEVC for clients that can play
+	// it (halves bitrate at equal quality). Only meaningful on constrained
+	// rungs — Original stays h264/copy for maximum compatibility. The
+	// manager degrades to h264 when the GPU can't encode HEVC.
+	hevc := q.Constrained() && r.URL.Query().Get("codec") == "hevc"
+	keyID := q.ID
+	if hevc {
+		keyID += "-hevc"
+	}
+	key := transcode.SessionKey(it.ID, start, keyID)
 
 	// Session already running? Skip the ffprobe entirely — segment
 	// requests arrive several times per minute and must stay cheap.
@@ -138,7 +147,7 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		sess, err = s.tm.Ensure(it.ID, path, info, start, q)
+		sess, err = s.tm.Ensure(it.ID, path, info, start, q, hevc)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -162,6 +171,10 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 	case ".ts":
 		w.Header().Set("Content-Type", "video/mp2t")
+	case ".m4s":
+		w.Header().Set("Content-Type", "video/iso.segment") // fMP4 HLS (HEVC rungs)
+	case ".mp4":
+		w.Header().Set("Content-Type", "video/mp4") // fMP4 init segment
 	}
 	http.ServeFile(w, r, full)
 }
@@ -221,7 +234,7 @@ func (s *Server) activity(w http.ResponseWriter, _ *http.Request) {
 			}
 		}
 		for _, f := range d.Files {
-			if strings.HasSuffix(f, ".ts") {
+			if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".m4s") {
 				v.Segments++
 			}
 		}
