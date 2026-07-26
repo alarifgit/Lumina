@@ -30,6 +30,7 @@
     <aside class="settings-nav">
       <button data-section="sec-activity">Now Playing</button>
       <button data-section="sec-libraries" class="active">Libraries</button>
+      <button data-section="sec-manage">Manage</button>
       <button data-section="sec-integrations">Integrations</button>
       <button data-section="sec-playback">Playback</button>
       <button data-section="sec-users">Users</button>
@@ -56,6 +57,23 @@
           <button id="rematch-btn">Re-identify unmatched</button>
         </div>
         <div id="rematch-status"></div>
+      </section>
+      <section id="sec-manage" class="hidden">
+        <h3>Library items</h3>
+        <p class="libs-note">Every indexed item, with its match state. Click a row to fix its match — unmatched items are the ones with procedural posters.</p>
+        <div class="manage-controls">
+          <select id="manage-lib"><option value="">All libraries</option></select>
+          <select id="manage-status">
+            <option value="">All statuses</option>
+            <option value="unmatched">Unmatched</option>
+            <option value="matched">Matched</option>
+            <option value="missing">Missing</option>
+            <option value="extra">Extras</option>
+          </select>
+          <input id="manage-q" type="search" placeholder="Filter titles…">
+        </div>
+        <div id="manage-summary" class="libs-note"></div>
+        <div id="manage-rows"></div>
       </section>
       <section id="sec-integrations" class="hidden">
         <h3>Radarr / Sonarr</h3>

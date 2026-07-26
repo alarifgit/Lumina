@@ -81,6 +81,10 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	// guids are episode-level, but Lumina episodes carry the SERIES tmdb id,
 	// so join through the show's own guid (resolved per section below).
 	byTMDBEpisode := map[string]*library.Item{}
+	// Absolute-numbered anime identities: title+abs (any Plex agent) and
+	// series-TMDB+abs (season slot 0). See the indexing loop below.
+	byAbsKey := map[string]*library.Item{}
+	byTMDBAbs := map[string]*library.Item{}
 	for i := range luminaItems {
 		it := &luminaItems[i]
 		if it.TMDBID > 0 {
@@ -104,6 +108,31 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			}
 			if it.TMDBID > 0 && p.Episode > 0 {
 				register(byTMDBEpisode, tmdbEpisodeKey(it.TMDBID, p.Season, p.Episode), it)
+			}
+			// The parent DIRECTORY follows Plex naming even when the file
+			// doesn't: "S01E02.mkv" carries no title, release-group files
+			// carry the wrong one. Index the folder-derived series too.
+			dirTitle, _ := seriesFromDir(filepath.Dir(it.Paths[0]))
+			if dirTitle != "" && p.Episode > 0 {
+				registerAmbiguous(byEpisodeKey, episodeKey(dirTitle, p.Season, p.Episode), it)
+			}
+			// Absolute numbering (anime fansubs: "Hunter x Hunter - 02
+			// (1080p)"): no SxxExx marker means no episodeKey at all — these
+			// were the bulk of the unmatched list. Plex S01E0N on a
+			// single-season show IS absolute N.
+			if p.Episode == 0 {
+				if abs := metadata.ParseAbsoluteEpisode(base); abs > 0 {
+					title := p.Title
+					if dirTitle != "" {
+						title = dirTitle
+					}
+					if title != "" {
+						registerAmbiguous(byAbsKey, absKey(title, abs), it)
+					}
+					if it.TMDBID > 0 {
+						register(byTMDBAbs, tmdbEpisodeKey(it.TMDBID, 0, abs)) // season 0 = absolute slot
+					}
+				}
 			}
 		}
 	}
@@ -174,6 +203,23 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 					if it, ok := unambiguous(byEpisodeKey, episodeKey(pi.Grandparent, pi.Season, pi.Episode)); ok {
 						match = it
 						row.Method = "episode-key"
+					}
+				}
+				// Absolute-numbered anime: Plex S01E0N on a single-season
+				// show is absolute N. Multi-season absolute shows (Bleach)
+				// stay unmatched rather than risk a wrong-season hit.
+				if match == nil && pi.Season <= 1 && pi.Episode > 0 {
+					if pi.SeriesTMDBID > 0 {
+						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(pi.SeriesTMDBID, 0, pi.Episode)); ok {
+							match = it
+							row.Method = "tmdb-absolute"
+						}
+					}
+					if match == nil {
+						if it, ok := unambiguous(byAbsKey, absKey(pi.Grandparent, pi.Episode)); ok {
+							match = it
+							row.Method = "absolute"
+						}
 					}
 				}
 			default:
@@ -285,4 +331,23 @@ func unambiguous(m map[string]*library.Item, key string) (*library.Item, bool) {
 // the identity Plex and Lumina can agree on regardless of title language.
 func tmdbEpisodeKey(tmdbID, season, episode int) string {
 	return fmt.Sprintf("%d|%d|%d", tmdbID, season, episode)
+}
+
+// absKey joins a normalized series title with an ABSOLUTE episode number —
+// the fansub/anime numbering where no season concept exists.
+func absKey(series string, abs int) string {
+	return fmt.Sprintf("%s|%d", Normalize(series), abs)
+}
+
+// seriesFromDir extracts the series title from a file's directory: the
+// parent folder, or the grandparent when the parent is a "Season N" dir.
+// Files directly in a library root register harmless junk keys (the root
+// name) — Plex grandparents never match them, so they simply never hit.
+func seriesFromDir(dir string) (string, int) {
+	base := filepath.Base(dir)
+	if metadata.SeasonFromDir(base) > 0 {
+		base = filepath.Base(filepath.Dir(dir))
+	}
+	p := metadata.ParseFilename(base)
+	return p.Title, p.Year
 }

@@ -1708,6 +1708,8 @@ async function openSettings(sectionId) {
     renderActivity();
     clearInterval(activityTimer);
     activityTimer = setInterval(renderActivity, 5000); // live card
+  } else if (sectionId === "sec-manage") {
+    loadManage();
   }
   if (sectionId !== "sec-activity") {
     clearInterval(activityTimer);
@@ -1720,6 +1722,87 @@ settingsPage.querySelectorAll(".settings-nav button").forEach((b) => {
 });
 document.getElementById("settings-close").onclick = closeSettings;
 libsButton.onclick = () => openSettings("sec-libraries");
+
+// --- manage: the library item browser (Settings → Manage) -----------------
+// Every indexed item with its match state; clicking a row opens the same
+// fix-match modal the cards use. Filtered client-side — /api/v1/items is
+// already the full catalog the home page builds from.
+
+let manageAll = [];
+let manageLibsLoaded = false;
+let manageExpectRefresh = false; // a fix-match closed → rebuild the table
+
+async function loadManage() {
+  const rows = document.getElementById("manage-rows");
+  rows.innerHTML = `<div class="arr-error">Loading…</div>`;
+  try {
+    if (!manageLibsLoaded) {
+      const libs = await api("/api/v1/libraries");
+      document.getElementById("manage-lib").innerHTML =
+        `<option value="">All libraries</option>` +
+        libs.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
+      manageLibsLoaded = true;
+    }
+    manageAll = await api("/api/v1/items");
+    renderManage();
+  } catch (e) {
+    rows.innerHTML = `<div class="arr-error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function manageStatus(it) {
+  if (it.state === "missing") return "missing";
+  if (it.kind === "extra") return "extra";
+  return it.tmdbId ? "matched" : "unmatched";
+}
+
+function renderManage() {
+  const lib = document.getElementById("manage-lib").value;
+  const status = document.getElementById("manage-status").value;
+  const q = document.getElementById("manage-q").value.trim().toLowerCase();
+  const counts = { matched: 0, unmatched: 0, missing: 0, extra: 0 };
+  const filtered = [];
+  for (const it of manageAll) {
+    const st = manageStatus(it);
+    counts[st]++;
+    if (lib && it.library !== lib) continue;
+    if (status && st !== status) continue;
+    if (q && !(it.title || "").toLowerCase().includes(q)) continue;
+    filtered.push(it);
+  }
+  document.getElementById("manage-summary").textContent =
+    `${manageAll.length} items · ${counts.matched} matched · ${counts.unmatched} unmatched · ` +
+    `${counts.missing} missing · ${counts.extra} extras — showing ${Math.min(filtered.length, 300)} of ${filtered.length}`;
+  const badgeFor = { matched: "direct", unmatched: "software", missing: "software", extra: "" };
+  const rows = document.getElementById("manage-rows");
+  rows.innerHTML = filtered.slice(0, 300).map((it) => {
+    const st = manageStatus(it);
+    return `
+    <div class="manage-row" data-id="${it.id}">
+      ${it.posterUrl
+        ? `<img src="${it.posterUrl}" alt="" loading="lazy" onerror="this.remove()">`
+        : `<span class="match-noimg manage-noimg" style="${posterStyle(it.title)}">${posterInitials(it.title)}</span>`}
+      <span class="manage-meta">
+        <span class="manage-title">${escapeHtml(it.title)}</span>
+        <span class="manage-sub">${it.year || "—"} · ${it.kind} · ${(it.sizeBytes / 1e9).toFixed(1)} GB · ${escapeHtml(it.library)}</span>
+      </span>
+      <span class="badge ${badgeFor[st]}">${st}</span>
+    </div>`;
+  }).join("") || `<div class="arr-error">No items match these filters.</div>`;
+  rows.querySelectorAll(".manage-row").forEach((row) => {
+    row.onclick = () => {
+      const it = manageAll.find((x) => x.id === row.dataset.id);
+      if (it) {
+        manageExpectRefresh = true;
+        openMatchModal(it);
+      }
+    };
+  });
+}
+
+["manage-lib", "manage-status", "manage-q"].forEach((id) => {
+  document.getElementById(id).addEventListener("input", renderManage);
+});
 
 // --- now playing (activity) ---------------------------------------------------
 // The transcoder-health view: who is watching what (fresh playhead
@@ -2430,6 +2513,12 @@ function closeModal() {
   if (activeModal) {
     activeModal.remove();
     activeModal = null;
+  }
+  // A fix-match opened from Settings → Manage just changed the catalog —
+  // rebuild the table so the row's badge flips without a manual reload.
+  if (manageExpectRefresh) {
+    manageExpectRefresh = false;
+    if (!settingsPage.classList.contains("hidden")) loadManage();
   }
 }
 
