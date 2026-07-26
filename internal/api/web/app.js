@@ -34,6 +34,8 @@ const pcTimeTotal = document.getElementById("pc-time-total");
 const pcRate = document.getElementById("pc-rate");
 const pcVolume = document.getElementById("pc-volume");
 const pcFull = document.getElementById("pc-full");
+const pcStats = document.getElementById("pc-stats");
+const statsOverlay = document.getElementById("stats-overlay");
 const pcNext = document.getElementById("pc-next");
 const ccOpts = document.getElementById("cc-opts");
 const ccPop = document.getElementById("cc-pop");
@@ -2153,6 +2155,64 @@ document.getElementById("player-close").onclick = closePlayer;
 // Stop = the transport-control way out (Plex convention): same flush +
 // close, but reachable without leaving the controls row.
 document.getElementById("pc-stop").onclick = closePlayer;
+
+// --- stats-for-nerds overlay ------------------------------------------------
+// Everything is derived LAZILY from globals the player already maintains
+// (mode badge text, media-info JSON in the details pane, hls.js internals,
+// video element stats) so the overlay needs zero instrumentation in the
+// playback paths themselves.
+pcStats.onclick = () => {
+  statsOverlay.classList.toggle("hidden");
+  updateStatsOverlay();
+};
+
+function updateStatsOverlay() {
+  if (statsOverlay.classList.contains("hidden")) return;
+  const rows = [];
+  rows.push(["mode", playerMode.textContent || "—"]);
+
+  let info = null;
+  try { info = JSON.parse(mediaInfoJson.textContent || "null"); } catch { /* no probe yet */ }
+  if (info) {
+    const v = info.video || {};
+    const a = (info.audio || [])[0] || {};
+    rows.push(["source",
+      `${String(info.container || "?").split(",")[0]} · ${v.codec || "?"}${v.profile ? ` ${v.profile}` : ""} ` +
+      `${v.width || "?"}×${v.height || "?"}${info.hdr ? " HDR" : ""}`]);
+    if (v.bitrate) rows.push(["source bitrate", `${(v.bitrate / 1e6).toFixed(1)} Mbps`]);
+    if (a.codec) rows.push(["audio", `${a.codec}${a.channels ? ` ${a.channels}ch` : ""}`]);
+  }
+
+  if (isHls) {
+    const hevc = (playerMode.textContent || "").includes("hevc");
+    rows.push(["output", `HLS · ${currentQuality}${currentQuality !== "original" ? (hevc ? " · hevc" : " · h264") : ""}`]);
+    if (currentHls && currentHls.bandwidthEstimate) {
+      rows.push(["est. bandwidth", `${(currentHls.bandwidthEstimate / 1e6).toFixed(1)} Mbps`]);
+    }
+    if (currentItem) {
+      rows.push(["session", `${currentItem.id}@${Math.floor(sessionOffsetS)}@${currentQuality}${hevc ? "-hevc" : ""}`]);
+    }
+  } else {
+    rows.push(["output", "direct file"]);
+  }
+
+  if (video.videoWidth) rows.push(["rendered", `${video.videoWidth}×${video.videoHeight}`]);
+  try {
+    const b = video.buffered;
+    if (b.length && video.currentTime > 0) {
+      rows.push(["buffer", `${Math.max(0, b.end(b.length - 1) - video.currentTime).toFixed(1)} s ahead`]);
+    }
+  } catch { /* no buffered range yet */ }
+  const q = video.getVideoPlaybackQuality && video.getVideoPlaybackQuality();
+  if (q && q.totalVideoFrames > 0) {
+    rows.push(["frames", `${q.droppedVideoFrames} dropped / ${q.totalVideoFrames}`]);
+  }
+
+  statsOverlay.innerHTML = rows.map(([k, v]) =>
+    `<div class="stats-row"><span class="stats-k">${escapeHtml(k)}</span><span class="stats-v">${escapeHtml(v)}</span></div>`
+  ).join("");
+}
+setInterval(updateStatsOverlay, 1000);
 
 // --- boot -----------------------------------------------------------------------------
 

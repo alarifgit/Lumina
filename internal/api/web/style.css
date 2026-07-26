@@ -1564,6 +1564,42 @@ nav button.active { color: #fff; }
   to { transform: rotate(360deg); }
 }
 
+/* Stats-for-nerds overlay: glassy monospaced panel, top-right of the
+   player. pointer-events none so it never blocks the controls. */
+#stats-overlay {
+  position: absolute;
+  top: 64px;
+  right: 18px;
+  z-index: 6;
+  min-width: 250px;
+  max-width: 360px;
+  padding: 0.7rem 0.9rem;
+  border-radius: 14px;
+  background: rgba(12, 12, 18, 0.72);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  color: #eceae6;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.7;
+  pointer-events: none;
+}
+#stats-overlay .stats-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+}
+#stats-overlay .stats-k {
+  color: rgba(236, 234, 230, 0.52);
+  flex-shrink: 0;
+}
+#stats-overlay .stats-v {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 /* "Up next" post-play card (bottom-right, tvOS-style). */
 #up-next {
   position: absolute;
