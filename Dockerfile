@@ -7,8 +7,11 @@ COPY go.mod go.sum* ./
 # recompile only what changed.
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 # Copy ONLY the Go sources — the reference trees, brand tooling and docs
-# are excluded via .dockerignore and were never needed to compile.
-COPY cmd internal ./
+# are excluded via .dockerignore and were never needed to compile. NB:
+# `COPY <dir> ./` copies the dir's CONTENTS into ./ (flattening the tree),
+# so each source dir needs its own named destination.
+COPY cmd ./cmd
+COPY internal ./internal
 # This repo may not have a checked-in go.sum yet; tidy after the full source
 # copy so the image builds from a clean checkout too.
 RUN --mount=type=cache,target=/go/pkg/mod \
