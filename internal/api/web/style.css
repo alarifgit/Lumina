@@ -401,12 +401,30 @@ nav button.active { color: #fff; }
 #seek-buffered { background: rgba(255, 255, 255, 0.32); }
 #seek-played { background: var(--accent, #af915f); }
 
-#controls-row {
+#seek-row {
   display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+#seek-row #seek-bar { flex: 1; }
+#pc-time-current, #pc-time-total {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#controls-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 0.55rem;
   padding-top: 0.35rem;
 }
+.pc-group { display: flex; align-items: center; gap: 0.55rem; }
+.pc-left { justify-content: flex-start; }
+.pc-center { justify-content: center; }
+.pc-right { justify-content: flex-end; position: relative; }
 #controls-row button {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -420,15 +438,17 @@ nav button.active { color: #fff; }
   transition: background 160ms ease, transform 160ms ease;
 }
 #controls-row button:hover { background: rgba(255, 255, 255, 0.2); transform: scale(1.05); }
-#pc-play { font-size: 1rem; min-width: 2.6rem; height: 2.6rem; }
-#pc-time {
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 0.8rem;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  margin-left: 0.3rem;
+/* Emphasised transport: the play button is the optical anchor (Plex/Apple
+   TV pattern) — larger, accent-tinted, between the two seek buttons. */
+#pc-play {
+  font-size: 1.15rem;
+  min-width: 2.9rem;
+  height: 2.9rem;
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.22);
 }
-.pc-spacer { flex: 1; }
+#pc-play:hover { background: rgba(255, 255, 255, 0.28); }
+#pc-stop { font-size: 0.9em; }
 #pc-volume {
   width: 5.2rem;
   accent-color: var(--accent, #af915f);
@@ -1375,6 +1395,7 @@ nav button.active { color: #fff; }
 .ic-download { -webkit-mask-image: url("/icons/ic-download.png"); mask-image: url("/icons/ic-download.png"); }
 .ic-user { -webkit-mask-image: url("/icons/ic-user.png"); mask-image: url("/icons/ic-user.png"); }
 .ic-close { -webkit-mask-image: url("/icons/ic-close.png"); mask-image: url("/icons/ic-close.png"); }
+.ic-stop { -webkit-mask-image: url("/icons/ic-stop.png"); mask-image: url("/icons/ic-stop.png"); }
 .ic-back { -webkit-mask-image: url("/icons/ic-back.png"); mask-image: url("/icons/ic-back.png"); }
 .ic-search { -webkit-mask-image: url("/icons/ic-search.png"); mask-image: url("/icons/ic-search.png"); }
 .ic-info { -webkit-mask-image: url("/icons/ic-info.png"); mask-image: url("/icons/ic-info.png"); }
@@ -1589,8 +1610,8 @@ nav button.active { color: #fff; }
 #cc-opts:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 #cc-pop {
   position: absolute;
-  bottom: 4.6rem;
-  right: 8rem;
+  bottom: 3rem;
+  right: 0;
   z-index: 5;
   padding: 0.7rem 0.9rem;
   border-radius: 12px;

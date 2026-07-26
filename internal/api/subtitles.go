@@ -4,6 +4,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -33,6 +35,12 @@ func (s *Server) listSubtitles(w http.ResponseWriter, r *http.Request) {
 // GET /api/v1/items/{id}/subtitles/{subid} — the track as WebVTT.
 // "sc-N" sidecars convert SRT in-process (cheap); ASS/SSA and "emb-N"
 // go through ffmpeg. No ffprobe needed at serve time.
+//
+// Embedded extraction means ffmpeg scans the whole container — over SMB
+// that's tens of seconds, EVERY time the track is selected. Converted
+// VTT is therefore cached on disk, keyed by the item's content hash:
+// replace the file and the hash changes, so stale conversions can never
+// be served.
 func (s *Server) subtitleVTT(w http.ResponseWriter, r *http.Request) {
 	it := s.itemFor(w, r)
 	if it == nil {
@@ -44,6 +52,25 @@ func (s *Server) subtitleVTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subID := r.PathValue("subid")
+
+	hashKey := it.Hash
+	if len(hashKey) > 16 {
+		hashKey = hashKey[:16]
+	}
+	if hashKey == "" {
+		hashKey = it.ID // legacy items without a hash still cache safely
+	}
+	cacheKey := fmt.Sprintf("%s_%s.vtt", hashKey, strings.ReplaceAll(subID, "/", "_"))
+	cachePath := filepath.Join(s.cfg.DataDir, "subtitles", cacheKey)
+	serve := func(vtt string) {
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "max-age=3600")
+		fmt.Fprint(w, vtt)
+	}
+	if cached, readErr := os.ReadFile(cachePath); readErr == nil && len(cached) > 0 {
+		serve(string(cached))
+		return
+	}
 
 	var vtt string
 	switch {
@@ -69,7 +96,8 @@ func (s *Server) subtitleVTT(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("subtitle conversion: %v", err), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Cache-Control", "max-age=3600")
-	fmt.Fprint(w, vtt)
+	if mkErr := os.MkdirAll(filepath.Dir(cachePath), 0o755); mkErr == nil {
+		_ = os.WriteFile(cachePath, []byte(vtt), 0o644) // best-effort
+	}
+	serve(vtt)
 }

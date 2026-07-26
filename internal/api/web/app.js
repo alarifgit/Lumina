@@ -29,7 +29,8 @@ const ccSelect = document.getElementById("cc-select");
 const pcPlay = document.getElementById("pc-play");
 const pcBack = document.getElementById("pc-back");
 const pcFwd = document.getElementById("pc-fwd");
-const pcTime = document.getElementById("pc-time");
+const pcTimeCurrent = document.getElementById("pc-time-current");
+const pcTimeTotal = document.getElementById("pc-time-total");
 const pcRate = document.getElementById("pc-rate");
 const pcVolume = document.getElementById("pc-volume");
 const pcFull = document.getElementById("pc-full");
@@ -1064,7 +1065,8 @@ async function play(item) {
   pcVolume.value = String(video.volume);
   seekPlayed.style.width = "0";
   seekBuffered.style.width = "0";
-  pcTime.textContent = "0:00 / 0:00";
+  pcTimeCurrent.textContent = "0:00";
+  pcTimeTotal.textContent = "0:00";
   syncPlayButton();
   pokeControls();
   forceTranscode.onchange = () => play(item);
@@ -1480,7 +1482,8 @@ function updateSeekUI() {
     }
     seekBuffered.style.width = `${Math.min(100, (bufEndAbs / dur) * 100)}%`;
   }
-  pcTime.textContent = `${fmtClock(pos)} / ${fmtClock(dur)}`;
+  pcTimeCurrent.textContent = fmtClock(pos);
+  pcTimeTotal.textContent = fmtClock(dur);
 }
 
 video.addEventListener("timeupdate", updateSeekUI);
@@ -2033,11 +2036,15 @@ async function runPlexImport(apply) {
   }
 }
 
-document.getElementById("player-close").onclick = () => {
+function closePlayer() {
   overlay.classList.add("hidden");
-  stopPlayback();
+  stopPlayback(); // flushes the final playhead report before teardown
   if (activeLib) refreshCurrentView();
-};
+}
+document.getElementById("player-close").onclick = closePlayer;
+// Stop = the transport-control way out (Plex convention): same flush +
+// close, but reachable without leaving the controls row.
+document.getElementById("pc-stop").onclick = closePlayer;
 
 // --- boot -----------------------------------------------------------------------------
 

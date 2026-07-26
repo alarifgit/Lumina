@@ -137,33 +137,42 @@
     </div>
   </div>
   <div id="player-controls">
-    <div id="seek-bar" aria-label="Seek">
-      <div id="seek-buffered"></div>
-      <div id="seek-played"></div>
+    <div id="seek-row">
+      <span id="pc-time-current">0:00</span>
+      <div id="seek-bar" aria-label="Seek">
+        <div id="seek-buffered"></div>
+        <div id="seek-played"></div>
+      </div>
+      <span id="pc-time-total">0:00</span>
     </div>
     <div id="controls-row">
-      <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)"><span class="ic ic-play"></span></button>
-      <button id="pc-back" title="Back 10 seconds (←)"><span class="ic ic-back10"></span></button>
-      <button id="pc-fwd" title="Forward 10 seconds (→)"><span class="ic ic-fwd10"></span></button>
-      <button id="pc-next" class="hidden" title="Next episode"><span class="ic ic-back ic-flip"></span></button>
-      <span id="pc-time">0:00 / 0:00</span>
-      <span class="pc-spacer"></span>
-      <select id="cc-select" class="hidden" title="Subtitles"></select>
-      <button id="cc-opts" class="hidden" title="Subtitle appearance">Aa</button>
-      <div id="cc-pop" class="hidden">
-        <div class="cc-pop-row">
-          <span>Size</span>
-          <button data-size="s">S</button><button data-size="m" class="active">M</button><button data-size="l">L</button>
-        </div>
-        <div class="cc-pop-row">
-          <span>Background</span>
-          <button data-bg="on" class="active">On</button><button data-bg="off">Off</button>
-        </div>
+      <div class="pc-group pc-left">
+        <span class="ic ic-volume" id="pc-volume-icon"></span>
+        <input id="pc-volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
       </div>
-      <button id="pc-rate" title="Playback speed">1×</button>
-      <span class="ic ic-volume" id="pc-volume-icon"></span>
-      <input id="pc-volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
-      <button id="pc-full" aria-label="Fullscreen" title="Fullscreen (f)"><span class="ic ic-fullscreen"></span></button>
+      <div class="pc-group pc-center">
+        <button id="pc-back" title="Back 10 seconds (←)"><span class="ic ic-back10"></span></button>
+        <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)"><span class="ic ic-play"></span></button>
+        <button id="pc-fwd" title="Forward 10 seconds (→)"><span class="ic ic-fwd10"></span></button>
+        <button id="pc-next" class="hidden" title="Next episode"><span class="ic ic-back ic-flip"></span></button>
+        <button id="pc-stop" title="Stop playback"><span class="ic ic-stop"></span></button>
+      </div>
+      <div class="pc-group pc-right">
+        <select id="cc-select" class="hidden" title="Subtitles"></select>
+        <button id="cc-opts" class="hidden" title="Subtitle appearance">Aa</button>
+        <div id="cc-pop" class="hidden">
+          <div class="cc-pop-row">
+            <span>Size</span>
+            <button data-size="s">S</button><button data-size="m" class="active">M</button><button data-size="l">L</button>
+          </div>
+          <div class="cc-pop-row">
+            <span>Background</span>
+            <button data-bg="on" class="active">On</button><button data-bg="off">Off</button>
+          </div>
+        </div>
+        <button id="pc-rate" title="Playback speed">1×</button>
+        <button id="pc-full" aria-label="Fullscreen" title="Fullscreen (f)"><span class="ic ic-fullscreen"></span></button>
+      </div>
     </div>
   </div>
   <details id="media-details"><summary>Media info</summary><p id="media-overview"></p><pre id="media-info-json"></pre></details>

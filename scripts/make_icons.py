@@ -80,4 +80,17 @@ crop = bm.crop((bx - half, by - half, bx + half, by + half))
 bolden(key_cell(crop).resize((SIZE, SIZE), Image.LANCZOS)).save(OUT / "ic-bookmark.png")
 print("ic-bookmark.png")
 
+# Stop icon: no cell on the sheet, so draw it in the same language —
+# a rounded-square outline, stroke weight matching the BOLD dilation.
+from PIL import ImageDraw
+
+stop = Image.new("RGBA", (SIZE, SIZE), (255, 255, 255, 0))
+d = ImageDraw.Draw(stop)
+m = int(SIZE * 0.16)          # margin, like the sheet's inset glyphs
+sw = int(SIZE * 0.075)        # stroke width ≈ dilated sheet strokes
+d.rounded_rectangle((m, m, SIZE - m, SIZE - m), radius=int(SIZE * 0.10),
+                    outline=(255, 255, 255, 255), width=sw)
+stop.save(OUT / "ic-stop.png")
+print("ic-stop.png")
+
 print("done ->", OUT)
