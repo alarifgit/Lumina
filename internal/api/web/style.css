@@ -1733,3 +1733,71 @@ nav button.active { color: var(--cream); }
 .skel-hero { min-height: 62vh; border-radius: 0; }
 .skel-line { width: 180px; height: 1rem; margin: 0.2rem 0; }
 .skel-card { width: 220px; height: 124px; flex: 0 0 auto; }
+
+/* --- gold cohesion pass ----------------------------------------------------
+   One accent family everywhere, taken from the wordmark: --cream (bright
+   gold) for moments of focus, --accent (deep bronze) as its shadow. These
+   overrides intentionally sit at the end so the original rules above stay
+   readable as structure; THIS file's tail is the palette's single source
+   of truth. */
+
+/* Player: transport buttons whisper until touched, then answer in gold. */
+#controls-row button { transition: background 160ms ease, color 160ms ease, transform 160ms ease; }
+#controls-row button:hover {
+  background: rgba(252, 225, 182, 0.14);
+  color: var(--cream);
+  transform: scale(1.05);
+}
+
+/* The play button is the player's gold moment: a filled cream disc with a
+   dark glyph — the optical anchor, like the logo on the dark page. */
+#pc-play {
+  background: var(--cream);
+  border-color: transparent;
+  color: #14202f;
+}
+#pc-play:hover {
+  background: #ffe9c8;
+  color: #14202f;
+  transform: scale(1.06);
+}
+
+/* Seek + progress bars: bronze-to-cream gradient, so "time travelled"
+   literally brightens. A thumb appears on hover (Plex/Apple TV grammar). */
+#seek-played, .progress-fill {
+  background: linear-gradient(90deg, var(--accent), var(--cream));
+}
+#seek-played::after {
+  content: "";
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateY(-50%) scale(0);
+  border-radius: 50%;
+  background: var(--cream);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+  transition: transform 140ms ease;
+}
+#seek-bar:hover #seek-played::after { transform: translateY(-50%) scale(1); }
+
+/* Player selects + close: gilded on focus/hover instead of stark white. */
+#cc-select:hover, #pc-quality:hover,
+#cc-select:focus-visible, #pc-quality:focus-visible {
+  border-color: rgba(252, 225, 182, 0.45);
+}
+#player-close:hover { background: rgba(252, 225, 182, 0.16); color: var(--cream); }
+#pc-volume { accent-color: var(--cream); }
+
+/* Cards: the hover rim is gold now, and the title answers with it. */
+.card:hover {
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(252, 225, 182, 0.38);
+}
+.card:hover .title { color: var(--cream); }
+
+/* Rail headers wear the brand gold — same family as the hero eyebrow. */
+.rail-head h3 { color: var(--cream); font-weight: 620; }
+
+/* Stats overlay: the numbers read in gold, labels stay quiet. */
+#stats-overlay .stats-v { color: var(--cream); }
