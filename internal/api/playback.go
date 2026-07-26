@@ -144,6 +144,9 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) {
 	if file == "" {
 		file = "index.m3u8"
 	}
+	// The web client reads its mode badge from this header — the playlist
+	// body is text, so the mode can't travel in the payload.
+	w.Header().Set("X-Lumina-Session-Mode", sess.Mode)
 	full, err := sess.WaitFile(file)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)

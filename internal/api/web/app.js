@@ -1132,13 +1132,27 @@ async function startHls(item, startS) {
   const qs = sessionOffsetS > 0 ? `?start=${Math.floor(sessionOffsetS)}` : "";
   const url = `/api/v1/items/${item.id}/hls/index.m3u8${qs}`;
 
-  let mode = "software";
+  let mode = "";
   try {
-    await api(url); // ensures the session exists
-    const sessions = await api("/api/v1/system/sessions");
-    const sess = sessions.find((s) => s.key.startsWith(item.id));
-    if (sess) mode = sess.mode;
-  } catch { /* session may already exist */ }
+    // The playlist is TEXT — api() would throw on res.json() and the badge
+    // used to be stuck on its "software" default forever. The session mode
+    // travels in a response header instead; fallback asks the sessions list
+    // for THIS offset's exact key (older sessions from earlier seeks must
+    // not win — they can carry a stale retry mode).
+    const res = await fetch(url);
+    mode = res.headers.get("x-lumina-session-mode") || "";
+    if (!res.ok) throw new Error(`hls ${res.status}`);
+  } catch { /* header missing (old server) — fall through to the list */ }
+  if (!mode) {
+    try {
+      const sessions = await api("/api/v1/system/sessions");
+      const key = `${item.id}@${Math.floor(sessionOffsetS)}`;
+      const sess = sessions.find((s) => s.key === key) ||
+        sessions.find((s) => s.key.startsWith(item.id));
+      if (sess) mode = sess.mode;
+    } catch { /* session may already exist */ }
+  }
+  if (!mode) mode = "software"; // unknown ≠ software, but badge needs a label
   if (mode === "copy") {
     setMode("direct stream · remux", "direct");
   } else if (mode === "vaapi-hybrid") {
