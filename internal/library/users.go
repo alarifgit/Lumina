@@ -32,9 +32,9 @@ type Playhead struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// watchedThreshold: past this fraction, an item counts as watched and
+// WatchedThreshold: past this fraction, an item counts as watched and
 // resume resets to the beginning.
-const watchedThreshold = 0.92
+const WatchedThreshold = 0.92
 
 const defaultUserName = "admin"
 
@@ -125,7 +125,7 @@ func (s *sqliteStore) Playheads(userID string) (map[string]Playhead, error) {
 			Version:    ver,
 			UpdatedAt:  parseTime(created),
 		}
-		ph.Watched = dur > 0 && float64(pos)/float64(dur) >= watchedThreshold
+		ph.Watched = dur > 0 && float64(pos)/float64(dur) >= WatchedThreshold
 		out[ph.ItemID] = ph
 	}
 	return out, rows.Err()
@@ -149,7 +149,7 @@ func (s *sqliteStore) Playhead(userID, itemID string) (*Playhead, error) {
 	ph.ItemID = itemID
 	ph.UpdatedAt = parseTime(created)
 	ph.Watched = ph.DurationMs > 0 &&
-		float64(ph.PositionMs)/float64(ph.DurationMs) >= watchedThreshold
+		float64(ph.PositionMs)/float64(ph.DurationMs) >= WatchedThreshold
 	return &ph, nil
 }
 

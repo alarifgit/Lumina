@@ -258,6 +258,15 @@ func (s *Server) activity(w http.ResponseWriter, _ *http.Request) {
 	// between reports plus a stopped tab's final flush.
 	if reports, err := s.store.RecentPlayheads(time.Now().Add(-2 * time.Minute)); err == nil {
 		for _, r := range reports {
+			// "Now playing" means PLAYING. A report at/past the watched
+			// threshold is a completion, not activity — and the Plex import
+			// writes full-length rows for an entire watch history in one
+			// burst, which otherwise floods this list for two minutes with
+			// everything the user has ever finished.
+			if r.DurationMs > 0 &&
+				float64(r.PositionMs)/float64(r.DurationMs) >= library.WatchedThreshold {
+				continue
+			}
 			v := watchingView{
 				UserID: r.UserID, UserName: userNames[r.UserID],
 				ItemID: r.ItemID, PositionMs: r.PositionMs,
