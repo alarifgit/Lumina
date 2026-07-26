@@ -77,6 +77,10 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	byTMDB := map[int]*library.Item{}
 	byMovieKey := map[string]*library.Item{}
 	byEpisodeKey := map[string]*library.Item{}
+	// Series-TMDB + SxxEyy: the strongest episode identity. Plex episode
+	// guids are episode-level, but Lumina episodes carry the SERIES tmdb id,
+	// so join through the show's own guid (resolved per section below).
+	byTMDBEpisode := map[string]*library.Item{}
 	for i := range luminaItems {
 		it := &luminaItems[i]
 		if it.TMDBID > 0 {
@@ -98,6 +102,9 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			if p.Title != "" && p.Episode > 0 {
 				registerAmbiguous(byEpisodeKey, episodeKey(p.Title, p.Season, p.Episode), it)
 			}
+			if it.TMDBID > 0 && p.Episode > 0 {
+				register(byTMDBEpisode, tmdbEpisodeKey(it.TMDBID, p.Season, p.Episode), it)
+			}
 		}
 	}
 
@@ -117,6 +124,21 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 		if err != nil {
 			report.Errors = append(report.Errors, fmt.Sprintf("%s: %v", sec.Title, err))
 			continue
+		}
+		// Episodes inherit their SHOW's tmdb id: fetch the section's series
+		// (type=2, one call) and join on grandparentRatingKey.
+		if sec.Type == "show" {
+			seriesTMDB := map[string]int{}
+			if series, sErr := c.Items(ctx, sec, "2"); sErr == nil {
+				for _, sr := range series {
+					if sr.TMDBID > 0 {
+						seriesTMDB[sr.RatingKey] = sr.TMDBID
+					}
+				}
+			}
+			for i := range plexItems {
+				plexItems[i].SeriesTMDBID = seriesTMDB[plexItems[i].GrandparentKey]
+			}
 		}
 		for _, pi := range plexItems {
 			report.Scanned++
@@ -141,9 +163,18 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 				match = byTMDB[pi.TMDBID]
 				row.Method = "tmdb"
 			case pi.Type == "episode":
-				if it, ok := unambiguous(byEpisodeKey, episodeKey(pi.Grandparent, pi.Season, pi.Episode)); ok {
-					match = it
-					row.Method = "episode-key"
+				// Strongest: the show's series-level tmdb id + exact SxxEyy.
+				if pi.SeriesTMDBID > 0 {
+					if it, ok := unambiguous(byTMDBEpisode, tmdbEpisodeKey(pi.SeriesTMDBID, pi.Season, pi.Episode)); ok {
+						match = it
+						row.Method = "tmdb-episode"
+					}
+				}
+				if match == nil {
+					if it, ok := unambiguous(byEpisodeKey, episodeKey(pi.Grandparent, pi.Season, pi.Episode)); ok {
+						match = it
+						row.Method = "episode-key"
+					}
 				}
 			default:
 				if it, ok := unambiguous(byMovieKey, movieKey(pi.Title, pi.Year)); ok {
@@ -152,6 +183,17 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 				} else if it, ok := unambiguous(byMovieKey, movieKey(pi.Title, 0)); ok {
 					match = it
 					row.Method = "title"
+				}
+				// Plex and TMDB disagree on year by one often enough
+				// (festival vs wide release) to be worth a guarded retry.
+				if match == nil && pi.Year > 0 {
+					for _, dy := range []int{-1, 1} {
+						if it, ok := unambiguous(byMovieKey, movieKey(pi.Title, pi.Year+dy)); ok {
+							match = it
+							row.Method = "title-year±1"
+							break
+						}
+					}
 				}
 			}
 
@@ -237,4 +279,10 @@ func registerAmbiguous(m map[string]*library.Item, key string, it *library.Item)
 func unambiguous(m map[string]*library.Item, key string) (*library.Item, bool) {
 	it, ok := m[key]
 	return it, ok && it != nil
+}
+
+// tmdbEpisodeKey joins a series-level TMDB id with exact season/episode —
+// the identity Plex and Lumina can agree on regardless of title language.
+func tmdbEpisodeKey(tmdbID, season, episode int) string {
+	return fmt.Sprintf("%d|%d|%d", tmdbID, season, episode)
 }

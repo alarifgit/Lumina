@@ -50,12 +50,14 @@ type Item struct {
 	RatingKey      string
 	Title          string
 	Grandparent    string // show title for episodes
+	GrandparentKey string // show ratingKey for episodes (series guid lookup)
 	Year           int
 	Season         int
 	Episode        int
 	DurationMs     int64
 	Watched        bool
 	TMDBID         int
+	SeriesTMDBID   int // resolved from the show's own guid (episodes)
 }
 
 // --- Plex API shapes (JSON; Plex honours Accept: application/json) -----------
@@ -73,6 +75,7 @@ type container struct {
 			RatingKey       json.Number `json:"ratingKey"`
 			Title           string      `json:"title"`
 			GrandparentTitle string     `json:"grandparentTitle"`
+			GrandparentKey  json.Number `json:"grandparentRatingKey"`
 			Year            json.Number `json:"year"`
 			ParentIndex     json.Number `json:"parentIndex"`
 			Index           json.Number `json:"index"`
@@ -151,10 +154,11 @@ func (c *Client) Items(ctx context.Context, sec Section, itemType string) ([]Ite
 	out := []Item{}
 	for _, m := range data.MediaContainer.Metadata {
 		it := Item{
-			Type:        m.Type,
-			RatingKey:   m.RatingKey.String(),
-			Title:       m.Title,
-			Grandparent: m.GrandparentTitle,
+			Type:           m.Type,
+			RatingKey:      m.RatingKey.String(),
+			Title:          m.Title,
+			Grandparent:    m.GrandparentTitle,
+			GrandparentKey: m.GrandparentKey.String(),
 		}
 		it.Year, _ = strconv.Atoi(m.Year.String())
 		it.Season, _ = strconv.Atoi(m.ParentIndex.String())
