@@ -158,7 +158,7 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						registerAmbiguous(byAbsKey, absKey(it.OrigTitle, abs), it)
 					}
 					if it.TMDBID > 0 {
-						register(byTMDBAbs, tmdbEpisodeKey(it.TMDBID, 0, abs)) // season 0 = absolute slot
+						register(byTMDBAbs, tmdbEpisodeKey(it.TMDBID, 0, abs), it) // season 0 = absolute slot
 					}
 				}
 			}
