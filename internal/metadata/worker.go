@@ -207,7 +207,15 @@ func (w *Worker) identify(ctx context.Context, it library.Item, hint IdentifyHin
 		if title == "" {
 			return nil
 		}
-		m, err := w.tmdb.IdentifySeries(ctx, title, hint.Year)
+		// Year anchoring: the folder's "(2025)" outranks everything, but the
+		// FILENAME's own trailing year ("Countdown.2025.S01E03…") is a solid
+		// fallback — flat libraries without series folders get their
+		// disambiguator here instead of a popularity guess.
+		year := hint.Year
+		if year == 0 {
+			year = parsed.Year
+		}
+		m, err := w.tmdb.IdentifySeries(ctx, title, year)
 		if err != nil {
 			return err
 		}
@@ -215,7 +223,7 @@ func (w *Worker) identify(ctx context.Context, it library.Item, hint IdentifyHin
 			// Folder annotations like "(Korean)" defeat the exact-title
 			// matcher and can zero out TMDB's own search — retry bare.
 			if stripped := StripParenGroups(title); stripped != "" && stripped != title {
-				m, err = w.tmdb.IdentifySeries(ctx, stripped, hint.Year)
+				m, err = w.tmdb.IdentifySeries(ctx, stripped, year)
 				if err != nil {
 					return err
 				}

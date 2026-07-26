@@ -103,6 +103,41 @@ var accentFold = map[rune]rune{
 // (or original title) may auto-match; when a source year is known the
 // candidate year must equal it; ambiguity means "leave it for the human"
 // (the fix-match UI), not "guess harder".
+// popularityDominance: how much more popular a candidate must be than its
+// runner-up to win WITHOUT an exact-year anchor. 4× is the line between
+// "the famous one" (Countdown 2025 vs the 1982 gameshow) and a coin flip.
+const popularityDominance = 4.0
+
+// dominantPick returns the candidate only when its popularity clearly
+// dominates the runner-up — otherwise nil (ambiguity goes to fix-match,
+// never to a guess).
+func dominantPick(cands []matchCandidate) *matchCandidate {
+	if len(cands) == 0 {
+		return nil
+	}
+	best := cands[0]
+	runnerUp := 0.0
+	for _, c := range cands[1:] {
+		if c.popularity > best.popularity {
+			runnerUp = best.popularity
+			best = c
+		} else if c.popularity > runnerUp {
+			runnerUp = c.popularity
+		}
+	}
+	if best.popularity > 0 && best.popularity >= popularityDominance*runnerUp {
+		return &best
+	}
+	return nil
+}
+
+// decideAutoMatch picks at most one candidate. The ladder, most confident
+// first:
+//  1. exact normalized title + exact year (±1 tolerated for regional/pilot
+//     drift, exact year preferred) — the gold-standard auto-match
+//  2. exact normalized title, no year known: popularity must DOMINATE
+//  3. no exact title at all (romaji/alias naming): the top hit must
+//     dominate — blind rank-1 acceptance is how libraries get mislabeled
 func decideAutoMatch(sourceTitle string, sourceYear int, cands []matchCandidate) *matchCandidate {
 	src := normalizeMatchTitle(sourceTitle)
 	if src == "" || len(cands) == 0 {
@@ -121,21 +156,37 @@ func decideAutoMatch(sourceTitle string, sourceYear int, cands []matchCandidate)
 		}
 	}
 	if len(exact) == 0 {
+		if sourceYear == 0 {
+			return dominantPick(cands)
+		}
 		return nil
 	}
-	eligible := exact
 	if sourceYear > 0 {
-		eligible = nil
+		var exactYear, nearYear []matchCandidate
 		for _, c := range exact {
-			if c.year == sourceYear {
-				eligible = append(eligible, c)
+			switch d := c.year - sourceYear; {
+			case d == 0:
+				exactYear = append(exactYear, c)
+			case d == 1 || d == -1:
+				nearYear = append(nearYear, c)
 			}
 		}
+		switch {
+		case len(exactYear) == 1:
+			return &exactYear[0]
+		case len(exactYear) > 1:
+			return dominantPick(exactYear)
+		case len(nearYear) == 1:
+			return &nearYear[0]
+		case len(nearYear) > 1:
+			return dominantPick(nearYear)
+		}
+		return nil // year contradiction → manual fix-match
 	}
-	if len(eligible) != 1 {
-		return nil // year-mismatch or ambiguous → manual fix-match
+	if len(exact) == 1 {
+		return &exact[0]
 	}
-	return &eligible[0]
+	return dominantPick(exact)
 }
 
 // searchCandidates queries TMDB and returns up to 10 match candidates.
@@ -212,14 +263,12 @@ func (c *Client) IdentifyMovie(ctx context.Context, title string, year int) (*li
 	return c.FetchByID(ctx, "movies", pick.id)
 }
 
-// IdentifySeries matches a series title, with an optional folder-year hint.
-// Exact normalized titles win; a known year must match exactly — the year
-// is the disambiguator between same-titled shows (a 2025 thriller vs a
-// 1982 game show), and a rank-1 guess against a contradictory year is how
-// libraries get mislabeled. Only when NO year is known does the top search
-// hit get accepted: series searches routinely cross naming schemes (romaji
-// vs English anime titles), and episodes all share the one series identity,
-// so a rank-1 mistake is cheap to fix once in the fix-match UI.
+// IdentifySeries matches a series title, with an optional folder/filename
+// year hint. The decider ladder (exact title+exact year → ±1 drift →
+// popularity-dominant) replaced the old blind rank-1 fallback: a wrong
+// match is far more expensive than an unmatched item, because unmatched
+// items queue for re-identification while wrong ones sit there looking
+// correct (the "Countdown 1982 instead of Countdown 2025" failure).
 func (c *Client) IdentifySeries(ctx context.Context, title string, year int) (*library.Metadata, error) {
 	cands, err := c.searchCandidates(ctx, "tv", title, year)
 	if err != nil {
@@ -236,13 +285,7 @@ func (c *Client) IdentifySeries(ctx context.Context, title string, year int) (*l
 		pick = decideAutoMatch(title, year, cands)
 	}
 	if pick == nil {
-		if year > 0 {
-			return nil, nil // known year, no exact match → human fix-match
-		}
-		if len(cands) == 0 {
-			return nil, nil
-		}
-		pick = &cands[0]
+		return nil, nil // no confident match — not an error
 	}
 	return c.FetchByID(ctx, "tv", pick.id)
 }
