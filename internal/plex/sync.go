@@ -92,6 +92,19 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 		}
 		if it.Kind == library.KindMovie {
 			registerAmbiguous(byMovieKey, movieKey(it.Title, it.Year), it)
+			if it.Year > 0 {
+				// Yearless key powers the "title" fallback below: without
+				// registering it, that fallback could never hit.
+				registerAmbiguous(byMovieKey, movieKey(it.Title, 0), it)
+			}
+			if it.OrigTitle != "" {
+				// Original-language title: a Plex library in another
+				// language carries this instead of TMDB's English title.
+				registerAmbiguous(byMovieKey, movieKey(it.OrigTitle, it.Year), it)
+				if it.Year > 0 {
+					registerAmbiguous(byMovieKey, movieKey(it.OrigTitle, 0), it)
+				}
+			}
 			// Also index the filename-derived key (pre-metadata items).
 			if len(it.Paths) > 0 {
 				base := strings.TrimSuffix(filepath.Base(it.Paths[0]), filepath.Ext(it.Paths[0]))
@@ -105,6 +118,14 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			p := metadata.ParseFilename(base)
 			if p.Title != "" && p.Episode > 0 {
 				registerAmbiguous(byEpisodeKey, episodeKey(p.Title, p.Season, p.Episode), it)
+			}
+			// The TMDB series title (and its original-language form) is the
+			// name Plex shows when filenames use romaji/Japanese.
+			if it.Title != "" && p.Episode > 0 {
+				registerAmbiguous(byEpisodeKey, episodeKey(it.Title, p.Season, p.Episode), it)
+			}
+			if it.OrigTitle != "" && p.Episode > 0 {
+				registerAmbiguous(byEpisodeKey, episodeKey(it.OrigTitle, p.Season, p.Episode), it)
 			}
 			if it.TMDBID > 0 && p.Episode > 0 {
 				register(byTMDBEpisode, tmdbEpisodeKey(it.TMDBID, p.Season, p.Episode), it)
@@ -128,6 +149,13 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 					}
 					if title != "" {
 						registerAmbiguous(byAbsKey, absKey(title, abs), it)
+					}
+					// Same cross-language bridges for absolute numbering.
+					if it.Title != "" && it.Title != title {
+						registerAmbiguous(byAbsKey, absKey(it.Title, abs), it)
+					}
+					if it.OrigTitle != "" && it.OrigTitle != title {
+						registerAmbiguous(byAbsKey, absKey(it.OrigTitle, abs), it)
 					}
 					if it.TMDBID > 0 {
 						register(byTMDBAbs, tmdbEpisodeKey(it.TMDBID, 0, abs)) // season 0 = absolute slot

@@ -99,6 +99,7 @@ func (s *sqliteStore) migrate() error {
 		{"poster_url", `ALTER TABLE items ADD COLUMN poster_url TEXT NOT NULL DEFAULT ''`},
 		{"backdrop_url", `ALTER TABLE items ADD COLUMN backdrop_url TEXT NOT NULL DEFAULT ''`},
 		{"genres", `ALTER TABLE items ADD COLUMN genres TEXT NOT NULL DEFAULT '[]'`},
+		{"orig_title", `ALTER TABLE items ADD COLUMN orig_title TEXT NOT NULL DEFAULT ''`},
 	} {
 		if err := s.ensureColumn("items", col.name, col.ddl); err != nil {
 			return err
@@ -141,9 +142,9 @@ func (s *sqliteStore) SetMetadata(id string, m Metadata) error {
 		genres = []byte("[]")
 	}
 	_, err = s.db.Exec(
-		`UPDATE items SET tmdb_id=?, title=?, year=?, overview=?, poster_url=?, backdrop_url=?, genres=?, updated_at=?
+		`UPDATE items SET tmdb_id=?, title=?, orig_title=?, year=?, overview=?, poster_url=?, backdrop_url=?, genres=?, updated_at=?
 		 WHERE id=?`,
-		m.TMDBID, m.Title, m.Year, m.Overview, m.PosterURL, m.BackdropURL,
+		m.TMDBID, m.Title, m.OrigTitle, m.Year, m.Overview, m.PosterURL, m.BackdropURL,
 		string(genres), fmtTime(time.Now()), numericID(id))
 	return err
 }
@@ -316,7 +317,7 @@ func (s *sqliteStore) TombstonePath(path string) (bool, error) {
 func (s *sqliteStore) Get(id string) (*Item, error) {
 	row := s.db.QueryRow(
 		`SELECT id, hash, library, kind, title, year, state, size_bytes, added_at, updated_at, missing_at,
-		        tmdb_id, overview, poster_url, backdrop_url, genres
+		        tmdb_id, orig_title, overview, poster_url, backdrop_url, genres
 		 FROM items WHERE id=?`, numericID(id))
 	var it Item
 	var rowID int64
@@ -325,7 +326,7 @@ func (s *sqliteStore) Get(id string) (*Item, error) {
 	var genres string
 	if err := row.Scan(&rowID, &it.Hash, &it.Library, &kind, &it.Title, &it.Year,
 		&state, &it.SizeBytes, &added, &updated, &missing,
-		&it.TMDBID, &it.Overview, &it.PosterURL, &it.BackdropURL, &genres); err != nil {
+		&it.TMDBID, &it.OrigTitle, &it.Overview, &it.PosterURL, &it.BackdropURL, &genres); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -350,7 +351,7 @@ func (s *sqliteStore) Get(id string) (*Item, error) {
 
 func (s *sqliteStore) List(libraryName string) []Item {
 	q := `SELECT id, hash, library, kind, title, year, state, size_bytes, added_at, updated_at, missing_at,
-	             tmdb_id, overview, poster_url, backdrop_url, genres FROM items`
+	             tmdb_id, orig_title, overview, poster_url, backdrop_url, genres FROM items`
 	args := []any{}
 	if libraryName != "" {
 		q += ` WHERE library=?`
@@ -371,7 +372,7 @@ func (s *sqliteStore) List(libraryName string) []Item {
 		var genres string
 		if err := rows.Scan(&id, &it.Hash, &it.Library, &kind, &it.Title, &it.Year,
 			&state, &it.SizeBytes, &added, &updated, &missing,
-			&it.TMDBID, &it.Overview, &it.PosterURL, &it.BackdropURL, &genres); err != nil {
+			&it.TMDBID, &it.OrigTitle, &it.Overview, &it.PosterURL, &it.BackdropURL, &genres); err != nil {
 			continue
 		}
 		it.ID = fmt.Sprintf("itm-%d", id)

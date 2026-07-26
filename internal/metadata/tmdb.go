@@ -353,6 +353,8 @@ func (c *Client) FetchByID(ctx context.Context, kind string, id int) (*library.M
 		ID        int    `json:"id"`
 		Title     string `json:"title"`
 		Name      string `json:"name"`
+		OrigTitle string `json:"original_title"`
+		OrigName  string `json:"original_name"`
 		Release   string `json:"release_date"`
 		FirstAir  string `json:"first_air_date"`
 		Overview  string `json:"overview"`
@@ -373,9 +375,11 @@ func (c *Client) FetchByID(ctx context.Context, kind string, id int) (*library.M
 	date := det.Release
 	if kind == "tv" {
 		m.Title = det.Name
+		m.OrigTitle = det.OrigName
 		date = det.FirstAir
 	} else {
 		m.Title = det.Title
+		m.OrigTitle = det.OrigTitle
 	}
 	if len(date) >= 4 {
 		fmt.Sscanf(date[:4], "%d", &m.Year)

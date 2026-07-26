@@ -102,6 +102,10 @@ type Item struct {
 	// Metadata (Phase 6): filled by the TMDB worker; empty = procedural
 	// poster. User overrides (later phase) always win over providers.
 	TMDBID      int      `json:"tmdbId,omitempty"`
+	// OrigTitle is the original-language title (TMDB original_title /
+	// original_name) — the bridge for Plex libraries whose titles differ
+	// from TMDB's English entry (anime is the common case).
+	OrigTitle   string   `json:"origTitle,omitempty"`
 	Overview    string   `json:"overview,omitempty"`
 	PosterURL   string   `json:"posterUrl,omitempty"`
 	BackdropURL string   `json:"backdropUrl,omitempty"`
@@ -112,6 +116,7 @@ type Item struct {
 type Metadata struct {
 	TMDBID      int      `json:"tmdbId"`
 	Title       string   `json:"title"`
+	OrigTitle   string   `json:"origTitle,omitempty"`
 	Year        int      `json:"year"`
 	Overview    string   `json:"overview"`
 	PosterURL   string   `json:"posterUrl"`
