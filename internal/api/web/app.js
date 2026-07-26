@@ -102,10 +102,12 @@ const DIRECT_AUDIO = ["aac", "mp3", "opus", "vorbis", "flac",
 
 async function api(path, opts = {}) {
   // A wedged server must never leave the UI sitting on "Saving…" forever.
+  // Long calls (season-walking episode metadata) pass opts.timeoutMs.
+  const { timeoutMs, ...fetchOpts } = opts;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs || 20000);
   try {
-    const res = await fetch(path, { ...opts, signal: ctrl.signal });
+    const res = await fetch(path, { ...fetchOpts, signal: ctrl.signal });
     if (res.status === 204) return null;
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     return res.json();
@@ -700,7 +702,7 @@ function openSeries(key, anchor) {
   });
 
   if (rep.tmdbId) {
-    api(`/api/v1/metadata/series/${rep.tmdbId}/episodes`).then((data) => {
+    api(`/api/v1/metadata/series/${rep.tmdbId}/episodes`, { timeoutMs: 60000 }).then((data) => {
       for (const e of (data && data.episodes) || []) {
         epMeta.set(`${e.season}x${e.episode}`, e);
       }
@@ -1000,17 +1002,29 @@ async function runSearch(q) {
 
 // --- playback --------------------------------------------------------------------
 
-function canDirectPlay(info, item) {
-  if (!info.video) return false;
+// Why isn't this file direct-playing? The answer used to live in the
+// client's head only — now it rides on the mode badge's tooltip.
+function directPlayBlockers(info, item) {
+  const reasons = [];
+  if (!info.video) {
+    reasons.push("no video stream found by ffprobe");
+    return reasons;
+  }
   const ext = ((item.paths && item.paths[0]) || "").split(".").pop().toLowerCase();
-  if (!DIRECT_EXTS.includes(ext)) return false;
-  if (!DIRECT_VIDEO.includes(info.video.codec)) return false;
+  if (!DIRECT_EXTS.includes(ext)) {
+    reasons.push(`${ext} container (browsers only play ${DIRECT_EXTS.join("/")} natively)`);
+  }
+  if (!DIRECT_VIDEO.includes(info.video.codec)) {
+    reasons.push(`video codec ${info.video.codec} (this browser decodes ${DIRECT_VIDEO.join("/")})`);
+  }
   // Only the PRIMARY audio track gates: browsers play the container's
   // default (first) audio stream, so a secondary AC3 commentary track
   // shouldn't force a transcode of an otherwise direct-playable file.
   const primary = (info.audio || [])[0];
-  if (primary && !DIRECT_AUDIO.includes(primary.codec)) return false;
-  return true;
+  if (primary && !DIRECT_AUDIO.includes(primary.codec)) {
+    reasons.push(`audio codec ${primary.codec} (DTS/TrueHD never direct-play — silent audio is worse than a transcode)`);
+  }
+  return reasons;
 }
 
 function setMode(label, cls) {
@@ -1082,9 +1096,14 @@ async function play(item) {
 
   loadSubtitles(item).catch(() => {});
 
-  if (!forceTranscode.checked && canDirectPlay(info, item)) {
+  if (!forceTranscode.checked && directPlayBlockers(info, item).length === 0) {
     startDirect(item);
   } else {
+    // The "why" rides on the mode badge: hover "transcode · vaapi" to see
+    // exactly which gate failed (container, video codec, audio codec).
+    playerMode.title = forceTranscode.checked
+      ? "force transcode is on"
+      : directPlayBlockers(info, item).join("\n");
     startHls(item, resumeAtS);
   }
 }
@@ -1122,6 +1141,8 @@ async function startHls(item, startS) {
   } catch { /* session may already exist */ }
   if (mode === "copy") {
     setMode("direct stream · remux", "direct");
+  } else if (mode === "vaapi-hybrid") {
+    setMode("transcode · vaapi (gpu encode)", "");
   } else {
     setMode(`transcode · ${mode}`, mode === "vaapi" ? "" : "software");
   }

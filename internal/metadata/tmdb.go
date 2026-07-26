@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lumina-media/lumina/internal/library"
@@ -359,7 +361,10 @@ type EpisodeInfo struct {
 }
 
 // FetchSeriesEpisodes walks every season of a series and returns per-episode
-// titles, overviews, stills and air dates. Costs 1 + len(seasons) requests —
+// titles, overviews, stills and air dates. Seasons are fetched CONCURRENTLY
+// (bounded): a 20-season anime used to cost 20 sequential round trips —
+// past the web client's fetch timeout — which surfaced as "episodes never
+// get their TMDB names". Costs 1 + len(seasons) requests either way;
 // callers should cache (the worker keeps a 24h in-memory cache).
 func (c *Client) FetchSeriesEpisodes(ctx context.Context, id int) ([]EpisodeInfo, error) {
 	var show struct {
@@ -371,33 +376,57 @@ func (c *Client) FetchSeriesEpisodes(ctx context.Context, id int) ([]EpisodeInfo
 	if err := c.get(ctx, fmt.Sprintf("/tv/%d", id), url.Values{"language": {c.Language}}, &show); err != nil {
 		return nil, err
 	}
-	out := []EpisodeInfo{}
-	for _, sn := range show.Seasons {
+
+	type seasonEp struct {
+		Number   int    `json:"episode_number"`
+		Name     string `json:"name"`
+		Overview string `json:"overview"`
+		Still    string `json:"still_path"`
+		AirDate  string `json:"air_date"`
+	}
+	perSeason := make([][]EpisodeInfo, len(show.Seasons))
+	sem := make(chan struct{}, 6) // be a good TMDB citizen
+	var wg sync.WaitGroup
+	var firstErr atomic.Value
+	for i, sn := range show.Seasons {
 		if sn.Count == 0 {
 			continue
 		}
-		var season struct {
-			Episodes []struct {
-				Number   int    `json:"episode_number"`
-				Name     string `json:"name"`
-				Overview string `json:"overview"`
-				Still    string `json:"still_path"`
-				AirDate  string `json:"air_date"`
-			} `json:"episodes"`
-		}
-		if err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d", id, sn.Number),
-			url.Values{"language": {c.Language}}, &season); err != nil {
-			return nil, err
-		}
-		for _, ep := range season.Episodes {
-			info := EpisodeInfo{
-				Season: sn.Number, Episode: ep.Number,
-				Name: ep.Name, Overview: ep.Overview, AirDate: ep.AirDate,
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i, number int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var season struct {
+				Episodes []seasonEp `json:"episodes"`
 			}
-			if ep.Still != "" {
-				info.StillURL = stillURL + ep.Still
+			if err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d", id, number),
+				url.Values{"language": {c.Language}}, &season); err != nil {
+				firstErr.CompareAndSwap(nil, err)
+				return
 			}
-			out = append(out, info)
+			eps := make([]EpisodeInfo, 0, len(season.Episodes))
+			for _, ep := range season.Episodes {
+				info := EpisodeInfo{
+					Season: number, Episode: ep.Number,
+					Name: ep.Name, Overview: ep.Overview, AirDate: ep.AirDate,
+				}
+				if ep.Still != "" {
+					info.StillURL = stillURL + ep.Still
+				}
+				eps = append(eps, info)
+			}
+			perSeason[i] = eps
+		}(i, sn.Number)
+	}
+	wg.Wait()
+	out := []EpisodeInfo{}
+	for _, eps := range perSeason {
+		out = append(out, eps...)
+	}
+	if len(out) == 0 {
+		if e := firstErr.Load(); e != nil {
+			return nil, e.(error)
 		}
 	}
 	return out, nil

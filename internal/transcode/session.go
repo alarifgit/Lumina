@@ -173,9 +173,10 @@ func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS floa
 	if s, ok := m.sessions[key]; ok {
 		s.mu.Lock()
 		// A completed VOD transcode stays usable forever (files on disk);
-		// only a FAILED session is eligible for the software retry.
+		// only a FAILED session is eligible for the retry chain.
 		usable := !s.dead || s.completed
-		canRetry := s.dead && !s.completed && s.Mode != "software"
+		prevMode := s.Mode
+		canRetry := s.dead && !s.completed && prevMode != "software"
 		s.mu.Unlock()
 		if usable {
 			return s, nil
@@ -183,10 +184,22 @@ func (m *Manager) Ensure(itemID, inputPath string, info *media.Info, startS floa
 		if !canRetry {
 			return nil, fmt.Errorf("transcode session for %s died: %s", key, s.tail())
 		}
-		log.Printf("transcode: %s: %s session died (%s) — retrying in software", key, s.Mode, s.tail())
+		// Retry chain: vaapi → vaapi-hybrid (software decode, GPU encode —
+		// GPUs without AV1/VP9 hw decode, like RDNA2, still encode on
+		// silicon) → software. Never recompute the pipeline here: the
+		// fancier one already failed, that's the information.
+		next := map[string]string{
+			"vaapi":        "vaapi-hybrid",
+			"vaapi-hybrid": "software",
+			"copy":         "software",
+		}[prevMode]
+		if next == "" {
+			next = "software"
+		}
+		log.Printf("transcode: %s: %s session died (%s) — retrying as %s", key, prevMode, s.tail(), next)
 		delete(m.sessions, key)
 		os.RemoveAll(s.Dir)
-		mode = "software" // don't recompute: the fancier pipeline already failed
+		mode = next
 	}
 
 	s, err := m.start(key, inputPath, info, mode, startS)
@@ -363,6 +376,16 @@ func buildArgs(ffmpeg, device, input, dir, mode string, info *media.Info, caps C
 			args = append(args, "-vf", "tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709")
 		} else {
 			args = append(args, "-vf", "scale_vaapi=format=nv12")
+		}
+		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22")
+	} else if mode == "vaapi-hybrid" {
+		// Software decode → GPU encode: for codecs the GPU can't decode
+		// (AV1 on RDNA2, VP9 on some parts). Frames cross RAM once, the
+		// expensive encode still happens on silicon.
+		if info != nil && info.HDR && caps.HDRToneMap {
+			args = append(args, "-vf", "format=p010le,hwupload,tonemap_vaapi=format=nv12:t=bt709:m=bt709:p=bt709")
+		} else {
+			args = append(args, "-vf", "format=nv12,hwupload")
 		}
 		args = append(args, "-c:v", "h264_vaapi", "-profile:v", "high", "-qp", "22")
 	} else {
