@@ -320,11 +320,28 @@ nav button.active { color: #fff; }
   min-height: 0;
   background: #000;
 }
-/* Subtitle legibility (Plex-style: sized text on dark backdrop) */
-#video::cue {
-  background: rgba(0,0,0,0.65);
+/* Subtitle overlay: cues are rendered by app.js (not native <track>) so
+   they survive HLS seek-restart offsets. Plex-style: sized text on a dark
+   backdrop, hovered clear of the control bar. */
+#sub-overlay {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 12%;
+  z-index: 2;
+  text-align: center;
+  pointer-events: none;
   font-size: 1.05rem;
+}
+#sub-overlay .sub-line {
+  display: table;
+  margin: 0.15em auto;
+  padding: 0.08em 0.5em;
+  background: rgba(0, 0, 0, 0.65);
+  border-radius: 4px;
+  color: #fff;
   text-shadow: 0 1px 2px #000;
+  line-height: 1.4;
 }
 
 /* --- custom control chrome (native controls are off) -------------------- */
@@ -1545,10 +1562,10 @@ nav button.active { color: #fff; }
   border-color: var(--cream);
   color: var(--cream);
 }
-.subs-s #video::cue { font-size: 0.85rem; }
-.subs-m #video::cue { font-size: 1.05rem; }
-.subs-l #video::cue { font-size: 1.35rem; }
-.subs-nobg #video::cue { background: none; }
+#player-overlay.subs-s #sub-overlay { font-size: 0.85rem; }
+#player-overlay.subs-m #sub-overlay { font-size: 1.05rem; }
+#player-overlay.subs-l #sub-overlay { font-size: 1.35rem; }
+#player-overlay.subs-nobg #sub-overlay .sub-line { background: none; }
 
 /* Bookmarked state on detail-page My List buttons. */
 .ghost-button.active {

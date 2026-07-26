@@ -1044,6 +1044,9 @@ function stopPlayback() {
   video.querySelectorAll("track").forEach((t) => t.remove());
   video.removeAttribute("src");
   video.load();
+  subCues = [];
+  activeSubTrack = -1;
+  renderSubtitles();
   ccSelect.classList.add("hidden");
   ccOpts.classList.add("hidden");
   ccPop.classList.add("hidden");
@@ -1193,23 +1196,32 @@ video.addEventListener("seeking", () => {
 });
 
 // --- subtitles --------------------------------------------------------------------
+// Custom cue renderer (not native <track>). Two reasons:
+//   1. HLS sessions are OFFSET — video.currentTime restarts at 0 from the
+//      seek/resume point while VTT cues are absolute, so native tracks
+//      drift out of sync on every seek-restart. We render against
+//      absolutePositionS(), which is always right.
+//   2. ASS/SSA conversions carry typesetting (giant mid-frame signs); we
+//      strip override tags and render with our own CSS instead.
+
+const subOverlay = document.getElementById("sub-overlay");
+let subTracks = [];      // server track list for the current item
+let subCues = [];        // parsed cues in ABSOLUTE seconds: {start, end, html}
+let activeSubTrack = -1; // -1 = off
 
 async function loadSubtitles(item) {
-  const tracks = await api(`/api/v1/items/${item.id}/subtitles`);
+  subTracks = await api(`/api/v1/items/${item.id}/subtitles`);
+  subCues = [];
+  activeSubTrack = -1;
+  renderSubtitles();
   ccSelect.innerHTML = '<option value="">Subtitles: off</option>';
-  tracks.forEach((t, i) => {
-    const el = document.createElement("track");
-    el.kind = "subtitles";
-    el.label = t.label;
-    if (t.language && t.language !== "und") el.srclang = t.language;
-    el.src = `/api/v1/items/${item.id}/subtitles/${t.id}`;
-    video.appendChild(el);
+  subTracks.forEach((t, i) => {
     const opt = document.createElement("option");
     opt.value = String(i);
     opt.textContent = t.label;
     ccSelect.appendChild(opt);
   });
-  if (tracks.length === 0) {
+  if (subTracks.length === 0) {
     ccSelect.classList.add("hidden");
     ccOpts.classList.add("hidden");
     return;
@@ -1217,16 +1229,65 @@ async function loadSubtitles(item) {
   ccSelect.classList.remove("hidden");
   ccOpts.classList.remove("hidden");
   // Forced/default tracks auto-enable (Plex behaviour); otherwise off.
-  const def = tracks.findIndex((t) => t.default);
+  const def = subTracks.findIndex((t) => t.default);
   if (def >= 0) selectTrack(def);
 }
 
-function selectTrack(i) {
-  [...video.textTracks].forEach((tt, j) => {
-    tt.mode = j === i ? "showing" : "hidden";
-  });
+async function selectTrack(i) {
+  activeSubTrack = i == null ? -1 : i;
   ccSelect.value = i == null ? "" : String(i);
+  subCues = [];
+  renderSubtitles();
+  if (i == null || !currentItem) return;
+  try {
+    const res = await fetch(`/api/v1/items/${currentItem.id}/subtitles/${subTracks[i].id}`);
+    if (!res.ok) throw new Error(`subtitles ${res.status}`);
+    subCues = parseVTT(await res.text());
+    renderSubtitles();
+  } catch { /* track stays empty — the dropdown still offers a retry */ }
 }
+
+function parseVTT(text) {
+  const toS = (ts) => {
+    const m = ts.trim().match(/(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{3})/);
+    if (!m) return 0;
+    return (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]) + (+m[4]) / 1000;
+  };
+  const cues = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const lines = block.split(/\r?\n/)
+      .filter((l) => l.trim() && !/^(WEBVTT|NOTE)/.test(l));
+    const ti = lines.findIndex((l) => l.includes("-->"));
+    if (ti < 0) continue;
+    const [a, z] = lines[ti].split("-->");
+    const body = lines.slice(ti + 1).join("\n");
+    if (!body.trim()) continue;
+    cues.push({ start: toS(a), end: toS(z), html: subHtml(body) });
+  }
+  return cues.sort((x, y) => x.start - y.start);
+}
+
+// Keep basic emphasis; drop ASS-override braces and font/position tags
+// that leak through conversion.
+function subHtml(s) {
+  let h = escapeHtml(s).replace(/\{[^}]*\}/g, "");
+  h = h.replace(/&lt;(\/?)(i|b|u)&gt;/g, "<$1$2>");
+  h = h.replace(/&lt;[^&]{0,120}?&gt;/g, "");
+  return h.replace(/\n/g, "<br>");
+}
+
+function renderSubtitles() {
+  if (activeSubTrack < 0 || subCues.length === 0) {
+    subOverlay.innerHTML = "";
+    return;
+  }
+  const t = absolutePositionS();
+  subOverlay.innerHTML = subCues
+    .filter((c) => t >= c.start && t < c.end)
+    .map((c) => `<div class="sub-line">${c.html}</div>`)
+    .join("");
+}
+video.addEventListener("timeupdate", renderSubtitles);
 
 ccSelect.onchange = () =>
   selectTrack(ccSelect.value === "" ? null : Number(ccSelect.value));
