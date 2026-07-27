@@ -97,6 +97,10 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	// Series (by TMDB id) that HAVE absolute-numbered files — the flatten
 	// fallback only pays its TMDB round trip for these.
 	absSeries := map[int]bool{}
+	// Normalized series title → TMDB id, for Plex shows whose agent left
+	// no TMDB guid (TVDB-agent anime libraries): the show's own episodes
+	// tell us which TMDB series the title refers to.
+	seriesIDs := map[string]int{}
 	for i := range luminaItems {
 		it := &luminaItems[i]
 		if it.State == library.StateMissing {
@@ -180,6 +184,11 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 					if it.TMDBID > 0 {
 						register(byTMDBAbs, tmdbEpisodeKey(it.TMDBID, 0, abs), it) // season 0 = absolute slot
 						absSeries[it.TMDBID] = true
+						// Title → series-TMDB bridge for guid-less Plex
+						// shows; every spelling the title can take.
+						for _, t := range []string{title, it.Title, it.OrigTitle} {
+							registerSeriesTitle(seriesIDs, t, it.TMDBID)
+						}
 					}
 				}
 			}
@@ -267,6 +276,13 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 				match = byTMDB[pi.TMDBID]
 				row.Method = "tmdb"
 			case pi.Type == "episode":
+				// The series TMDB id comes from Plex's show guid — or, for
+				// TVDB-agent libraries with no TMDB guid, from Lumina's own
+				// title → series-id index built during indexing.
+				tid := pi.SeriesTMDBID
+				if tid == 0 {
+					tid = seriesIDs[Normalize(pi.Grandparent)]
+				}
 				// Strongest: the show's series-level tmdb id + exact SxxEyy.
 				if pi.SeriesTMDBID > 0 {
 					if it, ok := unambiguous(byTMDBEpisode, tmdbEpisodeKey(pi.SeriesTMDBID, pi.Season, pi.Episode)); ok {
@@ -283,8 +299,8 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 				// Absolute-numbered anime: Plex S01E0N on a single-season
 				// show is absolute N.
 				if match == nil && pi.Season <= 1 && pi.Episode > 0 {
-					if pi.SeriesTMDBID > 0 {
-						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(pi.SeriesTMDBID, 0, pi.Episode)); ok {
+					if tid > 0 {
+						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(tid, 0, pi.Episode)); ok {
 							match = it
 							row.Method = "tmdb-absolute"
 						}
@@ -301,12 +317,29 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 				// an absolute position, then join through the absolute slot.
 				// Only series with absolute-numbered files in Lumina reach
 				// this — regular multi-season shows matched above already.
-				if match == nil && pi.SeriesTMDBID > 0 && pi.Episode > 0 && absSeries[pi.SeriesTMDBID] {
-					if abs := absolutePosition(pi.SeriesTMDBID, pi.Season, pi.Episode); abs > 0 {
-						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(pi.SeriesTMDBID, 0, abs)); ok {
+				if match == nil && tid > 0 && pi.Episode > 0 && absSeries[tid] {
+					if abs := absolutePosition(tid, pi.Season, pi.Episode); abs > 0 {
+						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(tid, 0, abs)); ok {
 							match = it
 							row.Method = "tmdb-absolute-flatten"
+						} else if it, ok := unambiguous(byAbsKey, absKey(pi.Grandparent, abs)); ok {
+							match = it
+							row.Method = "absolute-flatten"
 						}
+					}
+				}
+				if match == nil {
+					// Tell the preview WHERE the chain broke, so "unmatched"
+					// rows are diagnosable without server logs.
+					switch {
+					case tid == 0:
+						row.Method = "no-tmdb-id"
+					case !absSeries[tid]:
+						row.Method = "no-abs-files"
+					case absolutePosition(tid, pi.Season, pi.Episode) == 0:
+						row.Method = "flatten-miss"
+					default:
+						row.Method = "abs-miss"
 					}
 				}
 			default:
@@ -407,6 +440,21 @@ func registerAmbiguous(m map[string]*library.Item, key string, it *library.Item)
 		return
 	}
 	register(m, key, it)
+}
+
+// registerSeriesTitle maps a normalized series title to its TMDB id, with
+// the same poison-on-conflict rule as register: two DIFFERENT series
+// sharing a title (a remake, say) zero the entry rather than let one win.
+func registerSeriesTitle(m map[string]int, title string, id int) {
+	k := Normalize(title)
+	if k == "" || id <= 0 {
+		return
+	}
+	if existing, seen := m[k]; seen && existing != id {
+		m[k] = 0
+		return
+	}
+	m[k] = id
 }
 
 func unambiguous(m map[string]*library.Item, key string) (*library.Item, bool) {
