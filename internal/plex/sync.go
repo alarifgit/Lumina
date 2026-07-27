@@ -147,18 +147,22 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			if it.TMDBID > 0 {
 				seriesPresent[it.TMDBID] = true
 			}
-			if p.Title != "" && p.Episode > 0 {
+			// epOk is true for any explicit SxxExx marker — including E00,
+			// which is how Plex numbers pilots/specials-in-season (PhoneShop
+			// S01E00). Only a MISSING marker (Season 0, Episode 0) fails it.
+			epOk := p.Episode > 0 || p.Season > 0
+			if p.Title != "" && epOk {
 				registerAmbiguous(byEpisodeKey, episodeKey(p.Title, p.Season, p.Episode), it)
 			}
 			// The TMDB series title (and its original-language form) is the
 			// name Plex shows when filenames use romaji/Japanese.
-			if it.Title != "" && p.Episode > 0 {
+			if it.Title != "" && epOk {
 				registerAmbiguous(byEpisodeKey, episodeKey(it.Title, p.Season, p.Episode), it)
 			}
-			if it.OrigTitle != "" && p.Episode > 0 {
+			if it.OrigTitle != "" && epOk {
 				registerAmbiguous(byEpisodeKey, episodeKey(it.OrigTitle, p.Season, p.Episode), it)
 			}
-			if it.TMDBID > 0 && p.Episode > 0 {
+			if it.TMDBID > 0 && epOk {
 				register(byTMDBEpisode, tmdbEpisodeKey(it.TMDBID, p.Season, p.Episode), it)
 				seriesSeasonEp[it.TMDBID] = true
 			}
@@ -166,14 +170,15 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			// doesn't: "S01E02.mkv" carries no title, release-group files
 			// carry the wrong one. Index the folder-derived series too.
 			dirTitle, _ := seriesFromDir(filepath.Dir(it.Paths[0]))
-			if dirTitle != "" && p.Episode > 0 {
+			if dirTitle != "" && epOk {
 				registerAmbiguous(byEpisodeKey, episodeKey(dirTitle, p.Season, p.Episode), it)
 			}
 			// Absolute numbering (anime fansubs: "Hunter x Hunter - 02
 			// (1080p)"): no SxxExx marker means no episodeKey at all — these
 			// were the bulk of the unmatched list. Plex S01E0N on a
-			// single-season show IS absolute N.
-			if p.Episode == 0 {
+			// single-season show IS absolute N. An explicit SxxE00 marker
+			// (Season > 0) is NOT absolute — it registered above already.
+			if p.Episode == 0 && p.Season == 0 {
 				if abs := metadata.ParseAbsoluteEpisode(base); abs > 0 {
 					title := p.Title
 					if dirTitle != "" {
@@ -349,9 +354,10 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						row.Method = "not-in-library"
 					case seriesSeasonEp[tid]:
 						// The series IS here with SxxExx-indexed episodes,
-						// just not THIS SxxEyy — Plex and the files number
-						// the seasons differently (offset, split cours).
-						row.Method = "numbering-mismatch"
+						// just not THIS SxxEyy — either that specific episode
+						// file isn't in the library, or Plex and the files
+						// number the seasons differently (offset, split cours).
+						row.Method = "no-such-episode"
 					case !absSeries[tid]:
 						row.Method = "no-abs-files"
 					case absolutePosition(tid, pi.Season, pi.Episode) == 0:
@@ -375,6 +381,25 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						if it, ok := unambiguous(byMovieKey, movieKey(pi.Title, pi.Year+dy)); ok {
 							match = it
 							row.Method = "title-year±1"
+							break
+						}
+					}
+				}
+				// Franchise prefixes: Plex calls it "Star Wars: Episode VI -
+				// Return of the Jedi" while TMDB (and so Lumina) calls it
+				// just "Return of the Jedi". Retry on the segment after the
+				// last spaced dash — exact key required, ambiguity still
+				// poisons, so this can't guess.
+				if match == nil {
+					for _, seg := range titleSegments(pi.Title) {
+						if it, ok := unambiguous(byMovieKey, movieKey(seg, pi.Year)); ok {
+							match = it
+							row.Method = "title-segment"
+							break
+						}
+						if it, ok := unambiguous(byMovieKey, movieKey(seg, 0)); ok {
+							match = it
+							row.Method = "title-segment"
 							break
 						}
 					}
@@ -490,6 +515,22 @@ func tmdbEpisodeKey(tmdbID, season, episode int) string {
 // the fansub/anime numbering where no season concept exists.
 func absKey(series string, abs int) string {
 	return fmt.Sprintf("%s|%d", Normalize(series), abs)
+}
+
+// titleSegments yields fallback candidates for franchise-prefixed Plex
+// titles: the text after the last spaced dash ("Star Wars: Episode VI -
+// Return of the Jedi" → "Return of the Jedi"). Callers still require an
+// exact key hit, so a segment that matches nothing is simply skipped.
+func titleSegments(title string) []string {
+	out := []string{}
+	for _, sep := range []string{" - ", " – ", " — "} {
+		if i := strings.LastIndex(title, sep); i >= 0 {
+			if seg := strings.TrimSpace(title[i+len(sep):]); seg != "" && seg != title {
+				out = append(out, seg)
+			}
+		}
+	}
+	return out
 }
 
 // seriesFromDir extracts the series title from a file's directory: the

@@ -634,9 +634,9 @@ nav button.active { color: var(--cream); }
 #grid.home { display: block; padding: 0; }
 .hero {
   position: relative;
-  /* Scaled down from the original 62vh: the hero still leads the page but
-     leaves the first rail's cards visible in the default viewport. */
-  min-height: 46vh;
+  /* Scaled down twice now (62vh → 46vh → 38vh): the hero leads the page
+     but Continue Watching's cards must be visible in the default viewport. */
+  min-height: 38vh;
   overflow: hidden;
   background: var(--panel);
 }
@@ -660,7 +660,7 @@ nav button.active { color: var(--cream); }
   position: relative;
   z-index: 1;
   max-width: 780px;
-  padding: 10vh 1.4rem 3.5rem;
+  padding: 5vh 1.4rem 2.5rem;
   text-shadow: 1px 1px 5px rgba(0,0,0,0.7);
 }
 .eyebrow {
@@ -672,7 +672,7 @@ nav button.active { color: var(--cream); }
 }
 .hero-copy h2 {
   margin: 0.35rem 0 0.6rem;
-  font-size: clamp(1.9rem, 4.5vw, 3.5rem);
+  font-size: clamp(1.7rem, 3.6vw, 2.7rem);
   line-height: 0.95;
   letter-spacing: -0.045em;
   font-weight: 650;
@@ -681,6 +681,12 @@ nav button.active { color: var(--cream); }
   max-width: 58ch;
   color: rgba(255,255,255,0.78);
   line-height: 1.55;
+  /* Long overviews used to stretch the hero past its min-height — clamp
+     to three lines so the rails below stay on screen. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .text-button {
   background: none;
@@ -850,8 +856,8 @@ nav button.active { color: var(--cream); }
   filter: drop-shadow(0 0 18px rgba(175, 145, 95, 0.25));
 }
 @media (max-width: 760px) {
-  .hero { min-height: 46vh; }
-  .hero-copy { padding-top: 12vh; }
+  .hero { min-height: 42vh; }
+  .hero-copy { padding-top: 8vh; }
   .rail-track { grid-auto-columns: 68vw; }
   .rail-track.posters { grid-auto-columns: 42vw; }
 }
@@ -1730,7 +1736,7 @@ nav button.active { color: var(--cream); }
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
-.skel-hero { min-height: 62vh; border-radius: 0; }
+.skel-hero { min-height: 38vh; border-radius: 0; }
 .skel-line { width: 180px; height: 1rem; margin: 0.2rem 0; }
 .skel-card { width: 220px; height: 124px; flex: 0 0 auto; }
 
