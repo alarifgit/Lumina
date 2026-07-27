@@ -49,9 +49,18 @@ type ImportReport struct {
 
 const detailLimit = 200
 
+// EpisodeLister flattens a series' TMDB episode order so Plex's SxxEyy can
+// be converted to an ABSOLUTE position — the join for multi-season
+// absolute-numbered libraries (Demon Slayer S03E06 = absolute 51, say).
+// The metadata Worker satisfies it; passing nil disables the flatten
+// fallback and those episodes simply stay unmatched.
+type EpisodeLister interface {
+	SeriesEpisodes(ctx context.Context, tmdbID int) ([]metadata.EpisodeInfo, error)
+}
+
 // Import runs the migration. apply=false → pure preview, zero writes.
 // userID is the Lumina user who inherits the watch history (default usr-1).
-func Import(ctx context.Context, c *Client, store library.Store, userID string, dir Direction, apply bool) (*ImportReport, error) {
+func Import(ctx context.Context, c *Client, store library.Store, userID string, dir Direction, apply bool, eps EpisodeLister) (*ImportReport, error) {
 	if userID == "" {
 		userID = "usr-1"
 	}
@@ -85,6 +94,9 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	// series-TMDB+abs (season slot 0). See the indexing loop below.
 	byAbsKey := map[string]*library.Item{}
 	byTMDBAbs := map[string]*library.Item{}
+	// Series (by TMDB id) that HAVE absolute-numbered files — the flatten
+	// fallback only pays its TMDB round trip for these.
+	absSeries := map[int]bool{}
 	for i := range luminaItems {
 		it := &luminaItems[i]
 		if it.State == library.StateMissing {
@@ -167,10 +179,37 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 					}
 					if it.TMDBID > 0 {
 						register(byTMDBAbs, tmdbEpisodeKey(it.TMDBID, 0, abs), it) // season 0 = absolute slot
+						absSeries[it.TMDBID] = true
 					}
 				}
 			}
 		}
+	}
+
+	// absolutePosition flattens TMDB's season order (specials excluded) into
+	// running absolute positions: S03E06 → 51. The answer for a whole series
+	// is memoized per run — and so is a fetch failure, so one flaky TMDB
+	// call doesn't retry for every episode of the same show.
+	absIdxCache := map[int]map[[2]int]int{}
+	absolutePosition := func(series, season, episode int) int {
+		if m, done := absIdxCache[series]; done {
+			return m[[2]int{season, episode}]
+		}
+		m := map[[2]int]int{}
+		if eps != nil {
+			if list, err := eps.SeriesEpisodes(ctx, series); err == nil {
+				n := 0
+				for _, ep := range list {
+					if ep.Season < 1 {
+						continue
+					}
+					n++
+					m[[2]int{ep.Season, ep.Episode}] = n
+				}
+			}
+		}
+		absIdxCache[series] = m
+		return m[[2]int{season, episode}]
 	}
 
 	// Lumina watch state for the target user (push direction + already-synced).
@@ -242,8 +281,7 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 					}
 				}
 				// Absolute-numbered anime: Plex S01E0N on a single-season
-				// show is absolute N. Multi-season absolute shows (Bleach)
-				// stay unmatched rather than risk a wrong-season hit.
+				// show is absolute N.
 				if match == nil && pi.Season <= 1 && pi.Episode > 0 {
 					if pi.SeriesTMDBID > 0 {
 						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(pi.SeriesTMDBID, 0, pi.Episode)); ok {
@@ -255,6 +293,19 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						if it, ok := unambiguous(byAbsKey, absKey(pi.Grandparent, pi.Episode)); ok {
 							match = it
 							row.Method = "absolute"
+						}
+					}
+				}
+				// Multi-season absolute (Demon Slayer S03E06 = absolute 51):
+				// flatten TMDB's season order to convert Plex's SxxEyy into
+				// an absolute position, then join through the absolute slot.
+				// Only series with absolute-numbered files in Lumina reach
+				// this — regular multi-season shows matched above already.
+				if match == nil && pi.SeriesTMDBID > 0 && pi.Episode > 0 && absSeries[pi.SeriesTMDBID] {
+					if abs := absolutePosition(pi.SeriesTMDBID, pi.Season, pi.Episode); abs > 0 {
+						if it, ok := unambiguous(byTMDBAbs, tmdbEpisodeKey(pi.SeriesTMDBID, 0, abs)); ok {
+							match = it
+							row.Method = "tmdb-absolute-flatten"
 						}
 					}
 				}

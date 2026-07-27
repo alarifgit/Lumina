@@ -49,6 +49,16 @@ func (s *Server) plexClient(urlOverride, tokenOverride string) *plex.Client {
 	return plex.NewClient(url, token)
 }
 
+// episodeLister hands the sync the metadata worker for multi-season
+// absolute-number flattening — or nil (not a typed-nil interface) when
+// TMDB isn't configured, which cleanly disables that fallback.
+func (s *Server) episodeLister() plex.EpisodeLister {
+	if s.mw == nil || !s.mw.Available() {
+		return nil
+	}
+	return s.mw
+}
+
 // GET /api/v1/plex/test — verify connectivity; query params url/token
 // override the configured ones (handy before saving config).
 func (s *Server) plexTest(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +115,7 @@ func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.plexSyncMu.Unlock()
-	report, err := plex.Import(r.Context(), c, s.store, body.UserID, dir, body.Apply)
+	report, err := plex.Import(r.Context(), c, s.store, body.UserID, dir, body.Apply, s.episodeLister())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -166,7 +176,7 @@ func (s *Server) plexSyncAll(ctx context.Context) {
 	pulled := 0
 	reps := []*plex.ImportReport{}
 	for _, u := range users {
-		report, err := plex.Import(ctx, c, s.store, u.ID, plex.Pull, true)
+		report, err := plex.Import(ctx, c, s.store, u.ID, plex.Pull, true, s.episodeLister())
 		if err != nil {
 			log.Printf("plex: auto-sync %s: %v", u.ID, err)
 			continue
