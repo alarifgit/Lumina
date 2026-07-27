@@ -87,6 +87,14 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	byTMDBAbs := map[string]*library.Item{}
 	for i := range luminaItems {
 		it := &luminaItems[i]
+		if it.State == library.StateMissing {
+			// Ghost rows (file vanished or moved) must not poison identity
+			// keys for the ACTIVE copy of the same title — a reorganised
+			// library leaves both, and a poisoned key is how a perfect
+			// title+year hit still reported "unmatched". Missing items are
+			// also unplayable, so watch-state writes would be meaningless.
+			continue
+		}
 		if it.TMDBID > 0 {
 			register(byTMDB, it.TMDBID, it)
 		}

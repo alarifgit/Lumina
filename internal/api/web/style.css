@@ -1847,3 +1847,31 @@ nav button.active { color: var(--cream); }
   white-space: nowrap;
 }
 .manage-sub { color: var(--muted); font-size: 0.72rem; }
+
+/* Manage rows + fix-match: the on-disk path is the ground truth when a
+   match looks wrong — render it muted, mono, and truncate the LEFT side
+   (rtl) so the filename stays visible. */
+.manage-path {
+  display: block;
+  max-width: 72ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  color: var(--muted);
+  opacity: 0.75;
+}
+.manage-row:hover .manage-path { opacity: 1; }
+.match-path {
+  margin-bottom: 0.6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+}

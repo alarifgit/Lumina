@@ -1771,9 +1771,10 @@ function renderManage() {
     filtered.push(it);
   }
   document.getElementById("manage-summary").textContent =
-    `${manageAll.length} items · ${counts.matched} matched · ${counts.unmatched} unmatched · ` +
+    `${manageAll.length} items · ${counts.matched} matched · ${counts.unmatched} unidentified · ` +
     `${counts.missing} missing · ${counts.extra} extras — showing ${Math.min(filtered.length, 300)} of ${filtered.length}`;
   const badgeFor = { matched: "direct", unmatched: "software", missing: "software", extra: "" };
+  const badgeLabel = { matched: "matched", unmatched: "unidentified", missing: "missing", extra: "extra" };
   const rows = document.getElementById("manage-rows");
   rows.innerHTML = filtered.slice(0, 300).map((it) => {
     const st = manageStatus(it);
@@ -1785,8 +1786,11 @@ function renderManage() {
       <span class="manage-meta">
         <span class="manage-title">${escapeHtml(it.title)}</span>
         <span class="manage-sub">${it.year || "—"} · ${it.kind} · ${(it.sizeBytes / 1e9).toFixed(1)} GB · ${escapeHtml(it.library)}</span>
+        ${it.paths && it.paths[0]
+          ? `<span class="manage-path" title="${escapeHtml(it.paths[0])}">${escapeHtml(it.paths[0])}</span>`
+          : ""}
       </span>
-      <span class="badge ${badgeFor[st]}">${st}</span>
+      <span class="badge ${badgeFor[st]}">${badgeLabel[st]}</span>
     </div>`;
   }).join("") || `<div class="arr-error">No items match these filters.</div>`;
   rows.querySelectorAll(".manage-row").forEach((row) => {
@@ -2112,7 +2116,7 @@ async function loadPlexSyncStatus() {
         <h5>Unmatched in Lumina (${r.unmatched})</h5>
         ${unmatchedRows}
         ${r.truncated ? `<div class="libs-note">List truncated — the rest are in the server log.</div>` : ""}
-        <p class="libs-note">Unmatched usually means the Lumina item has no TMDB id yet. Re-identify, and the next sync matches it.</p>
+        <p class="libs-note">Unmatched means the Plex entry couldn't be joined to an active Lumina item — usually the Lumina item has no TMDB id yet (Re-identify, and the next sync catches it), or its file is currently missing, or it isn't in your Lumina libraries at all.</p>
         <div class="lib-actions"><button id="plex-rematch">Re-identify unmatched in Lumina</button></div>
         <div id="plex-rematch-status" class="libs-note"></div>` : ""}
       ${(r.errors || []).length ? `<h5>Errors</h5>${r.errors.map((e) => `<div class="arr-error">${escapeHtml(e)}</div>`).join("")}` : ""}`;
@@ -2418,8 +2422,12 @@ function openCardMenu(x, y, it) {
   const ph = playheads[it.id];
   cardMenu = document.createElement("div");
   cardMenu.className = "card-menu";
+  if (it.state !== "missing") {
+    // A missing item's file is gone — offering Play would just error.
+    cardMenu.appendChild(
+      menuItem(`<span class="ic ic-play"></span> Play ${ph && !ph.watched && ph.positionMs > 0 ? "(resume)" : ""}`, () => play(it)));
+  }
   cardMenu.append(
-    menuItem(`<span class="ic ic-play"></span> Play ${ph && !ph.watched && ph.positionMs > 0 ? "(resume)" : ""}`, () => play(it)),
     menuItem(`<span class="ic ic-info"></span> Media info`, () => openInfoModal(it)),
     menuItem(`<span class="ic ic-edit"></span> Fix match…`, () => openMatchModal(it)),
     menuItem(myListIds[it.id]
@@ -2466,11 +2474,17 @@ function openCardMenu(x, y, it) {
 }
 
 document.addEventListener("contextmenu", (e) => {
-  const card = e.target.closest(".card, .media-card, .ep-row");
+  const card = e.target.closest(".card, .media-card, .ep-row, .manage-row");
   if (!card || !card.dataset.id) return;
-  const it = itemById.get(card.dataset.id);
+  // Manage rows aren't in itemById (that's the browse catalog) — look in
+  // the manage table's own list instead.
+  const it = itemById.get(card.dataset.id) ||
+    manageAll.find((x) => x.id === card.dataset.id);
   if (!it) return;
   e.preventDefault();
+  // Actions taken from a Manage row (fix match, re-identify) change the
+  // catalog — rebuild the table when the resulting modal closes.
+  if (card.classList.contains("manage-row")) manageExpectRefresh = true;
   openCardMenu(e.clientX, e.clientY, it);
 });
 document.addEventListener("click", (e) => {
@@ -2626,6 +2640,9 @@ async function openMatchModal(it) {
   const kind = it.kind === "episode" ? "tv" : "movies";
   const body = openModal(`Fix match — ${it.title}`);
   body.innerHTML = `
+    ${it.paths && it.paths[0]
+      ? `<div class="modal-note match-path" title="${escapeHtml(it.paths[0])}">${escapeHtml(it.paths[0])}</div>`
+      : ""}
     <form class="match-form">
       <input type="search" class="match-q" value="${escapeHtml(titleForSearch(it))}" placeholder="Search TMDB…">
       <button type="submit" class="text-button">Search</button>
