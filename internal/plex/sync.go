@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/lumina-media/lumina/internal/library"
@@ -25,6 +26,7 @@ type ImportItem struct {
 	Type       string `json:"type"` // movie | episode
 	Title      string `json:"title"`
 	Subtitle   string `json:"subtitle,omitempty"` // year or SxxEyy
+	Detail     string `json:"detail,omitempty"`   // unmatched diagnostics: what Lumina has
 	PlexWatched   bool `json:"plexWatched"`
 	LuminaWatched bool `json:"luminaWatched"`
 	Match      string `json:"match"`  // matched | unmatched
@@ -101,6 +103,9 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	// exist in Lumina at all, and which have SxxExx-indexed episodes.
 	seriesPresent  := map[int]bool{}
 	seriesSeasonEp := map[int]bool{}
+	// Per-series set of indexed (season, episode) pairs — powers the
+	// "you asked for S03E06, here's my S03" detail on unmatched rows.
+	seriesEpSet := map[int]map[[2]int]bool{}
 	// Normalized series title → TMDB id, for Plex shows whose agent left
 	// no TMDB guid (TVDB-agent anime libraries): the show's own episodes
 	// tell us which TMDB series the title refers to.
@@ -165,6 +170,10 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			if it.TMDBID > 0 && epOk {
 				register(byTMDBEpisode, tmdbEpisodeKey(it.TMDBID, p.Season, p.Episode), it)
 				seriesSeasonEp[it.TMDBID] = true
+				if seriesEpSet[it.TMDBID] == nil {
+					seriesEpSet[it.TMDBID] = map[[2]int]bool{}
+				}
+				seriesEpSet[it.TMDBID][[2]int{p.Season, p.Episode}] = true
 			}
 			// The parent DIRECTORY follows Plex naming even when the file
 			// doesn't: "S01E02.mkv" carries no title, release-group files
@@ -232,6 +241,57 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 		}
 		absIdxCache[series] = m
 		return m[[2]int{season, episode}]
+	}
+
+	// seasonListing answers "you asked for S03E06 — what do I HAVE?": the
+	// indexed episodes of the requested season, run-compressed
+	// ("E01-E05, E07"), or — when the season is absent entirely — the
+	// seasons that DO exist (the season-offset tell).
+	seasonListing := func(tid, season int) string {
+		epSet := seriesEpSet[tid]
+		if epSet == nil {
+			return ""
+		}
+		list := []int{}
+		for se := range epSet {
+			if se[0] == season {
+				list = append(list, se[1])
+			}
+		}
+		if len(list) == 0 {
+			seasons := []int{}
+			seen := map[int]bool{}
+			for se := range epSet {
+				if !seen[se[0]] {
+					seen[se[0]] = true
+					seasons = append(seasons, se[0])
+				}
+			}
+			sort.Ints(seasons)
+			parts := make([]string, len(seasons))
+			for i, sn := range seasons {
+				parts[i] = fmt.Sprintf("S%02d", sn)
+			}
+			return fmt.Sprintf("no S%02d in Lumina — has %s", season, strings.Join(parts, ", "))
+		}
+		sort.Ints(list)
+		parts := []string{}
+		for i := 0; i < len(list); {
+			j := i
+			for j+1 < len(list) && list[j+1] == list[j]+1 {
+				j++
+			}
+			if j > i {
+				parts = append(parts, fmt.Sprintf("E%02d-E%02d", list[i], list[j]))
+			} else {
+				parts = append(parts, fmt.Sprintf("E%02d", list[i]))
+			}
+			i = j + 1
+		}
+		if len(parts) > 8 {
+			parts = append(parts[:8], "…")
+		}
+		return fmt.Sprintf("Lumina S%02d has %s", season, strings.Join(parts, ", "))
 	}
 
 	// Lumina watch state for the target user (push direction + already-synced).
@@ -364,6 +424,8 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						// to a position, but no file sits there — fansub and
 						// TMDB count the seasons differently.
 						row.Method = "abs-miss"
+						row.Detail = fmt.Sprintf("flattened to absolute %d — no file there",
+							absolutePosition(tid, pi.Season, pi.Episode))
 					case absSeries[tid]:
 						row.Method = "flatten-miss"
 					case seriesSeasonEp[tid]:
@@ -373,6 +435,7 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						// multi-episode file, or Plex and the files number
 						// the seasons differently (offset, split cours).
 						row.Method = "no-such-episode"
+						row.Detail = seasonListing(tid, pi.Season)
 					default:
 						// Identified episodes exist but none parsed as
 						// SxxExx OR absolute — the filenames carry the

@@ -234,6 +234,9 @@ func reportView(mode string, reps ...*plex.ImportReport) *plexSyncReportView {
 			if it.Subtitle != "" {
 				label += " · " + it.Subtitle
 			}
+			if it.Detail != "" {
+				label += " — " + it.Detail
+			}
 			v.UnmatchedItems = append(v.UnmatchedItems, label)
 		}
 		if r.ItemsTruncated {

@@ -2284,7 +2284,7 @@ async function runPlexImport(apply) {
       <tr><td title="${it.title}">${it.title}</td>
       <td>${it.subtitle || ""}</td>
       <td class="act-${it.action}">${it.action}</td>
-      <td>${it.method || "—"}</td></tr>`).join("");
+      <td>${it.method || "—"}${it.detail ? `<div class="libs-note">${escapeHtml(it.detail)}</div>` : ""}</td></tr>`).join("");
     plexResult.innerHTML = `
       <div class="summary">
         ${r.mode === "apply" ? "<b>Applied.</b> " : "<b>Preview</b> — nothing written. "}
