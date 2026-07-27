@@ -359,18 +359,25 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						// duplicates are listed under Manage → Duplicate
 						// matches; siblings match fine, which is the tell.
 						row.Method = "duplicate-episode"
+					case absSeries[tid] && absolutePosition(tid, pi.Season, pi.Episode) > 0:
+						// Absolute files exist and TMDB flattened this SxxEyy
+						// to a position, but no file sits there — fansub and
+						// TMDB count the seasons differently.
+						row.Method = "abs-miss"
+					case absSeries[tid]:
+						row.Method = "flatten-miss"
 					case seriesSeasonEp[tid]:
 						// The series IS here with SxxExx-indexed episodes,
 						// just not THIS SxxEyy — either that specific episode
-						// file isn't in the library, or Plex and the files
-						// number the seasons differently (offset, split cours).
+						// file isn't in the library, it's part of a combined
+						// multi-episode file, or Plex and the files number
+						// the seasons differently (offset, split cours).
 						row.Method = "no-such-episode"
-					case !absSeries[tid]:
-						row.Method = "no-abs-files"
-					case absolutePosition(tid, pi.Season, pi.Episode) == 0:
-						row.Method = "flatten-miss"
 					default:
-						row.Method = "abs-miss"
+						// Identified episodes exist but none parsed as
+						// SxxExx OR absolute — the filenames carry the
+						// number in some other shape.
+						row.Method = "unparsed-files"
 					}
 				}
 			default:
