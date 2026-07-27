@@ -188,6 +188,19 @@ function escapeHtml(s) {
 
 // --- users -------------------------------------------------------------------
 
+// AVATARS enumerates the bundled glass avatar set (web/avatars/aN.png).
+const AVATARS = ["a1", "a2", "a3", "a4", "a5", "a6"];
+
+// avatarHtml renders the user's chosen glass avatar, or an initial-letter
+// disc when none is chosen.
+function avatarHtml(u, cls = "avatar") {
+  if (u && u.avatar) {
+    return `<img class="${cls}" src="/avatars/${escapeHtml(u.avatar)}.png" alt="">`;
+  }
+  const initial = (((u && u.name) || "?").trim().charAt(0) || "?").toUpperCase();
+  return `<span class="${cls} avatar-initial">${escapeHtml(initial)}</span>`;
+}
+
 async function loadUsers() {
   users = await api("/api/v1/users");
   const saved = localStorage.getItem("lumina.user");
@@ -197,16 +210,58 @@ async function loadUsers() {
 
 function renderUserBadge() {
   if (!currentUser) return;
-  userBadge.innerHTML = `<span class="ic ic-user"></span> ${escapeHtml(currentUser.name)}`;
+  userBadge.innerHTML =
+    `${avatarHtml(currentUser, "avatar avatar-sm")}<span class="user-badge-name">${escapeHtml(currentUser.name)}</span>`;
   localStorage.setItem("lumina.user", currentUser.id);
 }
 
-userBadge.onclick = () => {
-  if (users.length < 2) return;
-  const i = users.findIndex((u) => u.id === currentUser.id);
-  currentUser = users[(i + 1) % users.length];
-  renderUserBadge();
-  refreshCurrentView();
+// Profile dropdown: current identity up top, one-click switching for the
+// other users, and a shortcut into Settings → Users. Closes on any
+// outside click; the menu itself stops propagation.
+const profileMenu = document.getElementById("profile-menu");
+
+function renderProfileMenu() {
+  if (!currentUser) return;
+  document.getElementById("profile-head").innerHTML = `
+    ${avatarHtml(currentUser, "avatar avatar-lg")}
+    <div class="profile-head-meta">
+      <div class="profile-head-name">${escapeHtml(currentUser.name)}</div>
+      <div class="profile-head-sub">Watching as this user</div>
+    </div>`;
+  const list = document.getElementById("profile-users");
+  const others = users.filter((u) => u.id !== currentUser.id);
+  list.innerHTML = others.length
+    ? others.map((u) => `
+      <button class="profile-menu-item" data-uid="${u.id}">
+        ${avatarHtml(u, "avatar avatar-sm")}<span>${escapeHtml(u.name)}</span>
+      </button>`).join("")
+    : `<div class="profile-menu-empty">No other users yet</div>`;
+  list.querySelectorAll("[data-uid]").forEach((b) => {
+    b.onclick = () => {
+      currentUser = users.find((u) => u.id === b.dataset.uid) || currentUser;
+      renderUserBadge();
+      closeProfileMenu();
+      refreshCurrentView();
+    };
+  });
+}
+
+function closeProfileMenu() { profileMenu.classList.add("hidden"); }
+
+userBadge.onclick = (e) => {
+  e.stopPropagation();
+  if (profileMenu.classList.contains("hidden")) {
+    renderProfileMenu();
+    profileMenu.classList.remove("hidden");
+  } else {
+    closeProfileMenu();
+  }
+};
+profileMenu.onclick = (e) => e.stopPropagation();
+document.addEventListener("click", closeProfileMenu);
+document.getElementById("profile-manage").onclick = () => {
+  closeProfileMenu();
+  openSettings("sec-users");
 };
 
 // --- browse --------------------------------------------------------------------
@@ -1686,7 +1741,9 @@ async function openSettings(sectionId) {
   settingsPage.querySelectorAll(".settings-sections > section").forEach((sec) =>
     sec.classList.toggle("hidden", sec.id !== sectionId));
 
-  if (sectionId === "sec-libraries") {
+  if (sectionId === "sec-overview") {
+    renderOverview();
+  } else if (sectionId === "sec-libraries") {
     libsStatus.textContent = "";
     try {
       const libs = await api("/api/v1/libraries");
@@ -1721,7 +1778,61 @@ settingsPage.querySelectorAll(".settings-nav button").forEach((b) => {
   b.onclick = () => openSettings(b.dataset.section);
 });
 document.getElementById("settings-close").onclick = closeSettings;
-libsButton.onclick = () => openSettings("sec-libraries");
+libsButton.onclick = () => openSettings("sec-overview");
+
+// Overview: the bento landing — every settings area as a live tile.
+async function renderOverview() {
+  const grid = document.getElementById("bento-grid");
+  try {
+    const [libs, usersList, caps, activity] = await Promise.all([
+      api("/api/v1/libraries"),
+      api("/api/v1/users"),
+      api("/api/v1/system/capabilities"),
+      api("/api/v1/system/activity").catch(() => null),
+    ]);
+    const totalItems = (libs || []).reduce((n, l) => n + (l.items || 0), 0);
+    const watching = activity && activity.watching ? activity.watching.length : 0;
+    const liveSessions = activity && activity.sessions
+      ? activity.sessions.filter((sn) => !sn.dead).length : 0;
+    let hw = "Software transcoding";
+    if (caps && caps.vaapi && caps.vaapi.available) {
+      const gpu = caps.driver && caps.driver.includes(" for ")
+        ? caps.driver.split(" for ").pop() : (caps.driver || "VAAPI");
+      hw = `Hardware · ${gpu}`;
+    }
+    const tile = (section, cls, icon, title, stat, sub) => `
+      <button class="bento-tile ${cls}" data-section="${section}">
+        <div class="bento-icon"><span class="ic ${icon}"></span></div>
+        <div class="bento-title">${title}</div>
+        <div class="bento-stat">${stat}</div>
+        <div class="bento-sub">${sub}</div>
+      </button>`;
+    grid.innerHTML =
+      tile("sec-activity", "bento-wide", "ic-play", "Now Playing",
+        watching ? `${watching} stream${watching === 1 ? "" : "s"}` : "Idle",
+        liveSessions ? `${liveSessions} live transcode${liveSessions === 1 ? "" : "s"}` : "No active transcodes") +
+      tile("sec-libraries", "bento-wide", "ic-bookmark", "Libraries",
+        `${(libs || []).length} ${(libs || []).length === 1 ? "library" : "libraries"}`,
+        `${totalItems.toLocaleString()} items indexed`) +
+      tile("sec-manage", "", "ic-edit", "Manage",
+        "Match &amp; fix", "Identify, rematch and tidy library items") +
+      tile("sec-integrations", "", "ic-download", "Integrations",
+        "Plex · *arr", "Watch-history sync, downloads &amp; webhooks") +
+      tile("sec-playback", "", "ic-info", "Playback",
+        escapeHtml(hw), "Capabilities, encoders &amp; tone mapping") +
+      `<button class="bento-tile" data-section="sec-users">
+        <div class="bento-icon"><span class="ic ic-user"></span></div>
+        <div class="bento-title">Users</div>
+        <div class="bento-stat">${usersList.length} user${usersList.length === 1 ? "" : "s"}</div>
+        <div class="bento-avatars">${usersList.map((u) => avatarHtml(u, "avatar avatar-xs")).join("")}</div>
+      </button>`;
+    grid.querySelectorAll(".bento-tile").forEach((t) => {
+      t.onclick = () => openSettings(t.dataset.section);
+    });
+  } catch (e) {
+    grid.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
+  }
+}
 
 // --- manage: the library item browser (Settings → Manage) -----------------
 // Every indexed item with its match state; clicking a row opens the same
@@ -1931,25 +2042,72 @@ async function renderCapabilities() {
   }
 }
 
-// Users section: switch or create watch-state identities.
+// Users section: switch or create watch-state identities; per-user glass
+// avatars via the bundled set (PATCH /api/v1/users/{uid}).
+let avatarPickerUid = null;
+
 async function renderUsers() {
   const el = document.getElementById("users-list");
   try {
     users = await api("/api/v1/users");
-    el.innerHTML = users.map((u) =>
-      `<button class="user-chip${currentUser && u.id === currentUser.id ? " active" : ""}"
-         data-uid="${u.id}"><span class="ic ic-user"></span> ${escapeHtml(u.name)}</button>`).join("");
-    el.querySelectorAll(".user-chip").forEach((chip) => {
-      chip.onclick = () => {
-        currentUser = users.find((u) => u.id === chip.dataset.uid) || currentUser;
+    el.innerHTML = users.map((u) => `
+      <div class="user-row${currentUser && u.id === currentUser.id ? " active" : ""}" data-uid="${u.id}">
+        <button class="user-avatar-btn" data-avatar-uid="${u.id}" title="Change avatar">${avatarHtml(u, "avatar avatar-md")}</button>
+        <span class="user-row-name">${escapeHtml(u.name)}</span>
+        ${currentUser && u.id === currentUser.id ? `<span class="badge">current</span>` : ""}
+      </div>`).join("");
+    el.querySelectorAll(".user-row").forEach((row) => {
+      row.onclick = (e) => {
+        if (e.target.closest("[data-avatar-uid]")) return; // avatar button has its own action
+        currentUser = users.find((u) => u.id === row.dataset.uid) || currentUser;
         renderUserBadge();
         renderUsers();
       };
+    });
+    el.querySelectorAll("[data-avatar-uid]").forEach((btn) => {
+      btn.onclick = () => openAvatarPicker(btn.dataset.avatarUid);
     });
   } catch (e) {
     el.innerHTML = `<span class="err">${escapeHtml(e.message)}</span>`;
   }
 }
+
+function openAvatarPicker(uid) {
+  avatarPickerUid = uid;
+  const u = users.find((x) => x.id === uid);
+  document.getElementById("avatar-picker-title").textContent =
+    `Pick an avatar for ${u ? u.name : "user"}`;
+  const grid = document.getElementById("avatar-picker-grid");
+  grid.innerHTML = AVATARS.map((id) => `
+    <button class="avatar-option${u && u.avatar === id ? " selected" : ""}" data-aid="${id}">
+      <img src="/avatars/${id}.png" alt="Avatar ${id.slice(1)}">
+    </button>`).join("");
+  grid.querySelectorAll("[data-aid]").forEach((b) => {
+    b.onclick = () => setAvatar(b.dataset.aid);
+  });
+  document.getElementById("avatar-picker").classList.remove("hidden");
+}
+
+async function setAvatar(aid) {
+  if (!avatarPickerUid) return;
+  try {
+    await api(`/api/v1/users/${avatarPickerUid}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ avatar: aid }),
+    });
+    document.getElementById("avatar-picker").classList.add("hidden");
+    await loadUsers();   // refresh the badge + cached user list
+    await renderUsers();
+    toast("Avatar updated");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+document.getElementById("avatar-picker-cancel").onclick = () =>
+  document.getElementById("avatar-picker").classList.add("hidden");
+document.getElementById("avatar-picker-reset").onclick = () => setAvatar("");
 
 document.getElementById("user-create").onclick = async () => {
   const input = document.getElementById("user-new-name");

@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS file_states (
 CREATE TABLE IF NOT EXISTS users (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL UNIQUE,
+    avatar     TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -87,10 +88,15 @@ CREATE TABLE IF NOT EXISTS mylist (
 `
 
 // migrate handles post-Phase-1 schema drift: playheads created before
-// duration_ms existed, and items created before Phase-6 metadata columns.
+// duration_ms existed, items created before Phase-6 metadata columns,
+// users created before avatars.
 func (s *sqliteStore) migrate() error {
 	if err := s.ensureColumn("playheads", "duration_ms",
 		`ALTER TABLE playheads ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "avatar",
+		`ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	for _, col := range []struct{ name, ddl string }{

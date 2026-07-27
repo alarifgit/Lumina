@@ -17,7 +17,15 @@
     <button id="search-button" title="Search"><span class="ic ic-search"></span></button>
     <button id="arr-button" title="Downloads & upcoming"><span class="ic ic-download"></span></button>
     <button id="libs-button" title="Settings"><span class="ic ic-settings"></span></button>
-    <button id="user-badge" title="Switch user"></button>
+    <div id="profile-wrap">
+      <button id="user-badge" title="Profile"></button>
+      <div id="profile-menu" class="hidden">
+        <div id="profile-head"></div>
+        <div class="profile-menu-label">Switch user</div>
+        <div id="profile-users"></div>
+        <button id="profile-manage" class="profile-menu-item"><span class="ic ic-settings"></span> Manage users</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -28,21 +36,25 @@
   </div>
   <div class="settings-body">
     <aside class="settings-nav">
+      <button data-section="sec-overview" class="active">Overview</button>
       <button data-section="sec-activity">Now Playing</button>
-      <button data-section="sec-libraries" class="active">Libraries</button>
+      <button data-section="sec-libraries">Libraries</button>
       <button data-section="sec-manage">Manage</button>
       <button data-section="sec-integrations">Integrations</button>
       <button data-section="sec-playback">Playback</button>
       <button data-section="sec-users">Users</button>
     </aside>
     <div class="settings-sections">
+      <section id="sec-overview">
+        <div id="bento-grid" class="bento-grid"><div class="arr-error">Loading…</div></div>
+      </section>
       <section id="sec-activity" class="hidden">
         <h3>Now playing</h3>
         <div id="activity-watching"><div class="arr-error">Loading…</div></div>
         <h3>Transcode sessions</h3>
         <div id="activity-sessions"></div>
       </section>
-      <section id="sec-libraries">
+      <section id="sec-libraries" class="hidden">
         <h3>Libraries</h3>
         <p class="libs-note">Paths are as Lumina sees them inside the container (e.g. <code>/media/movies</code>). Row order is nav order.</p>
         <div id="libs-rows"></div>
@@ -112,11 +124,21 @@
       </section>
       <section id="sec-users" class="hidden">
         <h3>Users</h3>
-        <p class="libs-note">Watch state is tracked per user. Click to switch.</p>
+        <p class="libs-note">Watch state is tracked per user. Click a user to switch; click an avatar to change it.</p>
         <div id="users-list"></div>
         <div class="user-create">
           <input id="user-new-name" placeholder="New user name">
           <button id="user-create">Add user</button>
+        </div>
+        <div id="avatar-picker" class="hidden">
+          <div class="avatar-picker-card">
+            <h4 id="avatar-picker-title">Pick an avatar</h4>
+            <div id="avatar-picker-grid"></div>
+            <div class="avatar-picker-actions">
+              <button id="avatar-picker-reset" class="ghost-button">Reset to initial</button>
+              <button id="avatar-picker-cancel" class="ghost-button">Cancel</button>
+            </div>
+          </div>
         </div>
       </section>
     </div>

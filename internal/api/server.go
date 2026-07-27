@@ -65,6 +65,7 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	// Users + watch-state journal
 	mux.HandleFunc("GET /api/v1/users", s.listUsers)
 	mux.HandleFunc("POST /api/v1/users", s.createUser)
+	mux.HandleFunc("PATCH /api/v1/users/{uid}", s.updateUser)
 	mux.HandleFunc("GET /api/v1/users/{uid}/playheads", s.userPlayheads)
 	mux.HandleFunc("GET /api/v1/users/{uid}/mylist", s.userMyList)
 	mux.HandleFunc("POST /api/v1/items/{id}/mylist", s.toggleMyList)

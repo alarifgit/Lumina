@@ -18,6 +18,7 @@ import (
 type User struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	Avatar    string    `json:"avatar,omitempty"` // bundled /avatars/<id>.png id, "" = initial
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -48,7 +49,7 @@ func (s *sqliteStore) ensureDefaultUser() error {
 }
 
 func (s *sqliteStore) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id, name, created_at FROM users ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, name, avatar, created_at FROM users ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +59,7 @@ func (s *sqliteStore) ListUsers() ([]User, error) {
 		var u User
 		var id int64
 		var created string
-		if err := rows.Scan(&id, &u.Name, &created); err != nil {
+		if err := rows.Scan(&id, &u.Name, &u.Avatar, &created); err != nil {
 			continue
 		}
 		u.ID = fmt.Sprintf("usr-%d", id)
@@ -78,6 +79,14 @@ func (s *sqliteStore) CreateUser(name string) (*User, error) {
 	}
 	id, _ := res.LastInsertId()
 	return &User{ID: fmt.Sprintf("usr-%d", id), Name: name, CreatedAt: time.Now()}, nil
+}
+
+// SetUserAvatar stores the user's chosen avatar id ("" resets to the
+// initial-letter fallback rendered by the client).
+func (s *sqliteStore) SetUserAvatar(userID, avatar string) error {
+	_, err := s.db.Exec(`UPDATE users SET avatar=? WHERE id=?`,
+		avatar, numericUserID(userID))
+	return err
 }
 
 // RecordPlayhead appends one journal row. The version is assigned

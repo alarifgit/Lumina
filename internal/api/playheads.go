@@ -34,6 +34,43 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, u)
 }
 
+// PATCH /api/v1/users/{uid} — body {"avatar": "a3"}. Avatar ids map to the
+// bundled /avatars/<id>.png set in the web client; "" resets to the
+// initial-letter fallback.
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Avatar string `json:"avatar"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.Avatar != "" && !validAvatarID(body.Avatar) {
+		http.Error(w, "unknown avatar id", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetUserAvatar(r.PathValue("uid"), body.Avatar); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// validAvatarID accepts "a" + 1-3 digits ("a1"…"a999") — the bundled avatar
+// set is enumerated by the client, the server only guards the shape so a
+// bogus id can never become a broken <img> path.
+func validAvatarID(id string) bool {
+	if len(id) < 2 || len(id) > 4 || id[0] != 'a' {
+		return false
+	}
+	for _, c := range id[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // GET /api/v1/users/{uid}/playheads — derived state for every item the
 // user has touched; the web client renders progress bars from this map.
 func (s *Server) userPlayheads(w http.ResponseWriter, r *http.Request) {

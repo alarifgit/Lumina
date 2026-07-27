@@ -34,6 +34,8 @@ type Store interface {
 
 	ListUsers() ([]User, error)
 	CreateUser(name string) (*User, error)
+	// SetUserAvatar stores the user's chosen avatar id ("" resets).
+	SetUserAvatar(userID, avatar string) error
 	// RecordPlayhead appends a journal row (server-assigned version).
 	RecordPlayhead(userID, itemID string, positionMs, durationMs int64) error
 	// Playheads derives latest state per item for a user.

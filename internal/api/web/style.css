@@ -1881,3 +1881,220 @@ nav button.active { color: var(--cream); }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.75rem;
 }
+
+/* --- Avatars, profile dropdown, bento settings ----------------------------- */
+
+/* Glass avatar: transparent PNG on a subtle disc so the gem reads against
+   any backdrop; initial-letter fallback uses the cream-gold accent. */
+.avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.14), rgba(18,31,46,0.65));
+  border: 1px solid var(--glass-border);
+  flex: none;
+}
+.avatar-xs { width: 22px; height: 22px; }
+.avatar-sm { width: 26px; height: 26px; }
+.avatar-md { width: 44px; height: 44px; }
+.avatar-lg { width: 56px; height: 56px; }
+.avatar-initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--cream);
+  background: linear-gradient(140deg, rgba(175,145,95,0.35), rgba(28,50,71,0.85));
+}
+.avatar-xs.avatar-initial { font-size: 0.62rem; }
+.avatar-sm.avatar-initial { font-size: 0.72rem; }
+.avatar-md.avatar-initial { font-size: 1.15rem; }
+.avatar-lg.avatar-initial { font-size: 1.45rem; }
+
+/* Header profile button + dropdown */
+#profile-wrap { position: relative; display: flex; }
+#user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.user-badge-name { font-size: 0.85rem; }
+#profile-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 240px;
+  padding: 0.5rem;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+  z-index: 60;
+}
+#profile-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+.profile-head-name { font-weight: 600; }
+.profile-head-sub { font-size: 0.72rem; color: var(--muted); }
+.profile-menu-label {
+  padding: 0.55rem 0.6rem 0.25rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: none;
+  border: none;
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  cursor: pointer;
+}
+.profile-menu-item:hover { background: rgba(255,255,255,0.07); }
+.profile-menu-empty {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+#profile-manage {
+  margin-top: 0.35rem;
+  border-top: 1px solid var(--glass-border);
+  border-radius: 0 0 10px 10px;
+  padding-top: 0.65rem;
+}
+#profile-manage .ic { width: 15px; height: 15px; }
+
+/* Settings → Users: identity rows + avatar picker */
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.user-row:hover { background: rgba(255,255,255,0.05); }
+.user-row.active {
+  border-color: var(--glass-border);
+  background: rgba(255,255,255,0.06);
+}
+.user-avatar-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: transform 160ms var(--focus-ease);
+}
+.user-avatar-btn:hover { transform: scale(1.08); }
+.user-row-name { font-size: 0.95rem; }
+#avatar-picker {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 14, 22, 0.6);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  z-index: 70;
+}
+.avatar-picker-card {
+  padding: 1.4rem 1.6rem;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  text-align: center;
+}
+.avatar-picker-card h4 { margin: 0 0 1rem; }
+#avatar-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 84px);
+  gap: 0.8rem;
+  justify-content: center;
+}
+.avatar-option {
+  padding: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: border-color 160ms var(--focus-ease), transform 160ms var(--focus-ease);
+}
+.avatar-option img { width: 100%; height: auto; display: block; border-radius: 50%; }
+.avatar-option:hover { transform: scale(1.06); border-color: rgba(255,255,255,0.25); }
+.avatar-option.selected { border-color: var(--cream); }
+.avatar-picker-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  margin-top: 1.1rem;
+}
+
+/* Settings → Overview: bento landing */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.9rem;
+}
+.bento-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-height: 128px;
+  padding: 1rem 1.1rem;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 180ms var(--focus-ease), border-color 180ms var(--focus-ease),
+    background 180ms var(--focus-ease);
+}
+.bento-tile:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255,255,255,0.22);
+  background: rgba(24, 41, 59, 0.62);
+}
+.bento-wide { grid-column: span 2; }
+.bento-icon {
+  display: inline-flex;
+  padding: 0.45rem;
+  border-radius: 12px;
+  background: rgba(252, 225, 182, 0.09);
+  margin-bottom: 0.25rem;
+}
+.bento-icon .ic { width: 18px; height: 18px; }
+.bento-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.bento-stat { font-size: 1.05rem; font-weight: 600; }
+.bento-sub { font-size: 0.78rem; color: var(--muted); }
+.bento-avatars { display: flex; gap: 0.3rem; margin-top: 0.2rem; }
+@media (max-width: 900px) {
+  .bento-grid { grid-template-columns: repeat(2, 1fr); }
+  .bento-wide { grid-column: span 2; }
+}
