@@ -352,6 +352,13 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 						// exists in Lumina (not in the libraries, or every
 						// copy is missing/unidentified).
 						row.Method = "not-in-library"
+					case poisoned(byTMDBEpisode, tmdbEpisodeKey(tid, pi.Season, pi.Episode)) ||
+						poisoned(byEpisodeKey, episodeKey(pi.Grandparent, pi.Season, pi.Episode)):
+						// Two ACTIVE files claim this exact episode — the
+						// key is poisoned (ambiguous → never guessed). The
+						// duplicates are listed under Manage → Duplicate
+						// matches; siblings match fine, which is the tell.
+						row.Method = "duplicate-episode"
 					case seriesSeasonEp[tid]:
 						// The series IS here with SxxExx-indexed episodes,
 						// just not THIS SxxEyy — either that specific episode
@@ -403,6 +410,12 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 							break
 						}
 					}
+				}
+				if match == nil && pi.TMDBID > 0 && poisoned(byTMDB, pi.TMDBID) {
+					// Two active items identified to this exact TMDB id —
+					// the "Part 1 and Part 2 both matched to Part 1" case.
+					// Listed under Manage → Duplicate matches.
+					row.Method = "duplicate-movie"
 				}
 			}
 
@@ -498,6 +511,13 @@ func registerSeriesTitle(m map[string]int, title string, id int) {
 		return
 	}
 	m[k] = id
+}
+
+// poisoned reports whether a key exists but was nil-ed by conflicting
+// registrations — the "two active files claim this identity" state.
+func poisoned[K comparable](m map[K]*library.Item, key K) bool {
+	it, seen := m[key]
+	return seen && it == nil
 }
 
 func unambiguous(m map[string]*library.Item, key string) (*library.Item, bool) {

@@ -1760,18 +1760,31 @@ function renderManage() {
   const lib = document.getElementById("manage-lib").value;
   const status = document.getElementById("manage-status").value;
   const q = document.getElementById("manage-q").value.trim().toLowerCase();
-  // Two ACTIVE items identified to the same TMDB id: one of them is almost
-  // always a mis-match (Part 1 AND Part 2 both matched to Part 1). These
-  // hide until something joins on identity — surface them on sight.
-  const tmdbCount = {};
-  for (const it of manageAll) {
-    if (it.state === "active" && it.tmdbId > 0) {
-      tmdbCount[it.tmdbId] = (tmdbCount[it.tmdbId] || 0) + 1;
+  // Two ACTIVE items with the same identity: one of them is almost always
+  // a mis-match (Part 1 AND Part 2 both matched to Part 1) or a duplicate
+  // file (v1+v2 fansub of the same episode) — and either way the poisoned
+  // identity key makes it unmatchable in the Plex sync. Movies key on the
+  // TMDB id; episodes on (series id, season, episode) since sharing the
+  // series id is normal for them.
+  const dupKeyFor = (it) => {
+    if (it.state !== "active" || !(it.tmdbId > 0)) return null;
+    if (it.kind === "movie") return `m:${it.tmdbId}`;
+    if (it.kind === "episode") {
+      const se = episodeSE(it);
+      return se ? `e:${it.tmdbId}|${se.s}|${se.e}` : null;
     }
+    return null;
+  };
+  const dupCount = {};
+  for (const it of manageAll) {
+    const k = dupKeyFor(it);
+    if (k) dupCount[k] = (dupCount[k] || 0) + 1;
   }
-  const dupIds = new Set(
-    Object.keys(tmdbCount).filter((id) => tmdbCount[id] > 1).map(Number));
-  const isDup = (it) => it.state === "active" && it.tmdbId > 0 && dupIds.has(it.tmdbId);
+  const dupKeys = new Set(Object.keys(dupCount).filter((k) => dupCount[k] > 1));
+  const isDup = (it) => {
+    const k = dupKeyFor(it);
+    return k !== null && dupKeys.has(k);
+  };
   const counts = { matched: 0, unmatched: 0, missing: 0, extra: 0 };
   let dupRows = 0;
   const filtered = [];
@@ -1806,7 +1819,7 @@ function renderManage() {
           ? `<span class="manage-path" title="${escapeHtml(it.paths[0])}">${escapeHtml(it.paths[0])}</span>`
           : ""}
       </span>
-      ${isDup(it) ? `<span class="badge software" title="Another active item shares this TMDB id — one of them is mis-matched">dup</span>` : ""}
+      ${isDup(it) ? `<span class="badge software" title="Another active item has the same identity — a duplicate file or a mis-match">dup</span>` : ""}
       <span class="badge ${badgeFor[st]}">${badgeLabel[st]}</span>
     </div>`;
   }).join("") || `<div class="arr-error">No items match these filters.</div>`;
