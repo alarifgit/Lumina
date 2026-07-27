@@ -97,6 +97,10 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 	// Series (by TMDB id) that HAVE absolute-numbered files — the flatten
 	// fallback only pays its TMDB round trip for these.
 	absSeries := map[int]bool{}
+	// Presence markers that make unmatched rows diagnosable: which series
+	// exist in Lumina at all, and which have SxxExx-indexed episodes.
+	seriesPresent  := map[int]bool{}
+	seriesSeasonEp := map[int]bool{}
 	// Normalized series title → TMDB id, for Plex shows whose agent left
 	// no TMDB guid (TVDB-agent anime libraries): the show's own episodes
 	// tell us which TMDB series the title refers to.
@@ -140,6 +144,9 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 		} else if len(it.Paths) > 0 {
 			base := strings.TrimSuffix(filepath.Base(it.Paths[0]), filepath.Ext(it.Paths[0]))
 			p := metadata.ParseFilename(base)
+			if it.TMDBID > 0 {
+				seriesPresent[it.TMDBID] = true
+			}
 			if p.Title != "" && p.Episode > 0 {
 				registerAmbiguous(byEpisodeKey, episodeKey(p.Title, p.Season, p.Episode), it)
 			}
@@ -153,6 +160,7 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 			}
 			if it.TMDBID > 0 && p.Episode > 0 {
 				register(byTMDBEpisode, tmdbEpisodeKey(it.TMDBID, p.Season, p.Episode), it)
+				seriesSeasonEp[it.TMDBID] = true
 			}
 			// The parent DIRECTORY follows Plex naming even when the file
 			// doesn't: "S01E02.mkv" carries no title, release-group files
@@ -334,6 +342,16 @@ func Import(ctx context.Context, c *Client, store library.Store, userID string, 
 					switch {
 					case tid == 0:
 						row.Method = "no-tmdb-id"
+					case !seriesPresent[tid]:
+						// Plex has the show; no identified episode of it
+						// exists in Lumina (not in the libraries, or every
+						// copy is missing/unidentified).
+						row.Method = "not-in-library"
+					case seriesSeasonEp[tid]:
+						// The series IS here with SxxExx-indexed episodes,
+						// just not THIS SxxEyy — Plex and the files number
+						// the seasons differently (offset, split cours).
+						row.Method = "numbering-mismatch"
 					case !absSeries[tid]:
 						row.Method = "no-abs-files"
 					case absolutePosition(tid, pi.Season, pi.Episode) == 0:

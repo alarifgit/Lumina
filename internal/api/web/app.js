@@ -1760,19 +1760,35 @@ function renderManage() {
   const lib = document.getElementById("manage-lib").value;
   const status = document.getElementById("manage-status").value;
   const q = document.getElementById("manage-q").value.trim().toLowerCase();
+  // Two ACTIVE items identified to the same TMDB id: one of them is almost
+  // always a mis-match (Part 1 AND Part 2 both matched to Part 1). These
+  // hide until something joins on identity — surface them on sight.
+  const tmdbCount = {};
+  for (const it of manageAll) {
+    if (it.state === "active" && it.tmdbId > 0) {
+      tmdbCount[it.tmdbId] = (tmdbCount[it.tmdbId] || 0) + 1;
+    }
+  }
+  const dupIds = new Set(
+    Object.keys(tmdbCount).filter((id) => tmdbCount[id] > 1).map(Number));
+  const isDup = (it) => it.state === "active" && it.tmdbId > 0 && dupIds.has(it.tmdbId);
   const counts = { matched: 0, unmatched: 0, missing: 0, extra: 0 };
+  let dupRows = 0;
   const filtered = [];
   for (const it of manageAll) {
     const st = manageStatus(it);
     counts[st]++;
+    if (isDup(it)) dupRows++;
     if (lib && it.library !== lib) continue;
-    if (status && st !== status) continue;
+    if (status === "duplicate" ? !isDup(it) : (status && st !== status)) continue;
     if (q && !(it.title || "").toLowerCase().includes(q)) continue;
     filtered.push(it);
   }
   document.getElementById("manage-summary").textContent =
     `${manageAll.length} items · ${counts.matched} matched · ${counts.unmatched} unidentified · ` +
-    `${counts.missing} missing · ${counts.extra} extras — showing ${Math.min(filtered.length, 300)} of ${filtered.length}`;
+    `${counts.missing} missing · ${counts.extra} extras` +
+    (dupRows ? ` · ${dupRows} duplicate match${dupRows === 1 ? "" : "es"}` : "") +
+    ` — showing ${Math.min(filtered.length, 300)} of ${filtered.length}`;
   const badgeFor = { matched: "direct", unmatched: "software", missing: "software", extra: "" };
   const badgeLabel = { matched: "matched", unmatched: "unidentified", missing: "missing", extra: "extra" };
   const rows = document.getElementById("manage-rows");
@@ -1790,6 +1806,7 @@ function renderManage() {
           ? `<span class="manage-path" title="${escapeHtml(it.paths[0])}">${escapeHtml(it.paths[0])}</span>`
           : ""}
       </span>
+      ${isDup(it) ? `<span class="badge software" title="Another active item shares this TMDB id — one of them is mis-matched">dup</span>` : ""}
       <span class="badge ${badgeFor[st]}">${badgeLabel[st]}</span>
     </div>`;
   }).join("") || `<div class="arr-error">No items match these filters.</div>`;
