@@ -76,6 +76,15 @@ const itemById = new Map();
 // The last home-view item set, so the nav (which can finish loading after
 // the home view at boot) can catch up its badge counts.
 let lastVisibleItems = [];
+// Baseline for live catalog polling. Seeded by loadHome so a catalog change
+// during the first polling interval is not silently accepted as the baseline.
+let catalogStamp = "";
+
+function stampOf(list) {
+  let newest = "";
+  for (const it of list) if (it.updatedAt > newest) newest = it.updatedAt;
+  return `${list.length}:${newest}`;
+}
 
 // Transcode-session timeline state.
 let isHls = false;
@@ -845,6 +854,7 @@ async function loadHome() {
   ]);
   playheads = phs || {};
   myListIds = ml || {};
+  catalogStamp = stampOf(items || []);
   grid.className = "home";
 
   const visible = (items || []).filter((it) => it.state !== "missing");
@@ -2734,14 +2744,6 @@ function refreshCurrentView() {
 // re-homing). Skips when the tab is hidden, a modal is open, or the user is
 // inside Settings/Search/a detail page — loadItems() would close those
 // overlays and yank the user back to the grid.
-let catalogStamp = "";
-
-function stampOf(list) {
-  let newest = "";
-  for (const it of list) if (it.updatedAt > newest) newest = it.updatedAt;
-  return `${list.length}:${newest}`;
-}
-
 setInterval(async () => {
   if (document.hidden || activeModal) return;
   if (!settingsPage.classList.contains("hidden")) return;
