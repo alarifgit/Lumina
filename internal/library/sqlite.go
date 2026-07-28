@@ -320,6 +320,16 @@ func (s *sqliteStore) TombstonePath(path string) (bool, error) {
 	return true, nil
 }
 
+// RekeyItemHash rewrites an item's stored content hash. The scanner's
+// reconcile pass uses it when the stored hash matches none of the item's
+// files (historic damage predating content-hash identity). UNIQUE(hash,
+// library) may refuse — the caller leaves the item as-is and logs it.
+func (s *sqliteStore) RekeyItemHash(id, hash string) error {
+	_, err := s.db.Exec(`UPDATE items SET hash=?, updated_at=? WHERE id=?`,
+		hash, fmtTime(time.Now()), numericID(id))
+	return err
+}
+
 func (s *sqliteStore) Get(id string) (*Item, error) {
 	row := s.db.QueryRow(
 		`SELECT id, hash, library, kind, title, year, state, size_bytes, added_at, updated_at, missing_at,

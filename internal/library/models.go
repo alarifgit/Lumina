@@ -24,6 +24,11 @@ type Store interface {
 	// left, it becomes missing. Returns true if something changed.
 	TombstonePath(path string) (bool, error)
 
+	// RekeyItemHash rewrites an item's stored content hash. Used by the
+	// scanner's reconcile pass when the stored hash matches none of the
+	// item's files (historic damage). May fail on UNIQUE(hash, library).
+	RekeyItemHash(id, hash string) error
+
 	// Get returns one item by ID, or nil if unknown.
 	Get(id string) (*Item, error)
 

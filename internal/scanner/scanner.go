@@ -349,7 +349,92 @@ func (s *Scanner) ScanRoot(ctx context.Context, root config.LibraryRoot) error {
 	if missing > 0 {
 		log.Printf("scanner: %d item(s) tombstoned in %q", missing, root.Name)
 	}
+	// Historic mis-merges surface as multi-path items; reconcile re-hashes
+	// every path and re-homes any file whose content is not the item's.
+	s.reconcileSplitPaths(ctx, root)
 	return nil
+}
+
+// reconcileSplitPaths repairs historic mis-merges: items carrying several
+// paths that are NOT the same content (an early scanner parked files on
+// the wrong item — content-hash identity cannot produce this today, but
+// the parked rows persist forever because path history is append-only).
+// Genuine same-content duplicates (a file and its copy) are left attached:
+// that IS the same file, whatever its name says.
+func (s *Scanner) reconcileSplitPaths(ctx context.Context, root config.LibraryRoot) {
+	for _, it := range s.store.List(root.Name) {
+		if ctx.Err() != nil {
+			return
+		}
+		if len(it.Paths) < 2 {
+			continue
+		}
+		s.repairItemPaths(root, it)
+	}
+}
+
+// repairItemPaths re-hashes every path of one multi-path item FRESH —
+// file_states is not trusted here, it may carry the same historic damage.
+// A path whose true hash is not the item's hash is detached and re-indexed,
+// landing on (or creating) the item its content actually belongs to, which
+// also queues it for metadata identification. If the stored hash matches
+// NONE of the files, the item is re-keyed to its first path's true hash.
+func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) {
+	type checked struct {
+		path string
+		hash string
+		fi   os.FileInfo
+	}
+	all := make([]checked, 0, len(it.Paths))
+	for _, p := range it.Paths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return // a path unreadable (dropped mount?) — touch nothing
+		}
+		h, err := ContentHash(p, fi.Size())
+		if err != nil {
+			return
+		}
+		all = append(all, checked{p, h, fi})
+	}
+	ownerHash := it.Hash
+	owners := 0
+	for _, c := range all {
+		if c.hash == ownerHash {
+			owners++
+		}
+	}
+	if owners == 0 {
+		ownerHash = all[0].hash
+		if err := s.store.RekeyItemHash(it.ID, ownerHash); err != nil {
+			log.Printf("scanner: reconcile %s (%q): re-key refused (%v) — left as-is",
+				it.ID, it.Title, err)
+			return
+		}
+		log.Printf("scanner: reconcile %s (%q): re-keyed to %s's content hash",
+			it.ID, it.Title, filepath.Base(all[0].path))
+	}
+	for _, c := range all {
+		if c.hash == ownerHash {
+			continue
+		}
+		// Correct the cached state FIRST so the re-index below (and every
+		// future sweep's hash-skip) works from the true hash.
+		if err := s.store.SetFileState(c.path, c.fi.Size(), c.fi.ModTime().Unix(), c.hash); err != nil {
+			log.Printf("scanner: reconcile: record file state %s: %v", c.path, err)
+			continue
+		}
+		if _, err := s.store.TombstonePath(c.path); err != nil {
+			log.Printf("scanner: reconcile: detach %s: %v", c.path, err)
+			continue
+		}
+		if err := s.indexFile(root, c.path, c.fi); err != nil {
+			log.Printf("scanner: reconcile: re-index %s: %v", c.path, err)
+			continue
+		}
+		log.Printf("scanner: reconcile: %s detached from %s (%q) — re-homed by content",
+			filepath.Base(c.path), it.ID, it.Title)
+	}
 }
 
 func (s *Scanner) sweepLoop(ctx context.Context, root config.LibraryRoot) {
