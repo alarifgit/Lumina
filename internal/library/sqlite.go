@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -47,6 +48,23 @@ CREATE TABLE IF NOT EXISTS item_paths (
     PRIMARY KEY (item_id, path)
 );
 CREATE INDEX IF NOT EXISTS idx_items_library ON items(library, state);
+
+-- Constant-time change token for lightweight client polling. Item writes bump
+-- the singleton revision through triggers, including metadata and tombstones.
+CREATE TABLE IF NOT EXISTS catalog_revision (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    revision INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO catalog_revision (id, revision) VALUES (1, 0);
+CREATE TRIGGER IF NOT EXISTS items_revision_insert AFTER INSERT ON items BEGIN
+    UPDATE catalog_revision SET revision = revision + 1 WHERE id = 1;
+END;
+CREATE TRIGGER IF NOT EXISTS items_revision_update AFTER UPDATE ON items BEGIN
+    UPDATE catalog_revision SET revision = revision + 1 WHERE id = 1;
+END;
+CREATE TRIGGER IF NOT EXISTS items_revision_delete AFTER DELETE ON items BEGIN
+    UPDATE catalog_revision SET revision = revision + 1 WHERE id = 1;
+END;
 
 -- Scan accelerator: last-indexed (size, mtime) per path. A file whose
 -- stat matches is REUSED — its content hash is not recomputed. This is
@@ -301,23 +319,40 @@ func (s *sqliteStore) MarkMissing(libraryName string, present map[string]bool) (
 }
 
 func (s *sqliteStore) TombstonePath(path string) (bool, error) {
-	res, err := s.db.Exec(`DELETE FROM item_paths WHERE path=?`, path)
+	// A directory rename/remove event names only the directory. Forget both
+	// that exact path and every tracked child so items cannot remain active
+	// with paths that no longer exist. Escape LIKE metacharacters because
+	// valid media paths may contain '%' or '_'.
+	escapeLike := func(v string) string {
+		r := strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+		return r.Replace(filepath.Clean(v))
+	}
+	pattern := escapeLike(path) + string(os.PathSeparator) + "%"
+	tx, err := s.db.Begin()
 	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM item_paths WHERE path=? OR path LIKE ? ESCAPE '\'`, path, pattern)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`DELETE FROM file_states WHERE path=? OR path LIKE ? ESCAPE '\'`, path, pattern); err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return false, nil
+		return false, tx.Commit()
 	}
 	// Items left with no paths become missing.
-	if _, err := s.db.Exec(
+	if _, err := tx.Exec(
 		`UPDATE items SET state=?, missing_at=?, updated_at=?
 		 WHERE state=? AND NOT EXISTS (SELECT 1 FROM item_paths WHERE item_id = items.id)`,
 		string(StateMissing), fmtTime(time.Now()), fmtTime(time.Now()), string(StateActive),
 	); err != nil {
 		return true, err
 	}
-	return true, nil
+	return true, tx.Commit()
 }
 
 // RekeyItemHash rewrites an item's stored content hash. The scanner's
@@ -413,6 +448,13 @@ func (s *sqliteStore) List(libraryName string) []Item {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
 	return out
+}
+
+func (s *sqliteStore) CatalogRevision() (count int, revision int64, err error) {
+	err = s.db.QueryRow(
+		`SELECT (SELECT COUNT(*) FROM items), revision FROM catalog_revision WHERE id=1`,
+	).Scan(&count, &revision)
+	return count, revision, err
 }
 
 // --- helpers ---------------------------------------------------------------

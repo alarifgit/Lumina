@@ -34,6 +34,9 @@ type Store interface {
 
 	// List returns items (optionally filtered by library), title-sorted.
 	List(library string) []Item
+	// CatalogRevision returns a compact value clients can poll to detect
+	// item changes without transferring and decoding the complete catalog.
+	CatalogRevision() (count int, revision int64, err error)
 
 	// --- users + watch-state journal (Phase 3) ---
 
@@ -108,7 +111,7 @@ type Item struct {
 
 	// Metadata (Phase 6): filled by the TMDB worker; empty = procedural
 	// poster. User overrides (later phase) always win over providers.
-	TMDBID      int      `json:"tmdbId,omitempty"`
+	TMDBID int `json:"tmdbId,omitempty"`
 	// OrigTitle is the original-language title (TMDB original_title /
 	// original_name) — the bridge for Plex libraries whose titles differ
 	// from TMDB's English entry (anime is the common case).

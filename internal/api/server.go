@@ -35,10 +35,12 @@ type Server struct {
 	tm         *transcode.Manager
 	mw         *metadata.Worker
 	http       *http.Server
+	cfgMu      sync.RWMutex
 
 	// Periodic Plex watch-state pull. plexSyncMu also guards against a
 	// manual import overlapping the loop (imports are not re-entrant).
 	plexSyncMu      sync.Mutex
+	plexStateMu     sync.RWMutex
 	plexSyncLast    time.Time
 	plexSyncSummary string
 	plexReport      *plexSyncReportView // digest of the last import, for the UI
@@ -53,6 +55,7 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	mux.HandleFunc("GET /api/v1/libraries", s.listLibraries)
 	mux.HandleFunc("POST /api/v1/config/libraries", s.saveLibraries)
 	mux.HandleFunc("GET /api/v1/items", s.listItems)
+	mux.HandleFunc("GET /api/v1/items/revision", s.catalogRevision)
 	mux.HandleFunc("GET /api/v1/items/{id}", s.getItem)
 	mux.HandleFunc("GET /api/v1/items/{id}/info", s.itemInfo)
 	mux.HandleFunc("GET /api/v1/items/{id}/stream", s.directStream)
@@ -80,7 +83,8 @@ func New(cfg config.Config, configPath string, store library.Store, sc *scanner.
 	mux.HandleFunc("POST /api/v1/items/{id}/identify", s.identifyItem)
 
 	// Plex migration import
-	mux.HandleFunc("GET /api/v1/plex/test", s.plexTest)
+	mux.HandleFunc("GET /api/v1/plex/test", s.plexTest) // compatibility
+	mux.HandleFunc("POST /api/v1/plex/test", s.plexTest)
 	mux.HandleFunc("POST /api/v1/plex/import", s.plexImport)
 	mux.HandleFunc("GET /api/v1/config/plex", s.plexConfigGet)
 	mux.HandleFunc("POST /api/v1/config/plex", s.plexConfigSave)
@@ -117,6 +121,18 @@ func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok", "version": ServerVersion})
 }
 
+// configSnapshot returns a stable copy for concurrent HTTP handlers. The
+// editable slice fields are cloned so callers never observe a replacement
+// racing with a settings save.
+func (s *Server) configSnapshot() config.Config {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	cfg := s.cfg
+	cfg.Libraries = append([]config.LibraryRoot(nil), s.cfg.Libraries...)
+	cfg.Arr = append([]config.ArrInstance(nil), s.cfg.Arr...)
+	return cfg
+}
+
 func (s *Server) listLibraries(w http.ResponseWriter, _ *http.Request) {
 	type lib struct {
 		config.LibraryRoot
@@ -125,6 +141,7 @@ func (s *Server) listLibraries(w http.ResponseWriter, _ *http.Request) {
 		Exists  bool                `json:"exists"`
 	}
 	tiers := s.sc.Tiers()
+	cfg := s.configSnapshot()
 
 	// os.Stat on a network mount can block for seconds (NAS spin-up, SMB
 	// reconnect). Sequentially that's one stall PER LIBRARY — 20s+ boots
@@ -135,16 +152,16 @@ func (s *Server) listLibraries(w http.ResponseWriter, _ *http.Request) {
 		i  int
 		ok bool
 	}
-	ch := make(chan statResult, len(s.cfg.Libraries))
-	for i, root := range s.cfg.Libraries {
+	ch := make(chan statResult, len(cfg.Libraries))
+	for i, root := range cfg.Libraries {
 		go func(i int, path string) {
 			_, err := os.Stat(path)
 			ch <- statResult{i, err == nil}
 		}(i, root.Path)
 	}
-	exists := make([]bool, len(s.cfg.Libraries))
+	exists := make([]bool, len(cfg.Libraries))
 	deadline := time.After(4 * time.Second)
-	for remaining := len(s.cfg.Libraries); remaining > 0; {
+	for remaining := len(cfg.Libraries); remaining > 0; {
 		select {
 		case r := <-ch:
 			exists[r.i] = r.ok
@@ -155,7 +172,7 @@ func (s *Server) listLibraries(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	out := []lib{}
-	for i, root := range s.cfg.Libraries {
+	for i, root := range cfg.Libraries {
 		out = append(out, lib{
 			LibraryRoot: root,
 			Watcher:     tiers[root.Path],
@@ -184,13 +201,15 @@ func (s *Server) saveLibraries(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.cfgMu.Lock()
 	if err := config.SaveLibraries(s.configPath, libs); err != nil {
+		s.cfgMu.Unlock()
 		log.Printf("api: save libraries: %v", err)
 		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	s.cfg.Libraries = append([]config.LibraryRoot(nil), libs...)
+	s.cfgMu.Unlock()
 	s.sc.SetLibraries(libs)
 	for _, root := range libs {
 		s.sc.Notify(root.Path) // dir → ScanRoot on the scanner event loop
@@ -229,6 +248,16 @@ func validateLibraries(libs []config.LibraryRoot) error {
 
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.store.List(r.URL.Query().Get("library")))
+}
+
+func (s *Server) catalogRevision(w http.ResponseWriter, _ *http.Request) {
+	count, revision, err := s.store.CatalogRevision()
+	if err != nil {
+		http.Error(w, "catalog revision unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, map[string]any{"count": count, "revision": revision})
 }
 
 func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {

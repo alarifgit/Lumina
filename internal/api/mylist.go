@@ -22,7 +22,7 @@ func (s *Server) toggleMyList(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserID string `json:"userId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil || body.UserID == "" {
 		http.Error(w, "need {\"userId\": ...}", http.StatusBadRequest)
 		return
 	}

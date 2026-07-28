@@ -39,7 +39,7 @@ type Payload struct {
 func Handler(sc *scanner.Scanner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var p Payload
-		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
 			http.Error(w, "bad payload", http.StatusBadRequest)
 			return
 		}

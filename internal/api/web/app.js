@@ -47,6 +47,15 @@ const seekBar = document.getElementById("seek-bar");
 const seekPlayed = document.getElementById("seek-played");
 const seekBuffered = document.getElementById("seek-buffered");
 const headerEl = document.querySelector("header");
+const appStatus = document.getElementById("app-status");
+
+let announcementFrame = 0;
+function announce(message) {
+  if (!appStatus) return;
+  cancelAnimationFrame(announcementFrame);
+  appStatus.textContent = "";
+  announcementFrame = requestAnimationFrame(() => { appStatus.textContent = message; });
+}
 
 window.addEventListener("scroll", () => {
   headerEl.classList.toggle("solid", window.scrollY > 12);
@@ -69,6 +78,42 @@ let upNextCountdown = null;
 let lastReportAt = 0;
 let resumeAtS = 0;
 let activeLib = null;
+let surfaceReturnFocus = null;
+let hlsScriptPromise = null;
+
+function ensureHlsLibrary() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (hlsScriptPromise) return hlsScriptPromise;
+  hlsScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "/hls.min.js";
+    script.async = true;
+    script.onload = () => resolve(window.Hls);
+    script.onerror = () => {
+      hlsScriptPromise = null;
+      reject(new Error("Could not load the HLS player"));
+    };
+    document.head.appendChild(script);
+  });
+  return hlsScriptPromise;
+}
+
+function enterFullScreenSurface(focusTarget) {
+  if (!surfaceReturnFocus) surfaceReturnFocus = document.activeElement;
+  headerEl.inert = true;
+  grid.inert = true;
+  requestAnimationFrame(() => focusTarget && focusTarget.focus());
+}
+
+function leaveFullScreenSurface() {
+  if (!settingsPage.classList.contains("hidden") ||
+      !searchPage.classList.contains("hidden") ||
+      !overlay.classList.contains("hidden")) return;
+  headerEl.inert = false;
+  grid.inert = false;
+  if (surfaceReturnFocus && surfaceReturnFocus.isConnected) surfaceReturnFocus.focus();
+  surfaceReturnFocus = null;
+}
 
 // Every rendered item, by id — the context menu looks items up here
 // instead of re-fetching.
@@ -79,12 +124,6 @@ let lastVisibleItems = [];
 // Baseline for live catalog polling. Seeded by loadHome so a catalog change
 // during the first polling interval is not silently accepted as the baseline.
 let catalogStamp = "";
-
-function stampOf(list) {
-  let newest = "";
-  for (const it of list) if (it.updatedAt > newest) newest = it.updatedAt;
-  return `${list.length}:${newest}`;
-}
 
 // Transcode-session timeline state.
 let isHls = false;
@@ -198,6 +237,30 @@ function escapeHtml(s) {
   }[c]));
 }
 
+function addCardOpenButton(el, label, handler) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "card-open";
+  button.setAttribute("aria-label", label);
+  button.onclick = handler;
+  el.appendChild(button);
+}
+
+function addCardActionsButton(el, it) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "card-actions";
+  button.textContent = "⋯";
+  button.setAttribute("aria-label", `Actions for ${it.title}`);
+  button.title = "Actions";
+  button.onclick = (e) => {
+    e.stopPropagation();
+    const r = button.getBoundingClientRect();
+    openCardMenu(r.left, r.bottom + 6, it, button);
+  };
+  el.appendChild(button);
+}
+
 // --- users -------------------------------------------------------------------
 
 // AVATARS enumerates the bundled glass avatar set (web/avatars/aN.png).
@@ -231,6 +294,7 @@ function renderUserBadge() {
 // other users, and a shortcut into Settings → Users. Closes on any
 // outside click; the menu itself stops propagation.
 const profileMenu = document.getElementById("profile-menu");
+const profileWrap = document.getElementById("profile-wrap");
 
 function renderProfileMenu() {
   if (!currentUser) return;
@@ -258,19 +322,28 @@ function renderProfileMenu() {
   });
 }
 
-function closeProfileMenu() { profileMenu.classList.add("hidden"); }
+function closeProfileMenu(restoreFocus = false) {
+  profileMenu.classList.add("hidden");
+  userBadge.setAttribute("aria-expanded", "false");
+  if (restoreFocus && userBadge.isConnected) userBadge.focus();
+}
 
 userBadge.onclick = (e) => {
   e.stopPropagation();
   if (profileMenu.classList.contains("hidden")) {
     renderProfileMenu();
     profileMenu.classList.remove("hidden");
+    userBadge.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => profileMenu.querySelector("button")?.focus());
   } else {
     closeProfileMenu();
   }
 };
 profileMenu.onclick = (e) => e.stopPropagation();
-document.addEventListener("click", closeProfileMenu);
+profileWrap.addEventListener("focusout", (e) => {
+  if (!profileWrap.contains(e.relatedTarget)) closeProfileMenu();
+});
+document.addEventListener("click", () => closeProfileMenu());
 document.getElementById("profile-manage").onclick = () => {
   closeProfileMenu();
   openSettings("sec-users");
@@ -279,8 +352,12 @@ document.getElementById("profile-manage").onclick = () => {
 // --- browse --------------------------------------------------------------------
 
 function setActiveNav(btn) {
-  nav.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+  nav.querySelectorAll("button").forEach((b) => {
+    b.classList.remove("active");
+    b.removeAttribute("aria-current");
+  });
   btn.classList.add("active");
+  btn.setAttribute("aria-current", "page");
   moveNavGlider();
 }
 
@@ -353,10 +430,11 @@ async function loadItems(lib) {
   backTarget = () => loadItems(lib); // detail pages return to this library
   closeSettings();
   closeSearch();
-  const [items, phs, ml] = await Promise.all([
+  const [items, phs, ml, revision] = await Promise.all([
     api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
     currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
+    api("/api/v1/items/revision"),
   ]);
   playheads = phs || {};
   myListIds = ml || {};
@@ -366,6 +444,7 @@ async function loadItems(lib) {
   const visible = (items || []).filter((it) => it.state !== "missing");
   if (visible.length === 0) {
     grid.innerHTML = `<div id="empty">Nothing here yet — Lumina is scanning, or the path is empty.</div>`;
+    announce("No titles in this library");
     return;
   }
   visible.forEach((it) => itemById.set(it.id, it));
@@ -402,7 +481,7 @@ function renderLibraryCards(visible) {
         <div class="poster" style="${posterStyle(g.key)}">
           ${identified ? "" : `<div class="glow" style="${glowStyle(g.key)}"></div><div class="grain"></div>`}
           ${identified
-            ? `<img class="poster-img" src="${g.rep.posterUrl}" loading="lazy" alt=""
+            ? `<img class="poster-img" src="${escapeHtml(g.rep.posterUrl)}" loading="lazy" alt=""
                  onerror="this.remove()">`
             : `<span class="initials">${posterInitials(g.key)}</span>
                <span class="poster-title">${escapeHtml(g.key)}</span>`}
@@ -418,7 +497,8 @@ function renderLibraryCards(visible) {
         e.stopPropagation();
         play(nextEpisode(g.eps));
       };
-      card.onclick = () => openSeries(g.key, g.rep);
+      addCardOpenButton(card, `Open ${g.key}`, () => openSeries(g.key, g.rep));
+      addCardActionsButton(card, g.rep);
       card.dataset.id = g.rep.id;
       grid.appendChild(card);
     }
@@ -435,10 +515,10 @@ function renderLibraryCards(visible) {
       <div class="poster" style="${posterStyle(it.title)}">
         ${identified ? "" : `<div class="glow" style="${glowStyle(it.title)}"></div><div class="grain"></div>`}
         ${identified
-          ? `<img class="poster-img" src="${it.posterUrl}" loading="lazy" alt=""
+          ? `<img class="poster-img" src="${escapeHtml(it.posterUrl)}" loading="lazy" alt=""
                onerror="this.remove()">`
           : `<span class="initials">${posterInitials(it.title)}</span>
-             <span class="poster-title">${it.title}</span>`}
+             <span class="poster-title">${escapeHtml(it.title)}</span>`}
         <button class="card-play" aria-label="Play" title="Play"><span class="ic ic-play"></span></button>
         <span class="watermark">LUMINA</span>
         ${ph && ph.watched ? `<span class="watched" title="Watched"><span class="ic ic-check"></span></span>` : ""}
@@ -447,17 +527,19 @@ function renderLibraryCards(visible) {
           : ""}
       </div>
       <div class="meta">
-        <div class="title" title="${it.title}">${it.title}</div>
+        <div class="title" title="${escapeHtml(it.title)}">${escapeHtml(it.title)}</div>
         <div class="sub">${it.year ? it.year + " · " : ""}${fmtBytes(it.sizeBytes)}</div>
       </div>`;
     card.querySelector(".card-play").onclick = (e) => {
       e.stopPropagation();
       play(it);
     };
-    card.onclick = () => openMovieDetail(it);
+    addCardOpenButton(card, `Open ${it.title}`, () => openMovieDetail(it));
+    addCardActionsButton(card, it);
     card.dataset.id = it.id;
     grid.appendChild(card);
   }
+  announce(`${visible.length} title${visible.length === 1 ? "" : "s"} loaded`);
 }
 
 // --- My List (per-user bookmarks) -------------------------------------------
@@ -481,7 +563,8 @@ async function loadMyList() {
   visible.forEach((it) => itemById.set(it.id, it));
   const mine = visible.filter((it) => myListIds[it.id]);
   if (mine.length === 0) {
-    grid.innerHTML = `<div id="empty">Nothing bookmarked yet — right-click any card → Add to My List.</div>`;
+    grid.innerHTML = `<div id="empty">Nothing bookmarked yet — open a card’s Actions menu to add it to My List.</div>`;
+    announce("My List is empty");
     return;
   }
   renderLibraryCards(mine);
@@ -517,13 +600,13 @@ function fmtLeftMs(ph) {
   return `${mins}m left`;
 }
 
-function artHtml(it, prefer = "poster") {
+function artHtml(it, prefer = "poster", priority = false) {
   const url = prefer === "backdrop"
     ? (it.backdropUrl || it.posterUrl)
     : (it.posterUrl || it.backdropUrl);
   const fallback = `<div class="proc-fallback" style="${posterStyle(it.title)}">${posterInitials(it.title)}</div>`;
   return url
-    ? `${fallback}<img src="${url}" loading="lazy" alt="" onerror="this.remove()">`
+    ? `${fallback}<img src="${escapeHtml(url)}" loading="${priority ? "eager" : "lazy"}" decoding="async"${priority ? ' fetchpriority="high"' : ""} alt="" onerror="this.remove()">`
     : fallback;
 }
 
@@ -681,13 +764,13 @@ function openMovieDetail(it) {
   window.scrollTo(0, 0);
   grid.innerHTML = `
     <section class="hero detail-hero">
-      ${artHtml(it, "backdrop")}
+      ${artHtml(it, "backdrop", true)}
       <div class="hero-scrim"></div>
       <div class="hero-copy">
         ${detailBackButton()}
-        <div class="eyebrow">${["Movie", it.year, (it.genres || []).slice(0, 3).join(" · ")]
-          .filter(Boolean).join("  ·  ")}</div>
         <h2>${escapeHtml(it.title)}</h2>
+        <div class="hero-meta">${["Movie", it.year, (it.genres || []).slice(0, 3).join(" · ")]
+          .filter(Boolean).join("  ·  ")}</div>
         <p>${escapeHtml(it.overview || "No synopsis yet — identify this title with Fix match if it was missed.")}</p>
         <div class="detail-actions">
           <button class="text-button" id="detail-play"><span class="ic ic-play"></span> ${resumable ? `Resume · ${fmtLeftMs(ph)}` : "Play"}</button>
@@ -728,13 +811,13 @@ function openSeries(key, anchor) {
   window.scrollTo(0, 0);
   grid.innerHTML = `
     <section class="hero detail-hero">
-      ${artHtml(rep, "backdrop")}
+      ${artHtml(rep, "backdrop", true)}
       <div class="hero-scrim"></div>
       <div class="hero-copy">
         ${detailBackButton()}
-        <div class="eyebrow">${["Series", rep.year, `${seasons.size} season${seasons.size === 1 ? "" : "s"}`,
-          `${eps.length} episode${eps.length === 1 ? "" : "s"}`].filter(Boolean).join("  ·  ")}</div>
         <h2>${escapeHtml(key)}</h2>
+        <div class="hero-meta">${["Series", rep.year, `${seasons.size} season${seasons.size === 1 ? "" : "s"}`,
+          `${eps.length} episode${eps.length === 1 ? "" : "s"}`].filter(Boolean).join("  ·  ")}</div>
         <p>${escapeHtml(rep.overview || "")}</p>
         <div class="detail-actions">
           <button class="text-button" id="detail-play"><span class="ic ic-play"></span> ${playheads[next.id] && !playheads[next.id].watched && playheads[next.id].positionMs > 0
@@ -745,7 +828,7 @@ function openSeries(key, anchor) {
     </section>
     <section class="episodes">
       ${seasons.size > 1 ? `<div class="season-tabs">${[...seasons.keys()].map((s) =>
-        `<button data-season="${s}" class="${s === nextSeason ? "active" : ""}">${s > 0 ? `Season ${s}` : "Episodes"}</button>`).join("")}</div>` : ""}
+        `<button data-season="${s}" class="${s === nextSeason ? "active" : ""}" aria-pressed="${s === nextSeason}">${s > 0 ? `Season ${s}` : "Episodes"}</button>`).join("")}</div>` : ""}
       <div class="ep-list"></div>
     </section>`;
   wireDetailBack();
@@ -778,7 +861,7 @@ function openSeries(key, anchor) {
       return `
         <div class="ep-row" data-id="${it.id}"${meta && meta.overview ? ` title="${escapeHtml(meta.overview)}"` : ""}>
           <span class="ep-thumb">${meta && meta.stillUrl
-            ? `<img src="${meta.stillUrl}" loading="lazy" alt="" onerror="this.remove()"><i>${se.e || "–"}</i>`
+            ? `<img src="${escapeHtml(meta.stillUrl)}" loading="lazy" alt="" onerror="this.remove()"><i>${se.e || "–"}</i>`
             : `<i class="num">${se.e || "–"}</i>`}</span>
           <div class="ep-meta">
             <div class="ep-title">${escapeHtml(title)}</div>
@@ -797,13 +880,18 @@ function openSeries(key, anchor) {
       if (!it) return;
       row.querySelector(".ep-play").onclick = (e) => { e.stopPropagation(); play(it); };
       row.onclick = () => play(it);
+      addCardActionsButton(row, it);
     });
   }
   renderSeason(nextSeason);
   grid.querySelectorAll(".season-tabs button").forEach((btn) => {
     btn.onclick = () => {
-      grid.querySelectorAll(".season-tabs button").forEach((b) => b.classList.remove("active"));
+      grid.querySelectorAll(".season-tabs button").forEach((b) => {
+        b.classList.remove("active");
+        b.setAttribute("aria-pressed", "false");
+      });
       btn.classList.add("active");
+      btn.setAttribute("aria-pressed", "true");
       renderSeason(Number(btn.dataset.season));
     };
   });
@@ -854,7 +942,7 @@ async function loadHome() {
   ]);
   playheads = phs || {};
   myListIds = ml || {};
-  catalogStamp = stampOf(items || []);
+  catalogStamp = `${revision.count}:${revision.revision}`;
   grid.className = "home";
 
   const visible = (items || []).filter((it) => it.state !== "missing");
@@ -900,12 +988,12 @@ async function loadHome() {
       ${slides.map((it, i) => {
         const ph = playheads[it.id];
         return `
-        <div class="hero-slide${i === 0 ? " active" : ""}">
-          ${artHtml(it, "backdrop")}
+        <div class="hero-slide${i === 0 ? " active" : ""}" aria-hidden="${i === 0 ? "false" : "true"}"${i === 0 ? "" : " inert"}>
+          ${artHtml(it, "backdrop", i === 0)}
           <div class="hero-scrim"></div>
           <div class="hero-copy">
-            <div class="eyebrow">${ph ? "Resume" : "Featured"} · ${it.kind === "episode" ? "Episode" : "Movie"}</div>
             <h2>${escapeHtml(it.title)}</h2>
+            <div class="hero-meta">${[it.kind === "episode" ? "Episode" : "Movie", it.year, (it.genres || []).slice(0, 2).join(" · ")].filter(Boolean).join("  ·  ")}</div>
             <p>${escapeHtml(it.overview || "Your library, direct from the source — no cloud account, no Plex pass, no transcode unless it has to.")}</p>
             <button class="text-button" data-play="${it.id}"><span class="ic ic-play"></span> ${ph ? "Resume" : "Play now"}</button>
           </div>
@@ -914,8 +1002,9 @@ async function loadHome() {
       ${slides.length > 1 ? `
         <button class="hero-nav prev" aria-label="Previous slide"><span class="ic ic-back"></span></button>
         <button class="hero-nav next" aria-label="Next slide"><span class="ic ic-back ic-flip"></span></button>
+        <button class="hero-toggle" type="button" aria-label="Pause featured carousel" aria-pressed="false"><span class="ic ic-pause"></span></button>
         <div class="hero-dots">${slides.map((_, i) =>
-          `<button data-i="${i}" class="${i === 0 ? "active" : ""}" aria-label="Slide ${i + 1}"></button>`).join("")}</div>` : ""}
+          `<button data-i="${i}" class="${i === 0 ? "active" : ""}" aria-label="Slide ${i + 1}"${i === 0 ? ` aria-current="true"` : ""}></button>`).join("")}</div>` : ""}
     </section>
     ${resume.length ? `
       <section class="rail">
@@ -936,35 +1025,68 @@ async function loadHome() {
         <div class="rail-track posters">${recentMovies.slice(0, 24).map((it) => homeCard(it, playheads[it.id], true)).join("")}</div>
       </section>` : ""}`;
 
-  // Carousel wiring: crossfade slides, 8s auto-advance, pause on hover.
-  // If the user has navigated away the interval stops itself (the hero is
-  // no longer in the DOM).
+  // Carousel wiring: inactive slides leave both the pointer and keyboard
+  // order. Auto-advance is interruptible, pauses while the hero has focus or
+  // hover, and remains off when reduced motion is requested.
   const heroEl = grid.querySelector(".hero");
   const slideEls = [...heroEl.querySelectorAll(".hero-slide")];
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   let heroIdx = 0;
+  let userPaused = reducedMotion.matches;
+  const stopHeroTimer = () => {
+    clearInterval(heroTimer);
+    heroTimer = null;
+  };
+  const heroHasAttention = () => heroEl.matches(":hover") || heroEl.contains(document.activeElement);
+  const carouselIsPaused = () => userPaused;
+  const syncCarouselToggle = () => {
+    const toggle = heroEl.querySelector(".hero-toggle");
+    if (!toggle) return;
+    const paused = carouselIsPaused();
+    toggle.setAttribute("aria-pressed", String(paused));
+    toggle.setAttribute("aria-label", paused ? "Play featured carousel" : "Pause featured carousel");
+    toggle.innerHTML = `<span class="ic ${paused ? "ic-play" : "ic-pause"}"></span>`;
+  };
   const showSlide = (i) => {
     if (!heroEl.isConnected) {
-      clearInterval(heroTimer);
-      heroTimer = null;
+      stopHeroTimer();
       return;
     }
     heroIdx = (i + slideEls.length) % slideEls.length;
-    slideEls.forEach((s, j) => s.classList.toggle("active", j === heroIdx));
-    heroEl.querySelectorAll(".hero-dots button").forEach((d, j) =>
-      d.classList.toggle("active", j === heroIdx));
+    slideEls.forEach((slide, j) => {
+      const active = j === heroIdx;
+      slide.classList.toggle("active", active);
+      slide.inert = !active;
+      slide.setAttribute("aria-hidden", String(!active));
+    });
+    heroEl.querySelectorAll(".hero-dots button").forEach((dot, j) => {
+      const active = j === heroIdx;
+      dot.classList.toggle("active", active);
+      if (active) dot.setAttribute("aria-current", "true");
+      else dot.removeAttribute("aria-current");
+    });
   };
   const startHeroTimer = () => {
-    clearInterval(heroTimer);
-    if (slideEls.length > 1) heroTimer = setInterval(() => showSlide(heroIdx + 1), 8000);
+    stopHeroTimer();
+    if (slideEls.length > 1 && !carouselIsPaused() && !heroHasAttention()) {
+      heroTimer = setInterval(() => showSlide(heroIdx + 1), 8000);
+    }
+    syncCarouselToggle();
   };
   if (slideEls.length > 1) {
     heroEl.querySelector(".hero-nav.prev").onclick = () => { showSlide(heroIdx - 1); startHeroTimer(); };
     heroEl.querySelector(".hero-nav.next").onclick = () => { showSlide(heroIdx + 1); startHeroTimer(); };
-    heroEl.querySelectorAll(".hero-dots button").forEach((d) => {
-      d.onclick = () => { showSlide(Number(d.dataset.i)); startHeroTimer(); };
+    heroEl.querySelectorAll(".hero-dots button").forEach((dot) => {
+      dot.onclick = () => { showSlide(Number(dot.dataset.i)); startHeroTimer(); };
     });
-    heroEl.addEventListener("mouseenter", () => clearInterval(heroTimer));
+    heroEl.querySelector(".hero-toggle").onclick = () => {
+      userPaused = !userPaused;
+      startHeroTimer();
+    };
+    heroEl.addEventListener("mouseenter", stopHeroTimer);
     heroEl.addEventListener("mouseleave", startHeroTimer);
+    heroEl.addEventListener("focusin", stopHeroTimer);
+    heroEl.addEventListener("focusout", () => requestAnimationFrame(startHeroTimer));
     startHeroTimer();
   }
   heroEl.querySelectorAll("[data-play]").forEach((btn) => {
@@ -977,9 +1099,11 @@ async function loadHome() {
       e.stopPropagation();
       play(it);
     };
-    card.onclick = () => openItem(it);
+    addCardOpenButton(card, `Open ${it.title}`, () => openItem(it));
+    addCardActionsButton(card, it);
   });
   enhanceRails();
+  announce(`${visible.length} title${visible.length === 1 ? "" : "s"} on Home`);
 }
 
 // Plex/Netflix-style rail paging: glass ‹ › wedges at the rail edges that
@@ -1022,12 +1146,13 @@ let searchTimer = null;
 function openSearch() {
   closeSettings();
   searchPage.classList.remove("hidden");
-  searchInput.focus();
+  enterFullScreenSurface(searchInput);
   if (searchInput.value.trim()) runSearch(searchInput.value.trim());
 }
 
 function closeSearch() {
   searchPage.classList.add("hidden");
+  leaveFullScreenSurface();
 }
 
 document.getElementById("search-button").onclick = () =>
@@ -1078,6 +1203,7 @@ async function runSearch(q) {
 
   if (seriesCards.length === 0 && movies.length === 0) {
     searchResults.innerHTML = `<div class="modal-note">No results for “${escapeHtml(q)}”.</div>`;
+    announce(`No results for ${q}`);
     return;
   }
   searchResults.innerHTML = `
@@ -1093,6 +1219,7 @@ async function runSearch(q) {
         <div class="rail-track posters wrap">${movies.map((it) =>
           homeCard(it, playheads[it.id], true)).join("")}</div>
       </section>` : ""}`;
+  announce(`${seriesCards.length + movies.length} search result${seriesCards.length + movies.length === 1 ? "" : "s"}`);
   searchResults.querySelectorAll(".media-card").forEach((card) => {
     const it = itemById.get(card.dataset.id);
     if (!it) return;
@@ -1101,10 +1228,11 @@ async function runSearch(q) {
       closeSearch();
       play(it);
     };
-    card.onclick = () => {
+    addCardOpenButton(card, `Open ${it.title}`, () => {
       closeSearch();
       openItem(it);
-    };
+    });
+    addCardActionsButton(card, it);
   });
 }
 
@@ -1157,7 +1285,7 @@ function stopPlayback() {
   renderSubtitles();
   ccSelect.classList.add("hidden");
   ccOpts.classList.add("hidden");
-  ccPop.classList.add("hidden");
+  setSubtitlePopup(false);
   isHls = false;
   sessionOffsetS = 0;
   // NOTE: resumeAtS is set by play() AFTER this runs and consumed by
@@ -1168,7 +1296,9 @@ async function play(item) {
   currentItem = item;
   lastReportAt = 0;
   playerTitle.textContent = item.title;
+  const playerWasHidden = overlay.classList.contains("hidden");
   overlay.classList.remove("hidden");
+  if (playerWasHidden) enterFullScreenSurface(pcPlay);
   pcRate.textContent = "1×";
   pcVolume.value = String(video.volume);
   seekPlayed.style.width = "0";
@@ -1306,6 +1436,16 @@ async function startHls(item, startS) {
     setMode(`transcode · ${mode}${rung}`, mode === "vaapi" ? "" : "software");
   }
 
+  const nativeHls = video.canPlayType("application/vnd.apple.mpegurl");
+  if (!nativeHls && !window.Hls) {
+    try {
+      await ensureHlsLibrary();
+    } catch (e) {
+      playerTitle.textContent = `${item.title} — ${e.message}`;
+      toast(e.message, "err");
+      return;
+    }
+  }
   if (window.Hls && Hls.isSupported()) {
     currentHls = new Hls({
       maxBufferLength: 60,
@@ -1325,7 +1465,7 @@ async function startHls(item, startS) {
       video.currentTime = 0; // session timeline starts at the offset
       video.play().catch(() => {});
     });
-  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+  } else if (nativeHls) {
     video.src = url; // Safari native HLS
     if (wantHevc) video.onerror = () => {
       disableHevc();
@@ -1405,6 +1545,7 @@ async function loadSubtitles(item) {
   if (subTracks.length === 0) {
     ccSelect.classList.add("hidden");
     ccOpts.classList.add("hidden");
+    ccOpts.setAttribute("aria-expanded", "false");
     return;
   }
   ccSelect.classList.remove("hidden");
@@ -1550,6 +1691,11 @@ video.addEventListener("ended", () => {
 
 // --- subtitle appearance (size + background, persisted) ------------------------------
 
+function setSubtitlePopup(open) {
+  ccPop.classList.toggle("hidden", !open);
+  ccOpts.setAttribute("aria-expanded", String(open));
+}
+
 function applySubPrefs() {
   const size = localStorage.getItem("lumina.subSize") || "m";
   const bg = localStorage.getItem("lumina.subBg") || "on";
@@ -1557,15 +1703,21 @@ function applySubPrefs() {
   overlay.classList.toggle("subs-m", size === "m");
   overlay.classList.toggle("subs-l", size === "l");
   overlay.classList.toggle("subs-nobg", bg === "off");
-  ccPop.querySelectorAll("[data-size]").forEach((b) =>
-    b.classList.toggle("active", b.dataset.size === size));
-  ccPop.querySelectorAll("[data-bg]").forEach((b) =>
-    b.classList.toggle("active", b.dataset.bg === bg));
+  ccPop.querySelectorAll("[data-size]").forEach((b) => {
+    const active = b.dataset.size === size;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
+  });
+  ccPop.querySelectorAll("[data-bg]").forEach((b) => {
+    const active = b.dataset.bg === bg;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
+  });
 }
 
 ccOpts.onclick = (e) => {
   e.stopPropagation();
-  ccPop.classList.toggle("hidden");
+  setSubtitlePopup(ccPop.classList.contains("hidden"));
 };
 ccPop.querySelectorAll("[data-size]").forEach((b) => {
   b.onclick = () => {
@@ -1582,7 +1734,7 @@ ccPop.querySelectorAll("[data-bg]").forEach((b) => {
 document.addEventListener("click", (e) => {
   if (!ccPop.classList.contains("hidden") &&
       !ccPop.contains(e.target) && e.target !== ccOpts) {
-    ccPop.classList.add("hidden");
+    setSubtitlePopup(false);
   }
 });
 applySubPrefs();
@@ -1680,6 +1832,9 @@ function updateSeekUI() {
   }
   pcTimeCurrent.textContent = fmtClock(pos);
   pcTimeTotal.textContent = fmtClock(dur);
+  seekBar.setAttribute("aria-valuemax", String(Math.max(0, Math.round(dur))));
+  seekBar.setAttribute("aria-valuenow", String(Math.max(0, Math.round(pos))));
+  seekBar.setAttribute("aria-valuetext", `${fmtClock(pos)} of ${fmtClock(dur)}`);
 }
 
 video.addEventListener("timeupdate", updateSeekUI);
@@ -1703,6 +1858,15 @@ seekBar.addEventListener("pointerdown", (e) => {
 });
 seekBar.addEventListener("pointermove", (e) => {
   if (e.buttons) seekToAbsolute(fractionFromEvent(e) * displayDurationS());
+});
+seekBar.addEventListener("keydown", (e) => {
+  const deltas = { ArrowLeft: -5, ArrowDown: -5, ArrowRight: 5, ArrowUp: 5 };
+  if (e.key === "Home") seekToAbsolute(0);
+  else if (e.key === "End") seekToAbsolute(displayDurationS());
+  else if (deltas[e.key]) seekBy(deltas[e.key]);
+  else return;
+  e.preventDefault();
+  e.stopPropagation();
 });
 
 pcPlay.onclick = togglePlay;
@@ -1735,7 +1899,8 @@ function pokeControls() {
   overlay.classList.remove("idle");
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    if (!video.paused && !overlay.classList.contains("hidden")) {
+    if (!video.paused && !overlay.classList.contains("hidden") &&
+        !(overlay.contains(document.activeElement) && document.activeElement.matches(":focus-visible"))) {
       overlay.classList.add("idle");
     }
   }, 3000);
@@ -1743,6 +1908,8 @@ function pokeControls() {
 overlay.addEventListener("mousemove", pokeControls);
 overlay.addEventListener("pointerdown", pokeControls);
 overlay.addEventListener("touchstart", pokeControls, { passive: true });
+overlay.addEventListener("focusin", pokeControls);
+overlay.addEventListener("keydown", pokeControls);
 video.addEventListener("pause", () => {
   overlay.classList.remove("idle");
   clearTimeout(idleTimer);
@@ -1760,15 +1927,23 @@ const libsRows = document.getElementById("libs-rows");
 const libsStatus = document.getElementById("libs-status");
 
 function closeSettings() {
+  closeAvatarPicker(false);
   settingsPage.classList.add("hidden");
+  leaveFullScreenSurface();
   clearInterval(activityTimer); // Now Playing stops polling when hidden
   activityTimer = null;
 }
 
 async function openSettings(sectionId) {
+  const settingsWereHidden = settingsPage.classList.contains("hidden");
   settingsPage.classList.remove("hidden");
-  settingsPage.querySelectorAll(".settings-nav button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.section === sectionId));
+  if (settingsWereHidden) enterFullScreenSurface(document.getElementById("settings-close"));
+  settingsPage.querySelectorAll(".settings-nav button").forEach((b) => {
+    const active = b.dataset.section === sectionId;
+    b.classList.toggle("active", active);
+    if (active) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
+  });
   settingsPage.querySelectorAll(".settings-sections > section").forEach((sec) =>
     sec.classList.toggle("hidden", sec.id !== sectionId));
 
@@ -1952,7 +2127,7 @@ function renderManage() {
     return `
     <div class="manage-row" data-id="${it.id}">
       ${it.posterUrl
-        ? `<img src="${it.posterUrl}" alt="" loading="lazy" onerror="this.remove()">`
+        ? `<img src="${escapeHtml(it.posterUrl)}" alt="" loading="lazy" onerror="this.remove()">`
         : `<span class="match-noimg manage-noimg" style="${posterStyle(it.title)}">${posterInitials(it.title)}</span>`}
       <span class="manage-meta">
         <span class="manage-title">${escapeHtml(it.title)}</span>
@@ -1966,13 +2141,14 @@ function renderManage() {
     </div>`;
   }).join("") || `<div class="arr-error">No items match these filters.</div>`;
   rows.querySelectorAll(".manage-row").forEach((row) => {
-    row.onclick = () => {
-      const it = manageAll.find((x) => x.id === row.dataset.id);
-      if (it) {
+    const it = manageAll.find((x) => x.id === row.dataset.id);
+    if (it) {
+      addCardOpenButton(row, `Open match editor for ${it.title}`, () => {
         manageExpectRefresh = true;
         openMatchModal(it);
-      }
-    };
+      });
+      addCardActionsButton(row, it);
+    }
   });
 }
 
@@ -2010,7 +2186,7 @@ async function renderActivity() {
     : `<div class="activity-grid">${watching.map((w) => {
         const pct = w.durationMs > 0 ? Math.min(100, (w.positionMs / w.durationMs) * 100) : 0;
         return `<div class="activity-card">
-          ${w.posterUrl ? `<img class="activity-poster" src="${w.posterUrl}" alt="" loading="lazy">` : ""}
+          ${w.posterUrl ? `<img class="activity-poster" src="${escapeHtml(w.posterUrl)}" alt="" loading="lazy">` : ""}
           <div class="activity-meta">
             <div class="activity-title">${escapeHtml(w.title || w.itemId)}</div>
             <div class="activity-sub">
@@ -2076,6 +2252,25 @@ async function renderCapabilities() {
 // Users section: switch or create watch-state identities; per-user glass
 // avatars via the bundled set (PATCH /api/v1/users/{uid}).
 let avatarPickerUid = null;
+let avatarPickerReturnFocus = null;
+
+function setAvatarPickerBackgroundInert(inert) {
+  settingsPage.querySelector(".settings-head").inert = inert;
+  settingsPage.querySelector(".settings-nav").inert = inert;
+  document.querySelectorAll("#sec-users > :not(#avatar-picker)").forEach((el) => { el.inert = inert; });
+}
+
+function closeAvatarPicker(restoreFocus = true) {
+  const picker = document.getElementById("avatar-picker");
+  if (picker.classList.contains("hidden")) return;
+  picker.classList.add("hidden");
+  setAvatarPickerBackgroundInert(false);
+  avatarPickerUid = null;
+  if (restoreFocus && avatarPickerReturnFocus && avatarPickerReturnFocus.isConnected) {
+    avatarPickerReturnFocus.focus();
+  }
+  avatarPickerReturnFocus = null;
+}
 
 async function renderUsers() {
   const el = document.getElementById("users-list");
@@ -2083,14 +2278,15 @@ async function renderUsers() {
     users = await api("/api/v1/users");
     el.innerHTML = users.map((u) => `
       <div class="user-row${currentUser && u.id === currentUser.id ? " active" : ""}" data-uid="${u.id}">
-        <button class="user-avatar-btn" data-avatar-uid="${u.id}" title="Change avatar">${avatarHtml(u, "avatar avatar-md")}</button>
-        <span class="user-row-name">${escapeHtml(u.name)}</span>
-        ${currentUser && u.id === currentUser.id ? `<span class="badge">current</span>` : ""}
+        <button class="user-avatar-btn" data-avatar-uid="${u.id}" aria-label="Change avatar for ${escapeHtml(u.name)}" title="Change avatar">${avatarHtml(u, "avatar avatar-md")}</button>
+        <button class="user-switch" data-switch-uid="${u.id}">
+          <span class="user-row-name">${escapeHtml(u.name)}</span>
+          ${currentUser && u.id === currentUser.id ? `<span class="badge">current</span>` : ""}
+        </button>
       </div>`).join("");
-    el.querySelectorAll(".user-row").forEach((row) => {
-      row.onclick = (e) => {
-        if (e.target.closest("[data-avatar-uid]")) return; // avatar button has its own action
-        currentUser = users.find((u) => u.id === row.dataset.uid) || currentUser;
+    el.querySelectorAll("[data-switch-uid]").forEach((button) => {
+      button.onclick = () => {
+        currentUser = users.find((u) => u.id === button.dataset.switchUid) || currentUser;
         renderUserBadge();
         renderUsers();
       };
@@ -2104,40 +2300,48 @@ async function renderUsers() {
 }
 
 function openAvatarPicker(uid) {
+  avatarPickerReturnFocus = document.activeElement;
   avatarPickerUid = uid;
   const u = users.find((x) => x.id === uid);
   document.getElementById("avatar-picker-title").textContent =
     `Pick an avatar for ${u ? u.name : "user"}`;
   const grid = document.getElementById("avatar-picker-grid");
   grid.innerHTML = AVATARS.map((id) => `
-    <button class="avatar-option${u && u.avatar === id ? " selected" : ""}" data-aid="${id}">
-      <img src="/avatars/${id}.png" alt="Avatar ${id.slice(1)}">
+    <button type="button" class="avatar-option${u && u.avatar === id ? " selected" : ""}" data-aid="${id}"
+      aria-label="Use avatar ${id.slice(1)} for ${escapeHtml(u ? u.name : "user")}" aria-pressed="${u && u.avatar === id}">
+      <img src="/avatars/${id}.png" alt="">
     </button>`).join("");
   grid.querySelectorAll("[data-aid]").forEach((b) => {
     b.onclick = () => setAvatar(b.dataset.aid);
   });
-  document.getElementById("avatar-picker").classList.remove("hidden");
+  const picker = document.getElementById("avatar-picker");
+  picker.classList.remove("hidden");
+  setAvatarPickerBackgroundInert(true);
+  requestAnimationFrame(() =>
+    (grid.querySelector(".selected") || grid.querySelector("button"))?.focus());
 }
 
 async function setAvatar(aid) {
   if (!avatarPickerUid) return;
+  const uid = avatarPickerUid;
   try {
-    await api(`/api/v1/users/${avatarPickerUid}`, {
+    await api(`/api/v1/users/${uid}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ avatar: aid }),
     });
-    document.getElementById("avatar-picker").classList.add("hidden");
+    closeAvatarPicker(false);
     await loadUsers();   // refresh the badge + cached user list
     await renderUsers();
+    [...document.querySelectorAll("[data-avatar-uid]")]
+      .find((button) => button.dataset.avatarUid === uid)?.focus();
     toast("Avatar updated");
   } catch (e) {
     toast(e.message, "err");
   }
 }
 
-document.getElementById("avatar-picker-cancel").onclick = () =>
-  document.getElementById("avatar-picker").classList.add("hidden");
+document.getElementById("avatar-picker-cancel").onclick = () => closeAvatarPicker();
 document.getElementById("avatar-picker-reset").onclick = () => setAvatar("");
 
 document.getElementById("user-create").onclick = async () => {
@@ -2162,17 +2366,17 @@ function libraryRow(lib = { name: "", path: "", kind: "movies" }) {
   const row = document.createElement("div");
   row.className = "lib-row";
   row.innerHTML = `
-    <input class="lib-name" placeholder="Name (Movies)" value="${escapeHtml(lib.name)}">
-    <input class="lib-path" placeholder="/media/movies" value="${escapeHtml(lib.path)}">
-    <select class="lib-kind">
+    <input class="lib-name" aria-label="Library name" placeholder="Name (Movies)" value="${escapeHtml(lib.name)}">
+    <input class="lib-path" aria-label="Library path" placeholder="/media/movies" value="${escapeHtml(lib.path)}">
+    <select class="lib-kind" aria-label="Library type">
       <option value="movies"${lib.kind === "tv" ? "" : " selected"}>Movies</option>
       <option value="tv"${lib.kind === "tv" ? " selected" : ""}>TV</option>
     </select>
     <span class="lib-move">
-      <button class="lib-up" title="Move up">▲</button>
-      <button class="lib-down" title="Move down">▼</button>
+      <button class="lib-up" aria-label="Move library up" title="Move up">▲</button>
+      <button class="lib-down" aria-label="Move library down" title="Move down">▼</button>
     </span>
-    <button class="lib-remove" title="Remove"><span class="ic ic-close"></span></button>`;
+    <button class="lib-remove" aria-label="Remove library" title="Remove"><span class="ic ic-close"></span></button>`;
   row.querySelector(".lib-remove").onclick = () => row.remove();
   // Row order IS the library order — it persists on save and drives the
   // nav order, home rails, and scan order.
@@ -2249,10 +2453,10 @@ const arrConfigStatus = document.getElementById("arr-config-status");
 function arrRowHtml(inst) {
   return `
     <div class="arr-edit-row">
-      <input class="arr-name" placeholder="sonarr" value="${escapeHtml(inst.name || "")}">
-      <input class="arr-url" placeholder="http://sonarr:8989" value="${escapeHtml(inst.url || "")}">
-      <input class="arr-key" placeholder="API key" type="password" value="${escapeHtml(inst.apiKey || "")}">
-      <button class="lib-remove" title="Remove"><span class="ic ic-close"></span></button>
+      <input class="arr-name" aria-label="Instance name" placeholder="sonarr" value="${escapeHtml(inst.name || "")}">
+      <input class="arr-url" aria-label="Instance URL" placeholder="http://sonarr:8989" value="${escapeHtml(inst.url || "")}">
+      <input class="arr-key" aria-label="Instance API key" placeholder="API key" type="password" value="${escapeHtml(inst.apiKey || "")}">
+      <button class="lib-remove" aria-label="Remove instance" title="Remove"><span class="ic ic-close"></span></button>
     </div>`;
 }
 
@@ -2383,21 +2587,21 @@ async function loadArrStatus() {
     }
     el.innerHTML = statuses.map((st) => {
       if (!st.reachable) {
-        return `<h4>${st.name}</h4><div class="arr-error">unreachable — ${st.error || ""}</div>`;
+        return `<h4>${escapeHtml(st.name)}</h4><div class="arr-error">unreachable — ${escapeHtml(st.error || "")}</div>`;
       }
       const queue = (st.queue || []).map((q) => `
-        <div class="arr-row"><span class="t" title="${q.title}">${q.title}</span>
-        <span class="r">${fmtPct(q.sizeLeft, q.size)} ${q.timeLeft || q.status}</span></div>`).join("");
+        <div class="arr-row"><span class="t" title="${escapeHtml(q.title)}">${escapeHtml(q.title)}</span>
+        <span class="r">${fmtPct(q.sizeLeft, q.size)} ${escapeHtml(q.timeLeft || q.status)}</span></div>`).join("");
       const upcoming = (st.upcoming || []).slice(0, 8).map((c) => `
-        <div class="arr-row"><span class="t">${c.title}${c.subtitle ? " · " + c.subtitle : ""}</span>
-        <span class="r">${c.airDate}${c.hasFile ? " ✓" : ""}</span></div>`).join("");
-      return `<h4>${st.name} <span class="r" style="font-weight:400;color:var(--muted)">${st.version || ""}</span></h4>
+        <div class="arr-row"><span class="t">${escapeHtml(c.title)}${c.subtitle ? " · " + escapeHtml(c.subtitle) : ""}</span>
+        <span class="r">${escapeHtml(c.airDate)}${c.hasFile ? " ✓" : ""}</span></div>`).join("");
+      return `<h4>${escapeHtml(st.name)} <span class="r" style="font-weight:400;color:var(--muted)">${escapeHtml(st.version || "")}</span></h4>
         ${queue ? `<h5>Queue</h5>${queue}` : ""}
         ${upcoming ? `<h5>Next 7 days</h5>${upcoming}` : ""}
         ${!queue && !upcoming ? `<div class="arr-error">Idle — nothing queued or upcoming.</div>` : ""}`;
     }).join("");
   } catch (e) {
-    el.innerHTML = `<div class="arr-error">${e.message}</div>`;
+    el.innerHTML = `<div class="arr-error">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -2448,12 +2652,15 @@ function plexBody(apply) {
 document.getElementById("plex-test").onclick = async () => {
   plexResult.innerHTML = `<span class="plex-error">Testing…</span>`;
   try {
-    const q = new URLSearchParams({ url: plexUrl.value, token: plexToken.value });
-    const r = await api(`/api/v1/plex/test?${q}`);
-    plexResult.innerHTML = `<div class="summary">Connected to <b>${r.serverName || "Plex"}</b> — ${r.sections.length} movie/show section(s):
-      ${r.sections.map((s) => s.title).join(", ")}</div>`;
+    const r = await api("/api/v1/plex/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: plexUrl.value, token: plexToken.value }),
+    });
+    plexResult.innerHTML = `<div class="summary">Connected to <b>${escapeHtml(r.serverName || "Plex")}</b> — ${r.sections.length} movie/show section(s):
+      ${r.sections.map((s) => escapeHtml(s.title)).join(", ")}</div>`;
   } catch (e) {
-    plexResult.innerHTML = `<span class="plex-error">${e.message}</span>`;
+    plexResult.innerHTML = `<span class="plex-error">${escapeHtml(e.message)}</span>`;
   }
 };
 
@@ -2470,17 +2677,17 @@ async function runPlexImport(apply) {
       body: JSON.stringify(plexBody(apply)),
     });
     const rows = (r.items || []).map((it) => `
-      <tr><td title="${it.title}">${it.title}</td>
-      <td>${it.subtitle || ""}</td>
-      <td class="act-${it.action}">${it.action}</td>
-      <td>${it.method || "—"}${it.detail ? `<div class="libs-note">${escapeHtml(it.detail)}</div>` : ""}</td></tr>`).join("");
+      <tr><td title="${escapeHtml(it.title)}">${escapeHtml(it.title)}</td>
+      <td>${escapeHtml(it.subtitle || "")}</td>
+      <td class="act-${escapeHtml(it.action)}">${escapeHtml(it.action)}</td>
+      <td>${escapeHtml(it.method || "—")}${it.detail ? `<div class="libs-note">${escapeHtml(it.detail)}</div>` : ""}</td></tr>`).join("");
     plexResult.innerHTML = `
       <div class="summary">
         ${r.mode === "apply" ? "<b>Applied.</b> " : "<b>Preview</b> — nothing written. "}
         Scanned <b>${r.scanned}</b> · matched <b>${r.matched}</b> ·
         unmatched <b>${r.unmatched}</b> · already synced ${r.alreadySynced} ·
         to mark in Lumina <b>${r.markedLumina}</b> · to scrobble ${r.scrobbledPlex}
-        ${r.errors.length ? `<br><span class="plex-error">${r.errors.length} error(s): ${r.errors[0]}</span>` : ""}
+        ${r.errors.length ? `<br><span class="plex-error">${r.errors.length} error(s): ${escapeHtml(r.errors[0])}</span>` : ""}
       </div>
       ${rows ? `<table>${rows}</table>` : ""}
       ${r.itemsTruncated ? `<div class="plex-error">…list truncated</div>` : ""}`;
@@ -2490,12 +2697,15 @@ async function runPlexImport(apply) {
     }
     if (apply && activeLib) loadItems(activeLib); // watched badges refresh
   } catch (e) {
-    plexResult.innerHTML = `<span class="plex-error">${e.message}</span>`;
+    plexResult.innerHTML = `<span class="plex-error">${escapeHtml(e.message)}</span>`;
   }
 }
 
 function closePlayer() {
   overlay.classList.add("hidden");
+  statsOverlay.classList.add("hidden");
+  pcStats.setAttribute("aria-pressed", "false");
+  leaveFullScreenSurface();
   stopPlayback(); // flushes the final playhead report before teardown
   // The watch state just changed — refresh wherever the user lands.
   // Home (no activeLib) is where Continue Watching + the hero's RESUME
@@ -2515,7 +2725,9 @@ document.getElementById("pc-stop").onclick = closePlayer;
 // video element stats) so the overlay needs zero instrumentation in the
 // playback paths themselves.
 pcStats.onclick = () => {
-  statsOverlay.classList.toggle("hidden");
+  const open = statsOverlay.classList.contains("hidden");
+  statsOverlay.classList.toggle("hidden", !open);
+  pcStats.setAttribute("aria-pressed", String(open));
   updateStatsOverlay();
 };
 
@@ -2587,7 +2799,7 @@ setInterval(updateStatsOverlay, 1000);
     // up its counts via lastVisibleItems when it lands second.
     await Promise.all([loadLibraries(), loadHome()]);
   } catch (e) {
-    grid.innerHTML = `<div id="empty">Failed to reach Lumina API: ${e.message}</div>`;
+    grid.innerHTML = `<div id="empty">Failed to reach Lumina API: ${escapeHtml(e.message)}</div>`;
   }
 })();
 
@@ -2600,10 +2812,12 @@ function toast(msg, kind = "ok") {
   if (!holder) {
     holder = document.createElement("div");
     holder.id = "toasts";
+    holder.setAttribute("aria-label", "Notifications");
     document.body.appendChild(holder);
   }
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
+  el.setAttribute("role", kind === "err" ? "alert" : "status");
   el.textContent = msg;
   holder.appendChild(el);
   setTimeout(() => el.classList.add("gone"), 3600);
@@ -2611,36 +2825,46 @@ function toast(msg, kind = "ok") {
 }
 
 // --- card context menu ---------------------------------------------------------------
-// Right-click (long-press equivalent later) on ANY card — home rails or
-// library grid — instead of a "..." button cluttering every poster.
+// Available from each card’s Actions button and the platform context menu.
 // Pattern: one menu element, event delegation, close on any outside event.
 
 let cardMenu = null;
+let cardMenuReturnFocus = null;
 
-function closeCardMenu() {
+function closeCardMenu(restoreFocus = false) {
   if (cardMenu) {
     cardMenu.remove();
     cardMenu = null;
   }
+  if (restoreFocus && cardMenuReturnFocus && cardMenuReturnFocus.isConnected) {
+    cardMenuReturnFocus.focus();
+  }
+  cardMenuReturnFocus = null;
 }
 
 function menuItem(label, fn) {
   const b = document.createElement("button");
   b.type = "button";
+  b.setAttribute("role", "menuitem");
   b.innerHTML = label; // labels carry Lumina icon spans
   b.onclick = () => {
+    const returnFocus = cardMenuReturnFocus;
     closeCardMenu();
+    if (returnFocus && returnFocus.isConnected) returnFocus.focus();
     fn();
   };
   return b;
 }
 
-function openCardMenu(x, y, it) {
+function openCardMenu(x, y, it, returnFocus = document.activeElement) {
   closeCardMenu();
+  cardMenuReturnFocus = returnFocus;
   closeModal();
   const ph = playheads[it.id];
   cardMenu = document.createElement("div");
   cardMenu.className = "card-menu";
+  cardMenu.setAttribute("role", "menu");
+  cardMenu.setAttribute("aria-label", `Actions for ${it.title}`);
   if (it.state !== "missing") {
     // A missing item's file is gone — offering Play would just error.
     cardMenu.appendChild(
@@ -2685,11 +2909,22 @@ function openCardMenu(x, y, it) {
       }
     }));
   }
+  cardMenu.addEventListener("keydown", (e) => {
+    const items = [...cardMenu.querySelectorAll("[role=menuitem]")];
+    const i = items.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); closeCardMenu(true); return; }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1
+      : e.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+    items[next]?.focus();
+  });
   document.body.appendChild(cardMenu);
   // Clamp inside the viewport (menu may open near the right/bottom edge).
   const r = cardMenu.getBoundingClientRect();
-  cardMenu.style.left = `${Math.min(x, innerWidth - r.width - 8)}px`;
-  cardMenu.style.top = `${Math.min(y, innerHeight - r.height - 8)}px`;
+  cardMenu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+  cardMenu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+  cardMenu.querySelector("[role=menuitem]")?.focus();
 }
 
 document.addEventListener("contextmenu", (e) => {
@@ -2704,7 +2939,8 @@ document.addEventListener("contextmenu", (e) => {
   // Actions taken from a Manage row (fix match, re-identify) change the
   // catalog — rebuild the table when the resulting modal closes.
   if (card.classList.contains("manage-row")) manageExpectRefresh = true;
-  openCardMenu(e.clientX, e.clientY, it);
+  const r = card.getBoundingClientRect();
+  openCardMenu(e.clientX || r.left, e.clientY || r.bottom, it, document.activeElement);
 });
 document.addEventListener("click", (e) => {
   if (cardMenu && !cardMenu.contains(e.target)) closeCardMenu();
@@ -2750,8 +2986,8 @@ setInterval(async () => {
   if (!searchPage.classList.contains("hidden")) return;
   if (grid.classList.contains("detail")) return;
   try {
-    const fresh = await api("/api/v1/items");
-    const stamp = stampOf(fresh);
+    const revision = await api("/api/v1/items/revision");
+    const stamp = `${revision.count}:${revision.revision}`;
     if (catalogStamp && stamp !== catalogStamp) {
       refreshCurrentView();
     }
@@ -2762,11 +2998,15 @@ setInterval(async () => {
 // --- modals (info + fix match) ---------------------------------------------------------
 
 let activeModal = null;
+let modalReturnFocus = null;
+let modalSequence = 0;
 
 function closeModal() {
   if (activeModal) {
     activeModal.remove();
     activeModal = null;
+    if (modalReturnFocus && modalReturnFocus.isConnected) modalReturnFocus.focus();
+    modalReturnFocus = null;
   }
   // A fix-match opened from Settings → Manage just changed the catalog —
   // rebuild the table so the row's badge flips without a manual reload.
@@ -2778,13 +3018,15 @@ function closeModal() {
 
 function openModal(titleText) {
   closeModal();
+  modalReturnFocus = document.activeElement;
   const wrap = document.createElement("div");
   wrap.className = "modal-wrap";
+  const titleID = `modal-title-${++modalSequence}`;
   wrap.innerHTML = `
-    <div class="modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleID}">
       <div class="modal-head">
-        <h3></h3>
-        <button type="button" class="modal-close" title="Close"><span class="ic ic-close"></span></button>
+        <h3 id="${titleID}"></h3>
+        <button type="button" class="modal-close" aria-label="Close dialog" title="Close"><span class="ic ic-close"></span></button>
       </div>
       <div class="modal-body"></div>
     </div>`;
@@ -2795,23 +3037,57 @@ function openModal(titleText) {
   };
   document.body.appendChild(wrap);
   activeModal = wrap;
+  wrap.querySelector(".modal-close").focus();
   return wrap.querySelector(".modal-body");
+}
+
+function activeFocusSurface() {
+  const picker = document.getElementById("avatar-picker");
+  if (activeModal) return activeModal;
+  if (!picker.classList.contains("hidden")) return picker;
+  if (!overlay.classList.contains("hidden")) return overlay;
+  if (!searchPage.classList.contains("hidden")) return searchPage;
+  if (!settingsPage.classList.contains("hidden")) return settingsPage;
+  return null;
+}
+
+function trapSurfaceFocus(surface, e) {
+  const focusable = [...surface.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+  )].filter((el) => !el.closest(".hidden") && !el.closest("[inert]"));
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
 }
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    closeCardMenu();
-    closeModal();
-    closeSettings();
-    closeSearch();
-    closeUpNext();
+    if (cardMenu) closeCardMenu(true);
+    else if (!document.getElementById("avatar-picker").classList.contains("hidden")) closeAvatarPicker();
+    else if (activeModal) closeModal();
+    else if (!profileMenu.classList.contains("hidden")) closeProfileMenu(true);
+    else if (!ccPop.classList.contains("hidden")) setSubtitlePopup(false);
+    else if (!settingsPage.classList.contains("hidden")) closeSettings();
+    else if (!searchPage.classList.contains("hidden")) closeSearch();
+    else closeUpNext();
     return;
+  }
+  if (e.key === "Tab") {
+    const surface = activeFocusSurface();
+    if (surface) trapSurfaceFocus(surface, e);
   }
   // Player shortcuts — only while the overlay is up, and never while
   // typing in the subtitle select or a form field.
   if (overlay.classList.contains("hidden")) return;
   const tag = (e.target.tagName || "").toUpperCase();
-  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  if (["INPUT", "SELECT", "TEXTAREA", "BUTTON", "A"].includes(tag) || e.target.isContentEditable) return;
   switch (e.key) {
     case " ":
     case "k":
@@ -2914,7 +3190,7 @@ async function openMatchModal(it) {
       row.className = "match-row";
       row.innerHTML = `
         ${r.posterUrl
-          ? `<img src="${r.posterUrl}" alt="" loading="lazy" onerror="this.remove()">`
+          ? `<img src="${escapeHtml(r.posterUrl)}" alt="" loading="lazy" onerror="this.remove()">`
           : `<span class="match-noimg" style="${posterStyle(r.title)}">${posterInitials(r.title)}</span>`}
         <span class="match-meta">
           <span class="match-title">${escapeHtml(r.title)}${r.year ? ` <em>${r.year}</em>` : ""}</span>

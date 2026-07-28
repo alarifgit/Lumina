@@ -53,13 +53,13 @@ func (s *Server) shimSystemInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
-		"ServerName":            "Lumina",
-		"ProductName":           "Emby Server",
-		"Version":               "4.8.0.0", // a version the *arrs recognise
-		"Id":                    "lumina-0001",
-		"OperatingSystem":       "Linux",
-		"CanSelfRestart":        false,
-		"HasUpdateAvailable":    false,
+		"ServerName":             "Lumina",
+		"ProductName":            "Emby Server",
+		"Version":                "4.8.0.0", // a version the *arrs recognise
+		"Id":                     "lumina-0001",
+		"OperatingSystem":        "Linux",
+		"CanSelfRestart":         false,
+		"HasUpdateAvailable":     false,
 		"SupportsLibraryMonitor": true,
 	})
 }
@@ -71,12 +71,12 @@ func (s *Server) shimVirtualFolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type vf struct {
-		Name      string   `json:"Name"`
-		Locations []string `json:"Locations"`
-		CollectionType string `json:"CollectionType"`
+		Name           string   `json:"Name"`
+		Locations      []string `json:"Locations"`
+		CollectionType string   `json:"CollectionType"`
 	}
 	out := []vf{}
-	for _, root := range s.cfg.Libraries {
+	for _, root := range s.configSnapshot().Libraries {
 		ct := "movies"
 		if root.Kind == "tv" {
 			ct = "tvshows"
@@ -89,8 +89,8 @@ func (s *Server) shimVirtualFolders(w http.ResponseWriter, r *http.Request) {
 // mediaUpdatedRequest is the Jellyfin/Emby "notify these paths changed" body.
 type mediaUpdatedRequest struct {
 	Updates []struct {
-		Path        string `json:"Path"`
-		UpdateType  string `json:"UpdateType"` // Created, Modified, Deleted
+		Path       string `json:"Path"`
+		UpdateType string `json:"UpdateType"` // Created, Modified, Deleted
 	} `json:"Updates"`
 }
 
@@ -101,7 +101,7 @@ func (s *Server) shimMediaUpdated(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req mediaUpdatedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
@@ -123,7 +123,7 @@ func (s *Server) shimLibraryRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.shimAuthorized(w, r) {
 		return
 	}
-	for _, root := range s.cfg.Libraries {
+	for _, root := range s.configSnapshot().Libraries {
 		s.sc.Notify(root.Path) // directory paths → ScanRoot
 	}
 	w.WriteHeader(http.StatusNoContent)

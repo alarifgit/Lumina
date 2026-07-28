@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Lumina</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/brand/android-chrome-192x192.png">
@@ -11,15 +11,15 @@
 </head>
 <body>
 <header>
-  <h1 id="logo-word"><img id="logo-lockup" src="/brand/wordmark.png" alt="Lumina"></h1>
-  <nav id="libraries"></nav>
+  <h1 id="logo-word"><img id="logo-lockup" src="/brand/wordmark.webp" width="336" height="132" alt="Lumina" decoding="async"></h1>
+  <nav id="libraries" aria-label="Libraries"></nav>
   <div id="header-actions" class="seg-control">
-    <button id="search-button" title="Search"><span class="ic ic-search"></span></button>
-    <button id="arr-button" title="Downloads & upcoming"><span class="ic ic-download"></span></button>
-    <button id="libs-button" title="Settings"><span class="ic ic-settings"></span></button>
+    <button id="search-button" aria-label="Search" title="Search"><span class="ic ic-search"></span></button>
+    <button id="arr-button" aria-label="Downloads and upcoming" title="Downloads & upcoming"><span class="ic ic-download"></span></button>
+    <button id="libs-button" aria-label="Settings" title="Settings"><span class="ic ic-settings"></span></button>
     <div id="profile-wrap">
-      <button id="user-badge" title="Profile"></button>
-      <div id="profile-menu" class="hidden">
+      <button id="user-badge" aria-label="Profile" aria-expanded="false" aria-controls="profile-menu" title="Profile"></button>
+      <div id="profile-menu" class="hidden" role="region" aria-label="Profile options">
         <div id="profile-head"></div>
         <div class="profile-menu-label">Switch user</div>
         <div id="profile-users"></div>
@@ -29,13 +29,13 @@
   </div>
 </header>
 
-<div id="settings-page" class="hidden">
+<div id="settings-page" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="settings-head">
-    <h2>Settings</h2>
+    <h2 id="settings-title">Settings</h2>
     <button id="settings-close" aria-label="Close settings" title="Close (Esc)"><span class="ic ic-close"></span></button>
   </div>
   <div class="settings-body">
-    <aside class="settings-nav">
+    <aside class="settings-nav" aria-label="Settings sections">
       <button data-section="sec-overview" class="active">Overview</button>
       <button data-section="sec-activity">Now Playing</button>
       <button data-section="sec-libraries">Libraries</button>
@@ -72,10 +72,10 @@
       </section>
       <section id="sec-manage" class="hidden">
         <h3>Library items</h3>
-        <p class="libs-note">Every indexed item, with its match state. Click a row to fix its match; right-click for the full action menu. "Unidentified" = no TMDB match yet (procedural poster) — this is a different axis from the Plex sync's unmatched list, which joins Plex entries to Lumina items.</p>
+        <p class="libs-note">Every indexed item, with its match state. Open a row to fix its match; use its Actions button for the full menu. "Unidentified" = no TMDB match yet (procedural poster) — this is a different axis from the Plex sync's unmatched list, which joins Plex entries to Lumina items.</p>
         <div class="manage-controls">
-          <select id="manage-lib"><option value="">All libraries</option></select>
-          <select id="manage-status">
+          <select id="manage-lib" aria-label="Filter by library"><option value="">All libraries</option></select>
+          <select id="manage-status" aria-label="Filter by match status">
             <option value="">All statuses</option>
             <option value="unmatched">Unidentified</option>
             <option value="matched">Matched</option>
@@ -83,7 +83,7 @@
             <option value="missing">Missing</option>
             <option value="extra">Extras</option>
           </select>
-          <input id="manage-q" type="search" placeholder="Filter titles…">
+          <input id="manage-q" type="search" aria-label="Filter library titles" placeholder="Filter titles…">
         </div>
         <div id="manage-summary" class="libs-note"></div>
         <div id="manage-rows"></div>
@@ -101,9 +101,9 @@
         <div id="plex-sync-status" class="libs-note"></div>
         <div id="plex-report"></div>
         <div class="plex-form">
-          <input id="plex-url" placeholder="Plex URL (https://plex.example.com)">
-          <input id="plex-token" placeholder="Plex token" type="password">
-          <select id="plex-direction">
+          <input id="plex-url" aria-label="Plex URL" placeholder="Plex URL (https://plex.example.com)">
+          <input id="plex-token" aria-label="Plex token" placeholder="Plex token" type="password">
+          <select id="plex-direction" aria-label="Plex sync direction">
             <option value="pull">Pull: Plex → Lumina</option>
             <option value="push">Push: Lumina → Plex</option>
             <option value="two-way">Two-way</option>
@@ -127,10 +127,10 @@
         <p class="libs-note">Watch state is tracked per user. Click a user to switch; click an avatar to change it.</p>
         <div id="users-list"></div>
         <div class="user-create">
-          <input id="user-new-name" placeholder="New user name">
+          <input id="user-new-name" aria-label="New user name" placeholder="New user name">
           <button id="user-create">Add user</button>
         </div>
-        <div id="avatar-picker" class="hidden">
+        <div id="avatar-picker" class="hidden" role="dialog" aria-modal="true" aria-labelledby="avatar-picker-title">
           <div class="avatar-picker-card">
             <h4 id="avatar-picker-title">Pick an avatar</h4>
             <div id="avatar-picker-grid"></div>
@@ -145,18 +145,19 @@
   </div>
 </div>
 
-<div id="search-page" class="hidden">
+<div id="search-page" class="hidden" role="dialog" aria-modal="true" aria-label="Search library">
   <div class="search-head">
     <span class="ic ic-search"></span>
-    <input id="search-input" type="search" placeholder="Search titles…" autocomplete="off">
+    <input id="search-input" type="search" aria-label="Search titles" placeholder="Search titles…" autocomplete="off">
     <button id="search-close" aria-label="Close search" title="Close (Esc)"><span class="ic ic-close"></span></button>
   </div>
   <div id="search-results"><div class="modal-note">Type to search your library.</div></div>
 </div>
 
-<main id="grid" aria-live="polite"></main>
+<div id="app-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<main id="grid"></main>
 
-<div id="player-overlay" class="hidden">
+<div id="player-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Media player">
   <div id="player-bar">
     <span id="player-title"></span>
     <span id="player-mode" class="badge"></span>
@@ -165,7 +166,7 @@
     </label>
     <button id="player-close" aria-label="Close player"><span class="ic ic-close"></span></button>
   </div>
-  <video id="video" autoplay crossorigin="anonymous"></video>
+  <video id="video" autoplay playsinline crossorigin="anonymous"></video>
   <div id="sub-overlay"></div>
   <div id="player-spinner" class="hidden"><div class="spin-ring"></div></div>
   <div id="stats-overlay" class="hidden"></div>
@@ -182,7 +183,7 @@
   <div id="player-controls">
     <div id="seek-row">
       <span id="pc-time-current">0:00</span>
-      <div id="seek-bar" aria-label="Seek">
+      <div id="seek-bar" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
         <div id="seek-buffered"></div>
         <div id="seek-played"></div>
       </div>
@@ -190,37 +191,37 @@
     </div>
     <div id="controls-row">
       <div class="pc-group pc-left">
-        <span class="ic ic-volume" id="pc-volume-icon"></span>
-        <input id="pc-volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
+        <span class="ic ic-volume" id="pc-volume-icon" aria-hidden="true"></span>
+        <input id="pc-volume" aria-label="Volume" type="range" min="0" max="1" step="0.05" value="1" title="Volume">
       </div>
       <div class="pc-group pc-center">
-        <button id="pc-back" title="Back 10 seconds (←)"><span class="ic ic-back10"></span></button>
+        <button id="pc-back" aria-label="Back 10 seconds" title="Back 10 seconds (←)"><span class="ic ic-back10"></span></button>
         <button id="pc-play" aria-label="Play or pause" title="Play/pause (space)"><span class="ic ic-play"></span></button>
-        <button id="pc-fwd" title="Forward 10 seconds (→)"><span class="ic ic-fwd10"></span></button>
-        <button id="pc-next" class="hidden" title="Next episode"><span class="ic ic-back ic-flip"></span></button>
-        <button id="pc-stop" title="Stop playback"><span class="ic ic-stop"></span></button>
+        <button id="pc-fwd" aria-label="Forward 10 seconds" title="Forward 10 seconds (→)"><span class="ic ic-fwd10"></span></button>
+        <button id="pc-next" class="hidden" aria-label="Next episode" title="Next episode"><span class="ic ic-back ic-flip"></span></button>
+        <button id="pc-stop" aria-label="Stop playback" title="Stop playback"><span class="ic ic-stop"></span></button>
       </div>
       <div class="pc-group pc-right">
-        <select id="pc-quality" title="Quality">
+        <select id="pc-quality" aria-label="Playback quality" title="Quality">
           <option value="original">Original</option>
           <option value="1080p">1080p · 8 Mbps</option>
           <option value="720p">720p · 4 Mbps</option>
           <option value="480p">480p · 2 Mbps</option>
         </select>
-        <select id="cc-select" class="hidden" title="Subtitles"></select>
-        <button id="cc-opts" class="hidden" title="Subtitle appearance">Aa</button>
-        <div id="cc-pop" class="hidden">
+        <select id="cc-select" class="hidden" aria-label="Subtitles" title="Subtitles"></select>
+        <button id="cc-opts" class="hidden" aria-label="Subtitle appearance" aria-expanded="false" aria-controls="cc-pop" title="Subtitle appearance">Aa</button>
+        <div id="cc-pop" class="hidden" role="group" aria-label="Subtitle appearance">
           <div class="cc-pop-row">
             <span>Size</span>
-            <button data-size="s">S</button><button data-size="m" class="active">M</button><button data-size="l">L</button>
+            <button data-size="s" aria-pressed="false">S</button><button data-size="m" class="active" aria-pressed="true">M</button><button data-size="l" aria-pressed="false">L</button>
           </div>
           <div class="cc-pop-row">
             <span>Background</span>
-            <button data-bg="on" class="active">On</button><button data-bg="off">Off</button>
+            <button data-bg="on" class="active" aria-pressed="true">On</button><button data-bg="off" aria-pressed="false">Off</button>
           </div>
         </div>
-        <button id="pc-rate" title="Playback speed">1×</button>
-        <button id="pc-stats" title="Playback stats"><span class="ic ic-info"></span></button>
+        <button id="pc-rate" aria-label="Playback speed" title="Playback speed">1×</button>
+        <button id="pc-stats" aria-label="Playback stats" aria-pressed="false" aria-controls="stats-overlay" title="Playback stats"><span class="ic ic-info"></span></button>
         <button id="pc-full" aria-label="Fullscreen" title="Fullscreen (f)"><span class="ic ic-fullscreen"></span></button>
       </div>
     </div>
@@ -228,7 +229,6 @@
   <details id="media-details"><summary>Media info</summary><p id="media-overview"></p><pre id="media-info-json"></pre></details>
 </div>
 
-<script src="/hls.min.js"></script>
-<script src="/app.js"></script>
+<script src="/app.js" defer></script>
 </body>
 </html>

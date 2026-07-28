@@ -13,17 +13,18 @@ import (
 // GET /api/v1/arr/status — outbound reachability, download queue and
 // 7-day calendar for every configured Radarr/Sonarr instance.
 func (s *Server) arrStatus(w http.ResponseWriter, r *http.Request) {
-	if len(s.cfg.Arr) == 0 {
+	instances := s.configSnapshot().Arr
+	if len(instances) == 0 {
 		writeJSON(w, []any{})
 		return
 	}
-	writeJSON(w, arr.FetchStatuses(r.Context(), s.cfg.Arr))
+	writeJSON(w, arr.FetchStatuses(r.Context(), instances))
 }
 
 // GET /api/v1/config/arr — the configured instances, so the settings UI
 // can render the editor. API keys round-trip in full (local server).
 func (s *Server) arrConfigGet(w http.ResponseWriter, _ *http.Request) {
-	out := s.cfg.Arr
+	out := s.configSnapshot().Arr
 	if out == nil {
 		out = []config.ArrInstance{}
 	}
@@ -51,10 +52,13 @@ func (s *Server) arrConfigSave(w http.ResponseWriter, r *http.Request) {
 		}
 		clean = append(clean, inst)
 	}
+	s.cfgMu.Lock()
 	if err := config.SaveArr(s.configPath, clean); err != nil {
+		s.cfgMu.Unlock()
 		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.cfg.Arr = clean
+	s.cfg.Arr = append([]config.ArrInstance(nil), clean...)
+	s.cfgMu.Unlock()
 	writeJSON(w, clean)
 }

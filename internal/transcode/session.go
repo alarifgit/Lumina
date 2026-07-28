@@ -48,6 +48,23 @@ type Manager struct {
 	stopReap chan struct{}
 }
 
+type synchronizedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
 type Session struct {
 	Key  string `json:"key"`
 	Dir  string `json:"dir"`
@@ -58,7 +75,7 @@ type Session struct {
 	lastTouch time.Time
 	dead      bool
 	completed bool // ffmpeg exited 0: VOD playlist is complete on disk
-	logTail   bytes.Buffer
+	logTail   synchronizedBuffer
 }
 
 func NewManager(dataDir, ffmpeg, device string, caps Capabilities) (*Manager, error) {
@@ -104,13 +121,13 @@ func (m *Manager) ActiveSessions() []Session {
 // SessionDebug is the admin troubleshooting view: everything needed to
 // answer "why is this transcode not producing output" without docker exec.
 type SessionDebug struct {
-	Key      string   `json:"key"`
-	Mode     string   `json:"mode"`
-	Dead     bool     `json:"dead"`
-	Completed bool    `json:"completed"`
-	IdleS    int      `json:"idleSeconds"`
-	Files    []string `json:"files"` // segment/playlist files currently on disk
-	LogTail  string   `json:"logTail"`
+	Key       string   `json:"key"`
+	Mode      string   `json:"mode"`
+	Dead      bool     `json:"dead"`
+	Completed bool     `json:"completed"`
+	IdleS     int      `json:"idleSeconds"`
+	Files     []string `json:"files"` // segment/playlist files currently on disk
+	LogTail   string   `json:"logTail"`
 }
 
 // DebugSessions snapshots every session with its ffmpeg log tail and the

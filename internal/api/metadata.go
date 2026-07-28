@@ -27,7 +27,7 @@ func (s *Server) rematchUnidentified(w http.ResponseWriter, r *http.Request) {
 		}
 		hint := metadata.IdentifyHint{}
 		if it.Kind == library.KindEpisode && len(it.Paths) > 0 {
-			for _, root := range s.cfg.Libraries {
+			for _, root := range s.configSnapshot().Libraries {
 				if root.Name == it.Library {
 					hint = metadata.HintFor(root.Path, it.Paths[0], true)
 					break
@@ -55,7 +55,7 @@ func (s *Server) refreshMetadata(w http.ResponseWriter, r *http.Request) {
 	// without them, absolute-numbered anime can never re-match.
 	hint := metadata.IdentifyHint{}
 	if it.Kind == library.KindEpisode && len(it.Paths) > 0 {
-		for _, root := range s.cfg.Libraries {
+		for _, root := range s.configSnapshot().Libraries {
 			if root.Name == it.Library {
 				hint = metadata.HintFor(root.Path, it.Paths[0], true)
 				break

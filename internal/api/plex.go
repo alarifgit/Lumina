@@ -17,7 +17,7 @@ import (
 // GET /api/v1/config/plex — the saved Plex connection, so the settings UI
 // can prefill. Local single-user server: the token round-trips in full.
 func (s *Server) plexConfigGet(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, s.cfg.Plex)
+	writeJSON(w, s.configSnapshot().Plex)
 }
 
 // POST /api/v1/config/plex — persist URL + token to lumina.json (atomic
@@ -30,21 +30,25 @@ func (s *Server) plexConfigSave(w http.ResponseWriter, r *http.Request) {
 	}
 	body.URL = strings.TrimSpace(body.URL)
 	body.Token = strings.TrimSpace(body.Token)
+	s.cfgMu.Lock()
 	if err := config.SavePlex(s.configPath, body); err != nil {
+		s.cfgMu.Unlock()
 		http.Error(w, "save config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.cfg.Plex = body
+	s.cfgMu.Unlock()
 	writeJSON(w, body)
 }
 
 func (s *Server) plexClient(urlOverride, tokenOverride string) *plex.Client {
 	url, token := urlOverride, tokenOverride
+	plexCfg := s.configSnapshot().Plex
 	if url == "" {
-		url = s.cfg.Plex.URL
+		url = plexCfg.URL
 	}
 	if token == "" {
-		token = s.cfg.Plex.Token
+		token = plexCfg.Token
 	}
 	return plex.NewClient(url, token)
 }
@@ -62,7 +66,19 @@ func (s *Server) episodeLister() plex.EpisodeLister {
 // GET /api/v1/plex/test — verify connectivity; query params url/token
 // override the configured ones (handy before saving config).
 func (s *Server) plexTest(w http.ResponseWriter, r *http.Request) {
-	c := s.plexClient(r.URL.Query().Get("url"), r.URL.Query().Get("token"))
+	url, token := r.URL.Query().Get("url"), r.URL.Query().Get("token")
+	if r.Method == http.MethodPost {
+		var body struct {
+			URL   string `json:"url"`
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		url, token = body.URL, body.Token
+	}
+	c := s.plexClient(url, token)
 	if !c.Available() {
 		http.Error(w, "plex url+token required (query params or config)", http.StatusBadRequest)
 		return
@@ -85,7 +101,9 @@ func (s *Server) plexTest(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/v1/plex/import — preview or apply the watch-state migration.
 // Body: {"userId":"usr-1","direction":"pull|push|two-way","apply":false,
-//        "url":"...","token":"..."} — url/token optional if configured.
+//
+//	"url":"...","token":"..."} — url/token optional if configured.
+//
 // apply=false is a pure preview with zero writes; ALWAYS preview first.
 func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -95,7 +113,7 @@ func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 		URL       string `json:"url"`
 		Token     string `json:"token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		http.Error(w, "bad body", http.StatusBadRequest)
 		return
 	}
@@ -123,8 +141,10 @@ func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 	// Only an APPLY becomes "the last sync" — previews are read-only
 	// rehearsals and must not overwrite the real status panel.
 	if body.Apply {
+		s.plexStateMu.Lock()
 		s.plexReport = reportView("manual", report)
 		s.plexSyncLast = time.Now()
+		s.plexStateMu.Unlock()
 	}
 	writeJSON(w, report)
 }
@@ -134,7 +154,7 @@ func (s *Server) plexImport(w http.ResponseWriter, r *http.Request) {
 // from plex.syncIntervalMinutes: 0 = 30-minute default, negative = off.
 // The first run fires 45s after boot rather than a full interval in.
 func (s *Server) RunPlexSync(ctx context.Context) {
-	interval := s.cfg.Plex.SyncIntervalMinutes
+	interval := s.configSnapshot().Plex.SyncIntervalMinutes
 	if interval == 0 {
 		interval = 30
 	}
@@ -160,7 +180,8 @@ func (s *Server) RunPlexSync(ctx context.Context) {
 }
 
 func (s *Server) plexSyncAll(ctx context.Context) {
-	if s.cfg.Plex.URL == "" || s.cfg.Plex.Token == "" {
+	plexCfg := s.configSnapshot().Plex
+	if plexCfg.URL == "" || plexCfg.Token == "" {
 		return
 	}
 	if !s.plexSyncMu.TryLock() {
@@ -185,10 +206,13 @@ func (s *Server) plexSyncAll(ctx context.Context) {
 		marked += report.MarkedLumina
 		reps = append(reps, report)
 	}
+	s.plexStateMu.Lock()
 	s.plexSyncLast = time.Now()
 	s.plexReport = reportView("auto", reps...)
 	s.plexSyncSummary = fmt.Sprintf("pulled for %d user(s) · %d playhead(s) imported", pulled, marked)
-	log.Printf("plex: auto-sync: %s", s.plexSyncSummary)
+	summary := s.plexSyncSummary
+	s.plexStateMu.Unlock()
+	log.Printf("plex: auto-sync: %s", summary)
 }
 
 // plexSyncReportView is the compact, JSON-ready digest of the last import
@@ -251,24 +275,26 @@ func reportView(mode string, reps ...*plex.ImportReport) *plexSyncReportView {
 // read is TryLock-best-effort: busy = report omitted + running:true rather
 // than a hung HTTP request.
 func (s *Server) plexSyncStatus(w http.ResponseWriter, _ *http.Request) {
-	interval := s.cfg.Plex.SyncIntervalMinutes
+	interval := s.configSnapshot().Plex.SyncIntervalMinutes
 	if interval == 0 {
 		interval = 30
 	}
-	running := false
-	var report *plexSyncReportView
-	if s.plexSyncMu.TryLock() {
-		report = s.plexReport
+	running := !s.plexSyncMu.TryLock()
+	if !running {
 		s.plexSyncMu.Unlock()
-	} else {
-		running = true
 	}
+	s.plexStateMu.RLock()
+	report := s.plexReport
+	lastRun := s.plexSyncLast
+	summary := s.plexSyncSummary
+	s.plexStateMu.RUnlock()
+	plexCfg := s.configSnapshot().Plex
 	writeJSON(w, map[string]any{
-		"configured":      s.cfg.Plex.URL != "" && s.cfg.Plex.Token != "",
+		"configured":      plexCfg.URL != "" && plexCfg.Token != "",
 		"enabled":         interval > 0,
 		"intervalMinutes": interval,
-		"lastRun":         s.plexSyncLast,
-		"summary":         s.plexSyncSummary,
+		"lastRun":         lastRun,
+		"summary":         summary,
 		"running":         running,
 		"report":          report,
 	})

@@ -127,9 +127,11 @@ def main() -> None:
         if xs:
             wm = wm.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
         wm.save(ROOT / "brand-candidates" / "wordmark-transparent.png")
-        target_h = 512
+        # Header renders at 44px; a 132px derivative stays crisp at 3× DPR
+        # without embedding the full 512px-tall brand master in every binary.
+        target_h = 132
         wm.resize((int(target_h * wm.width / wm.height), target_h),
-                  Image.LANCZOS).save(OUT / "wordmark.png")
+                  Image.LANCZOS).save(OUT / "wordmark.webp", "WEBP", lossless=True, method=6)
 
     print("wrote:", *[p.name for p in sorted(OUT.iterdir())], sep="\n  ")
 

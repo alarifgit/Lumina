@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 // GET /api/v1/users
@@ -22,8 +23,13 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
 		http.Error(w, "need {\"name\": ...}", http.StatusBadRequest)
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if body.Name == "" || len([]rune(body.Name)) > 80 {
+		http.Error(w, "name must contain 1–80 characters", http.StatusBadRequest)
 		return
 	}
 	u, err := s.store.CreateUser(body.Name)
@@ -41,7 +47,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Avatar string `json:"avatar"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
@@ -56,19 +62,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// validAvatarID accepts "a" + 1-3 digits ("a1"…"a999") — the bundled avatar
-// set is enumerated by the client, the server only guards the shape so a
-// bogus id can never become a broken <img> path.
+// validAvatarID accepts only assets actually bundled with the web client.
 func validAvatarID(id string) bool {
-	if len(id) < 2 || len(id) > 4 || id[0] != 'a' {
-		return false
-	}
-	for _, c := range id[1:] {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
+	return len(id) == 2 && id[0] == 'a' && id[1] >= '1' && id[1] <= '6'
 }
 
 // GET /api/v1/users/{uid}/playheads — derived state for every item the
@@ -113,8 +109,12 @@ func (s *Server) postPlayhead(w http.ResponseWriter, r *http.Request) {
 		PositionMs int64  `json:"positionMs"`
 		DurationMs int64  `json:"durationMs"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil || body.UserID == "" {
 		http.Error(w, "need {\"userId\",\"positionMs\",\"durationMs\"}", http.StatusBadRequest)
+		return
+	}
+	if body.DurationMs < 0 {
+		http.Error(w, "durationMs cannot be negative", http.StatusBadRequest)
 		return
 	}
 	if body.PositionMs < 0 {
