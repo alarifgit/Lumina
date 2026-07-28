@@ -362,6 +362,7 @@ func (s *Scanner) ScanRoot(ctx context.Context, root config.LibraryRoot) error {
 // Genuine same-content duplicates (a file and its copy) are left attached:
 // that IS the same file, whatever its name says.
 func (s *Scanner) reconcileSplitPaths(ctx context.Context, root config.LibraryRoot) {
+	checked, rehomed, verified := 0, 0, 0
 	for _, it := range s.store.List(root.Name) {
 		if ctx.Err() != nil {
 			return
@@ -369,7 +370,19 @@ func (s *Scanner) reconcileSplitPaths(ctx context.Context, root config.LibraryRo
 		if len(it.Paths) < 2 {
 			continue
 		}
-		s.repairItemPaths(root, it)
+		checked++
+		switch n := s.repairItemPaths(root, it); {
+		case n > 0:
+			rehomed += n
+		case n == 0:
+			verified++
+		}
+	}
+	// Always summarise: "no reconcile lines" must mean "nothing to do",
+	// never "did it run?" — the line also marks the end of the boot scan.
+	if checked > 0 {
+		log.Printf("scanner: reconcile %q: %d multi-path item(s) checked — %d path(s) re-homed, %d item(s) verified same-content",
+			root.Name, checked, rehomed, verified)
 	}
 }
 
@@ -379,7 +392,10 @@ func (s *Scanner) reconcileSplitPaths(ctx context.Context, root config.LibraryRo
 // landing on (or creating) the item its content actually belongs to, which
 // also queues it for metadata identification. If the stored hash matches
 // NONE of the files, the item is re-keyed to its first path's true hash.
-func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) {
+// Returns the number of detached paths; 0 means every path verified as the
+// same content; -1 means the item was skipped (unreadable path, or a
+// re-key refused by UNIQUE(hash, library)).
+func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int {
 	type checked struct {
 		path string
 		hash string
@@ -389,11 +405,15 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) {
 	for _, p := range it.Paths {
 		fi, err := os.Stat(p)
 		if err != nil {
-			return // a path unreadable (dropped mount?) — touch nothing
+			log.Printf("scanner: reconcile %s (%q): stat %s: %v — skipped",
+				it.ID, it.Title, p, err)
+			return -1
 		}
 		h, err := ContentHash(p, fi.Size())
 		if err != nil {
-			return
+			log.Printf("scanner: reconcile %s (%q): hash %s: %v — skipped",
+				it.ID, it.Title, p, err)
+			return -1
 		}
 		all = append(all, checked{p, h, fi})
 	}
@@ -409,11 +429,12 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) {
 		if err := s.store.RekeyItemHash(it.ID, ownerHash); err != nil {
 			log.Printf("scanner: reconcile %s (%q): re-key refused (%v) — left as-is",
 				it.ID, it.Title, err)
-			return
+			return -1
 		}
 		log.Printf("scanner: reconcile %s (%q): re-keyed to %s's content hash",
 			it.ID, it.Title, filepath.Base(all[0].path))
 	}
+	detached := 0
 	for _, c := range all {
 		if c.hash == ownerHash {
 			continue
@@ -432,9 +453,17 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) {
 			log.Printf("scanner: reconcile: re-index %s: %v", c.path, err)
 			continue
 		}
+		detached++
 		log.Printf("scanner: reconcile: %s detached from %s (%q) — re-homed by content",
 			filepath.Base(c.path), it.ID, it.Title)
 	}
+	if detached == 0 {
+		// Same content at every path — worth one line, because THIS is the
+		// answer when a "missing" episode turns out to be a duplicate file.
+		log.Printf("scanner: reconcile %s (%q): all %d paths are the SAME content — keeping merged",
+			it.ID, it.Title, len(all))
+	}
+	return detached
 }
 
 func (s *Scanner) sweepLoop(ctx context.Context, root config.LibraryRoot) {
