@@ -132,7 +132,10 @@ async function api(path, opts = {}) {
     const res = await fetch(path, { ...fetchOpts, signal: ctrl.signal });
     if (res.status === 204) return null;
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    return res.json();
+    // Some endpoints legitimately answer with an empty body (202 Accepted
+    // queue-acks) — res.json() would throw "Unexpected end of JSON input".
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
   } catch (e) {
     if (e.name === "AbortError") throw new Error("server took too long to respond — check docker logs");
     throw e;
@@ -617,6 +620,23 @@ function seTag(it) {
   return se.s > 0 ? `S${se.s}E${se.e}` : `E${se.e}`;
 }
 
+// seChipTag: the zero-padded, spaced form for the episode-list chip —
+// "S34 · E08" reads like Plex, "S34E8" does not.
+function seChipTag(it) {
+  const se = episodeSE(it);
+  if (!se) return "";
+  const ee = String(se.e).padStart(2, "0");
+  return se.s > 0 ? `S${se.s} · E${ee}` : `E${ee}`;
+}
+
+// "2026-06-14" → "14 Jun 2026" — air dates read better humanised.
+function fmtDate(iso) {
+  if (!iso) return "";
+  const d = new Date(`${iso}T00:00:00`);
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
 // "Bleach E362 · The Final Getsuga" → "The Final Getsuga"; bare markers
 // fall back to "Episode 362".
 function episodeLabel(it, key) {
@@ -753,7 +773,8 @@ function openSeries(key, anchor) {
             : `<i class="num">${se.e || "–"}</i>`}</span>
           <div class="ep-meta">
             <div class="ep-title">${escapeHtml(title)}</div>
-            <div class="ep-sub">${[seTag(it), meta && meta.airDate, fmtBytes(it.sizeBytes),
+            <div class="ep-sub">${seChipTag(it) ? `<span class="ep-chip">${seChipTag(it)}</span>` : ""}${[
+              fmtDate(meta && meta.airDate), fmtBytes(it.sizeBytes),
               ph && !ph.watched && pct > 0 ? fmtLeftMs(ph) : ""].filter(Boolean).join(" · ")}</div>
             ${pct > 0 && !(ph && ph.watched)
               ? `<div class="progress ep-progress"><div class="progress-fill" style="width:${pct}%"></div></div>` : ""}
@@ -2706,6 +2727,35 @@ function refreshCurrentView() {
   else if (activeLib) loadItems(activeLib);
   else loadHome();
 }
+
+// --- live catalog updates ----------------------------------------------------
+// Plex-style "it just appears": poll the catalog and re-render the current
+// view when items change (sweep picks up new media, fix-match, reconcile
+// re-homing). Skips when the tab is hidden, a modal is open, or the user is
+// inside Settings/Search/a detail page — loadItems() would close those
+// overlays and yank the user back to the grid.
+let catalogStamp = "";
+
+function stampOf(list) {
+  let newest = "";
+  for (const it of list) if (it.updatedAt > newest) newest = it.updatedAt;
+  return `${list.length}:${newest}`;
+}
+
+setInterval(async () => {
+  if (document.hidden || activeModal) return;
+  if (!settingsPage.classList.contains("hidden")) return;
+  if (!searchPage.classList.contains("hidden")) return;
+  if (grid.classList.contains("detail")) return;
+  try {
+    const fresh = await api("/api/v1/items");
+    const stamp = stampOf(fresh);
+    if (catalogStamp && stamp !== catalogStamp) {
+      refreshCurrentView();
+    }
+    catalogStamp = stamp;
+  } catch { /* server mid-restart — try again next tick */ }
+}, 30000);
 
 // --- modals (info + fix match) ---------------------------------------------------------
 

@@ -63,7 +63,7 @@ func (s *Server) refreshMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mw.EnqueueHint(*it, hint)
-	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, map[string]string{"status": "queued"})
 }
 
 // GET /api/v1/metadata/search?kind=movies|tv&q=... — TMDB candidates for

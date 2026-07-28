@@ -2098,3 +2098,21 @@ nav button.active { color: var(--cream); }
   .bento-grid { grid-template-columns: repeat(2, 1fr); }
   .bento-wide { grid-column: span 2; }
 }
+
+/* --- Episode list polish ---------------------------------------------------- */
+
+/* S/E marker as a small gold chip; air date humanised; size/time-left stay
+   muted — the row reads title-first, Plex-style. */
+.ep-chip {
+  display: inline-block;
+  padding: 0.08rem 0.45rem;
+  margin-right: 0.5rem;
+  border-radius: 999px;
+  background: rgba(252, 225, 182, 0.1);
+  border: 1px solid rgba(252, 225, 182, 0.22);
+  color: var(--cream);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+}
