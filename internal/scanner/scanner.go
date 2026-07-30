@@ -24,7 +24,7 @@ import (
 	"github.com/lumina-media/lumina/internal/metadata"
 )
 
-const hashChunk = 8 << 20 // 8 MiB head + 8 MiB tail; never hash whole files
+const hashChunk = 8 << 20 // fast fingerprint: 8 MiB head + 8 MiB tail
 
 // scanWorkers parallelises stat+hash during a walk. SMB latency, not CPU,
 // is the bottleneck — 8 concurrent reads turns a multi-hour initial scan
@@ -47,6 +47,9 @@ type Scanner struct {
 	meta   *metadata.Worker // nil = metadata disabled
 	events chan string      // Tier-2 targeted refresh queue
 
+	// identityMu keeps candidate lookup, full verification, and upsert atomic
+	// while the expensive sampled reads still run across scan workers.
+	identityMu  sync.Mutex
 	tiers       map[string]WatcherTier
 	baseCtx     context.Context
 	rootCancels map[string]context.CancelFunc
@@ -54,6 +57,7 @@ type Scanner struct {
 }
 
 func New(cfg config.Config, store library.Store, meta *metadata.Worker) *Scanner {
+	cfg.Libraries = cleanLibraryRoots(cfg.Libraries)
 	return &Scanner{
 		cfg:         cfg,
 		store:       store,
@@ -99,10 +103,45 @@ func (s *Scanner) Tiers() map[string]WatcherTier {
 // changes are treated as remove+add. Called by the admin API after the
 // config file has been saved.
 func (s *Scanner) SetLibraries(libs []config.LibraryRoot) {
+	libs = cleanLibraryRoots(libs)
+	s.reconcileLibraryStore(libs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cfg.Libraries = append([]config.LibraryRoot(nil), libs...)
+	s.cfg.Libraries = libs
 	s.reconcileRootsLocked(s.baseCtx)
+}
+
+func cleanLibraryRoots(libs []config.LibraryRoot) []config.LibraryRoot {
+	out := append([]config.LibraryRoot(nil), libs...)
+	for i := range out {
+		if out[i].Path != "" {
+			out[i].Path = filepath.Clean(out[i].Path)
+		}
+	}
+	return out
+}
+
+func (s *Scanner) reconcileLibraryStore(roots []config.LibraryRoot) {
+	if s.store == nil {
+		return
+	}
+	stored := make([]library.LibraryRoot, 0, len(roots))
+	for _, root := range roots {
+		stored = append(stored, library.LibraryRoot{
+			Name: root.Name,
+			Path: root.Path,
+			Kind: root.Kind,
+		})
+	}
+	result, err := s.store.ReconcileLibraries(stored)
+	if err != nil {
+		log.Printf("scanner: reconcile library configuration: %v", err)
+		return
+	}
+	if result.Renamed > 0 || result.Merged > 0 || result.Retired > 0 {
+		log.Printf("scanner: library configuration reconciled — %d renamed, %d history row(s) merged, %d retired",
+			result.Renamed, result.Merged, result.Retired)
+	}
 }
 
 // reconcileRootsLocked starts/stops per-root watcher goroutines to match
@@ -147,6 +186,11 @@ func (s *Scanner) reconcileRootsLocked(base context.Context) {
 // Run starts the Tier-2 event loop and reconciles Tier-1/Tier-3 roots.
 // Blocks until ctx is cancelled.
 func (s *Scanner) Run(ctx context.Context) {
+	s.mu.RLock()
+	roots := append([]config.LibraryRoot(nil), s.cfg.Libraries...)
+	s.mu.RUnlock()
+	s.reconcileLibraryStore(roots)
+
 	s.mu.Lock()
 	s.baseCtx = ctx
 	s.reconcileRootsLocked(ctx)
@@ -220,8 +264,10 @@ func (s *Scanner) libraryFor(path string) *config.LibraryRoot {
 	s.mu.RLock()
 	libs := append([]config.LibraryRoot(nil), s.cfg.Libraries...)
 	s.mu.RUnlock()
+	path = filepath.Clean(path)
 	for i := range libs {
 		root := libs[i]
+		root.Path = filepath.Clean(root.Path)
 		if path == root.Path || strings.HasPrefix(path, root.Path+string(os.PathSeparator)) {
 			return &root
 		}
@@ -248,19 +294,29 @@ func (s *Scanner) tier(path string) WatcherTier {
 	return s.tiers[path]
 }
 
-// skipDirNames are directory names that never contain library media:
-// NAS/system sidecars plus Plex-style extras folders. Skipping them at walk
-// time means bonus features never pollute Recently Added.
+// skipDirNames are directory names that never contain library media.
+// Extras folders are deliberately not skipped: indexFile classifies their
+// contents as KindExtra and excludes them from metadata matching.
 var skipDirNames = map[string]bool{
 	"@eadir": true, ".appledouble": true, "#recycle": true, "$recycle.bin": true,
-	"extras": true, "extra": true, "featurettes": true, "trailers": true,
-	"samples": true, "sample": true, "behind the scenes": true,
-	"behind-the-scenes": true, "deleted scenes": true, "interviews": true,
+	"samples": true, "sample": true,
 }
 
-// skipFileRe drops filesystem sidecars (AppleDouble "._*", Thumbs.db) and
-// sample/trailer/featurette clips.
-var skipFileRe = regexp.MustCompile(`(?i)^(\..*|thumbs\.db|desktop\.ini)$|(?:^|[ ._-])(sample|trailer|featurette)(?:[ ._-]|$)`)
+func shouldSkipDir(name string) bool {
+	return skipDirNames[strings.ToLower(name)]
+}
+
+// System sidecars are always skipped. Release clips are allowed only inside
+// recognized extras directories, where they are indexed as KindExtra.
+var systemFileRe = regexp.MustCompile(`(?i)^(\..*|thumbs\.db|desktop\.ini)$`)
+var releaseClipRe = regexp.MustCompile(`(?i)(?:^|[ ._-])(sample|trailer|featurette)(?:[ ._-]|$)`)
+
+func shouldSkipFile(path, name string) bool {
+	if systemFileRe.MatchString(name) {
+		return true
+	}
+	return releaseClipRe.MatchString(name) && !isExtrasPath(path)
+}
 
 // ScanRoot performs an incremental walk of a library root and applies the
 // tombstone rule. If the root comes up completely empty while the library
@@ -304,7 +360,7 @@ func (s *Scanner) ScanRoot(ctx context.Context, root config.LibraryRoot) error {
 			return nil
 		}
 		if d.IsDir() {
-			if skipDirNames[strings.ToLower(d.Name())] {
+			if shouldSkipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -314,7 +370,7 @@ func (s *Scanner) ScanRoot(ctx context.Context, root config.LibraryRoot) error {
 			return ctx.Err()
 		default:
 		}
-		if skipFileRe.MatchString(d.Name()) {
+		if shouldSkipFile(path, d.Name()) {
 			return nil
 		}
 		if !library.MediaFileExts[strings.ToLower(filepath.Ext(path))] {
@@ -386,20 +442,17 @@ func (s *Scanner) reconcileSplitPaths(ctx context.Context, root config.LibraryRo
 	}
 }
 
-// repairItemPaths re-hashes every path of one multi-path item FRESH —
-// file_states is not trusted here, it may carry the same historic damage.
-// A path whose true hash is not the item's hash is detached and re-indexed,
-// landing on (or creating) the item its content actually belongs to, which
-// also queues it for metadata identification. If the stored hash matches
-// NONE of the files, the item is re-keyed to its first path's true hash.
-// Returns the number of detached paths; 0 means every path verified as the
-// same content; -1 means the item was skipped (unreadable path, or a
-// re-key refused by UNIQUE(hash, library)).
+// repairItemPaths recomputes sampled and full hashes without trusting cached
+// file state. The first path retains the item/watch history; paths with
+// different bytes or conflicting parsed identities are detached and re-indexed
+// under their own verified identity.
 func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int {
 	type checked struct {
-		path string
-		hash string
-		fi   os.FileInfo
+		path    string
+		sample  string
+		full    string
+		logical string
+		fi      os.FileInfo
 	}
 	all := make([]checked, 0, len(it.Paths))
 	for _, p := range it.Paths {
@@ -409,40 +462,37 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int 
 				it.ID, it.Title, p, err)
 			return -1
 		}
-		h, err := ContentHash(p, fi.Size())
+		sample, err := ContentHash(p, fi.Size())
 		if err != nil {
-			log.Printf("scanner: reconcile %s (%q): hash %s: %v — skipped",
+			log.Printf("scanner: reconcile %s (%q): sample %s: %v — skipped",
 				it.ID, it.Title, p, err)
 			return -1
 		}
-		all = append(all, checked{p, h, fi})
-	}
-	ownerHash := it.Hash
-	owners := 0
-	for _, c := range all {
-		if c.hash == ownerHash {
-			owners++
+		full, err := FullContentHash(p)
+		if err != nil {
+			log.Printf("scanner: reconcile %s (%q): full hash %s: %v — skipped",
+				it.ID, it.Title, p, err)
+			return -1
 		}
+		all = append(all, checked{p, sample, full, parsedContentIdentity(root, p), fi})
 	}
-	if owners == 0 {
-		ownerHash = all[0].hash
-		if err := s.store.RekeyItemHash(it.ID, ownerHash); err != nil {
+	owner := all[0]
+	canonical := canonicalIdentity(owner.sample, owner.full, owner.logical)
+	if it.Hash != canonical {
+		if err := s.store.RekeyItemHash(it.ID, canonical); err != nil {
 			log.Printf("scanner: reconcile %s (%q): re-key refused (%v) — left as-is",
 				it.ID, it.Title, err)
 			return -1
 		}
-		log.Printf("scanner: reconcile %s (%q): re-keyed to %s's content hash",
-			it.ID, it.Title, filepath.Base(all[0].path))
+		it.Hash = canonical
 	}
 	detached := 0
-	for _, c := range all {
-		if c.hash == ownerHash {
+	for i, c := range all {
+		if i == 0 {
 			continue
 		}
-		// Correct the cached state FIRST so the re-index below (and every
-		// future sweep's hash-skip) works from the true hash.
-		if err := s.store.SetFileState(c.path, c.fi.Size(), c.fi.ModTime().Unix(), c.hash); err != nil {
-			log.Printf("scanner: reconcile: record file state %s: %v", c.path, err)
+		sameLogical := owner.logical == "" || c.logical == "" || owner.logical == c.logical
+		if c.full == owner.full && sameLogical {
 			continue
 		}
 		if _, err := s.store.TombstonePath(c.path); err != nil {
@@ -454,13 +504,11 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int 
 			continue
 		}
 		detached++
-		log.Printf("scanner: reconcile: %s detached from %s (%q) — re-homed by content",
+		log.Printf("scanner: reconcile: %s detached from %s (%q) — full hash/logical identity differs",
 			filepath.Base(c.path), it.ID, it.Title)
 	}
 	if detached == 0 {
-		// Same content at every path — worth one line, because THIS is the
-		// answer when a "missing" episode turns out to be a duplicate file.
-		log.Printf("scanner: reconcile %s (%q): all %d paths are the SAME content — keeping merged",
+		log.Printf("scanner: reconcile %s (%q): all %d paths are byte-identical with compatible identities — keeping merged",
 			it.ID, it.Title, len(all))
 	}
 	return detached
@@ -473,6 +521,9 @@ func (s *Scanner) sweepLoop(ctx context.Context, root config.LibraryRoot) {
 	s.mu.RLock()
 	interval := time.Duration(s.cfg.SweepIntervalMinutes) * time.Minute
 	s.mu.RUnlock()
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -487,23 +538,34 @@ func (s *Scanner) sweepLoop(ctx context.Context, root config.LibraryRoot) {
 	}
 }
 
-// indexFile records a media file, keyed by content hash. The hash is
-// REUSED when size+mtime match the last index (file_states) — the hash
-// itself is stable identity, so skipping the 16 MiB read loses nothing.
-// A skipped-hash file still goes through UpsertByHash: that re-activates
-// items whose file vanished and came back unchanged.
+// indexFile records a media file using a fast sampled fingerprint. When that
+// sample already exists, resolveIdentity verifies full-file SHA-256 before
+// merging; unchanged size+mtime-ns paths reuse the previously resolved key.
 func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo) error {
-	size, mtime := fi.Size(), fi.ModTime().Unix()
-	hash := ""
+	size, mtime := fi.Size(), fi.ModTime().UnixNano()
+	identity := ""
+	sampleHash := ""
+	cached := false
 	if stSize, stMtime, stHash, ok := s.store.FileState(path); ok && stSize == size && stMtime == mtime {
-		hash = stHash // unchanged — skip the 16 MiB SMB read
+		identity = stHash
+		cached = true
 	} else {
 		var err error
-		hash, err = ContentHash(path, size)
+		sampleHash, err = ContentHash(path, size)
 		if err != nil {
 			return err
 		}
-		if err := s.store.SetFileState(path, size, mtime, hash); err != nil {
+	}
+
+	s.identityMu.Lock()
+	if !cached {
+		var err error
+		identity, err = s.resolveIdentity(root, path, sampleHash)
+		if err != nil {
+			s.identityMu.Unlock()
+			return err
+		}
+		if err := s.store.SetFileState(path, size, mtime, identity); err != nil {
 			log.Printf("scanner: record file state %s: %v", path, err)
 		}
 	}
@@ -519,7 +581,7 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 		kind = library.KindExtra
 	}
 	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	it, err := s.store.UpsertByHash(hash, root.Name, func(it *library.Item) {
+	it, err := s.store.UpsertByHash(identity, root.Name, func(it *library.Item) {
 		it.Kind = kind
 		// Never clobber a provider (TMDB) title with a filename title.
 		if it.Title == "" {
@@ -545,6 +607,7 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 		}
 		it.Paths = append(it.Paths, path)
 	})
+	s.identityMu.Unlock()
 	// Unidentified items go to the metadata worker (no-op without a
 	// TMDB key; the worker also dedups naturally via SetMetadata).
 	// Extras are excluded by definition — TMDB has no entry for "Official PV 2".
@@ -556,8 +619,8 @@ func (s *Scanner) indexFile(root config.LibraryRoot, path string, fi os.FileInfo
 
 // extrasDirs: folder names Plex/Jellyfin treat as bonus content.
 var extrasDirs = map[string]bool{
-	"extras": true, "featurettes": true, "specials": true,
-	"behind the scenes": true, "deleted scenes": true, "interviews": true,
+	"extras": true, "extra": true, "featurettes": true,
+	"behind the scenes": true, "behind-the-scenes": true, "deleted scenes": true, "interviews": true,
 	"scenes": true, "shorts": true, "trailers": true, "bloopers": true,
 }
 
@@ -578,8 +641,9 @@ func isExtrasPath(path string) bool {
 	}
 }
 
-// ContentHash is the item's identity: sha256(size ‖ head 8MiB ‖ tail 8MiB).
-// Survives renames, moves, and remounts. TODO: blake3 for speed.
+// ContentHash is the cheap candidate fingerprint:
+// sha256(size ‖ head 8MiB ‖ tail 8MiB). A collision triggers definitive
+// FullContentHash verification before any merge. TODO: blake3 for speed.
 func ContentHash(path string, size int64) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

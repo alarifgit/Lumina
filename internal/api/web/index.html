@@ -72,16 +72,17 @@
       </section>
       <section id="sec-manage" class="hidden">
         <h3>Library items</h3>
-        <p class="libs-note">Every indexed item, with its match state. Open a row to fix its match; use its Actions button for the full menu. "Unidentified" = no TMDB match yet (procedural poster) — this is a different axis from the Plex sync's unmatched list, which joins Plex entries to Lumina items.</p>
+        <p class="libs-note">Active items are shown first. Open a row to fix its match; use its Actions button for the full menu. Missing history is retained separately so a disconnected library cannot erase watch state. "Unidentified" means no TMDB match yet.</p>
         <div class="manage-controls">
           <select id="manage-lib" aria-label="Filter by library"><option value="">All libraries</option></select>
           <select id="manage-status" aria-label="Filter by match status">
-            <option value="">All statuses</option>
+            <option value="active" selected>Active items</option>
             <option value="unmatched">Unidentified</option>
             <option value="matched">Matched</option>
             <option value="duplicate">Duplicate matches</option>
-            <option value="missing">Missing</option>
+            <option value="missing">Missing history</option>
             <option value="extra">Extras</option>
+            <option value="">All records</option>
           </select>
           <input id="manage-q" type="search" aria-label="Filter library titles" placeholder="Filter titles…">
         </div>
@@ -169,6 +170,16 @@
   <video id="video" autoplay playsinline crossorigin="anonymous"></video>
   <div id="sub-overlay"></div>
   <div id="player-spinner" class="hidden"><div class="spin-ring"></div></div>
+  <div id="player-error" class="hidden" role="alert">
+    <div class="player-error-card">
+      <strong>Playback couldn’t start</strong>
+      <p id="player-error-message"></p>
+      <div class="player-error-actions">
+        <button id="player-retry" class="text-button">Try again</button>
+        <button id="player-error-close" class="ghost-button">Close player</button>
+      </div>
+    </div>
+  </div>
   <div id="stats-overlay" class="hidden"></div>
   <div id="up-next" class="hidden">
     <div class="up-next-card">

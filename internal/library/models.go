@@ -15,6 +15,10 @@ type Store interface {
 	// receives a fresh item with ID/Hash/Library/AddedAt set.
 	UpsertByHash(hash, libraryName string, mutate func(it *Item)) (*Item, error)
 
+	// HashCandidates returns items whose stored identity begins with the
+	// sampled content fingerprint. The scanner uses it to full-hash only
+	// potential duplicates.
+	HashCandidates(sampleHash, libraryName string) ([]Item, error)
 	// MarkMissing tombstones every active item in a library that has no
 	// path in present. Returns the count tombstoned — callers compare
 	// against library size for the "everything is gone" safety halt.
@@ -28,6 +32,10 @@ type Store interface {
 	// scanner's reconcile pass when the stored hash matches none of the
 	// item's files (historic damage). May fail on UNIQUE(hash, library).
 	RekeyItemHash(id, hash string) error
+	// ReconcileLibraries applies configured-root renames, repairs safe
+	// identity-shadow rows, and retires ownership from removed roots.
+	// It runs before scanners start so config edits cannot fork a catalog.
+	ReconcileLibraries(roots []LibraryRoot) (LibraryReconcileResult, error)
 
 	// Get returns one item by ID, or nil if unknown.
 	Get(id string) (*Item, error)
@@ -65,13 +73,28 @@ type Store interface {
 	ToggleMyList(userID, itemID string) (bool, error)
 	MyListIDs(userID string) (map[string]bool, error)
 
-	// FileState returns the last-indexed (size, mtime, hash) for a path —
-	// the scan accelerator that lets sweeps skip re-hashing unchanged files.
+	// FileState returns the last-indexed (size, nanosecond mtime, resolved
+	// identity) for a path — the scan accelerator that lets sweeps skip
+	// re-hashing unchanged files.
 	FileState(path string) (size, mtime int64, hash string, ok bool)
-	// SetFileState records what a path looked like when it was hashed.
+	// SetFileState records what a path looked like when its identity was resolved.
 	SetFileState(path string, size, mtime int64, hash string) error
 
 	Close() error
+}
+
+// LibraryRoot is the persistence-facing subset of a configured media root.
+// Keeping it here avoids coupling the store package to runtime config.
+type LibraryRoot struct {
+	Name string
+	Path string
+	Kind string
+}
+
+type LibraryReconcileResult struct {
+	Renamed int
+	Merged  int
+	Retired int
 }
 
 type Kind string

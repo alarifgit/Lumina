@@ -16,9 +16,9 @@ import (
 )
 
 var (
-	episodeRe = regexp.MustCompile(`(?i)\bs(\d{1,2})e(\d{1,2})\b`)
+	episodeRe = regexp.MustCompile(`(?i)\bs(\d{1,2})e(\d{1,4})\b`)
 	// Release tags: everything from the first tag onward is dropped.
-	tagRe = regexp.MustCompile(`(?i)\b(1080p|720p|2160p|4320p|480p|4k|8k|uhd|hdr10|hdr|dv|dolby|vision|atmos|bluray|blu-ray|bdrip|brrip|webrip|web-dl|webdl|web|hdrip|hdtv|dvdrip|remux|x264|x265|h264|h265|hevc|avc|xvid|divx|aac|ac3|eac3|dts|ddp5|dd\+|flac|mp3|truehd|dts-hd|ma|5\.1|7\.1|2\.0|10bit|8bit|proper|repack|rerip|extended|directors?|cut|unrated|theatrical|internal|limited|imax|edition|collection|complete|multi|dual|sub|subs|subbed|dubbed|ws|fs|ntsc|pal|amg|fgt)\b`)
+	tagRe = regexp.MustCompile(`(?i)\b(1080p|720p|2160p|4320p|480p|4k|8k|uhd|hdr10|hdr|dv|dolby|atmos|bluray|blu-ray|bdrip|brrip|webrip|web-dl|webdl|hdrip|hdtv|dvdrip|remux|x264|x265|h264|h265|hevc|avc|xvid|divx|aac|ac3|eac3|dts|ddp5|dd\+|flac|mp3|truehd|dts-hd|5\.1|7\.1|2\.0|10bit|8bit|proper|repack|rerip|imax|subbed|dubbed|ntsc|pal)\b`)
 	sepRe = regexp.MustCompile(`[\._]+`)
 	// Trailing year, optionally bracketed: "Title (2009)" / "Title.2009".
 	trailingYearRe = regexp.MustCompile(`^(.*?)\s*[\(\[]?\b((?:19|20)\d{2})\b[\)\]]?\s*$`)
@@ -75,6 +75,7 @@ func ParseFilename(base string) Parsed {
 	if m := tagRe.FindStringIndex(work); m != nil {
 		work = work[:m[0]]
 	}
+	work = strings.TrimRight(work, " ._-–—")
 	work = strings.TrimSpace(strings.Join(strings.Fields(work), " "))
 
 	// Only a trailing year counts, and only a plausible one. A bare-year

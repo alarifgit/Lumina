@@ -78,3 +78,37 @@ func TestSeasonFromDir(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFilenameLargeEpisodeNumbers(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"Long.Show.S01E100.1080p.WEB-DL", 100},
+		{"Long.Show.S01E1100.1080p.WEB-DL", 1100},
+	}
+	for _, c := range cases {
+		p := ParseFilename(c.in)
+		if p.Title != "Long Show" || p.Season != 1 || p.Episode != c.want {
+			t.Errorf("ParseFilename(%q) = %+v", c.in, p)
+		}
+	}
+}
+
+func TestParseFilenamePreservesTitleWordsAndHyphenatedYears(t *testing.T) {
+	cases := []struct {
+		in    string
+		title string
+		year  int
+	}{
+		{"Web.of.Lies.2024.1080p.WEB-DL", "Web of Lies", 2024},
+		{"The.Limited.2023.1080p.BluRay", "The Limited", 2023},
+		{"The-Matrix-1999-1080p-WEB-DL", "The-Matrix", 1999},
+	}
+	for _, c := range cases {
+		p := ParseFilename(c.in)
+		if p.Title != c.title || p.Year != c.year {
+			t.Errorf("ParseFilename(%q) = %+v, want title %q year %d", c.in, p, c.title, c.year)
+		}
+	}
+}

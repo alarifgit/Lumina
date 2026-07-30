@@ -195,6 +195,9 @@ func (s *Server) saveLibraries(w http.ResponseWriter, r *http.Request) {
 	for i := range libs {
 		libs[i].Name = strings.TrimSpace(libs[i].Name)
 		libs[i].Path = strings.TrimSpace(libs[i].Path)
+		if libs[i].Path != "" {
+			libs[i].Path = filepath.Clean(libs[i].Path)
+		}
 		libs[i].Kind = strings.TrimSpace(libs[i].Kind)
 	}
 	if err := validateLibraries(libs); err != nil {

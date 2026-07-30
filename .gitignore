@@ -1,6 +1,6 @@
 # Local runtime state
 data/
-config/
+/config/
 lumina.json
 deployments/lumina.host.json
 *.tmp

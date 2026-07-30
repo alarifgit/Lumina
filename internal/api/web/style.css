@@ -228,13 +228,6 @@ nav button.active { color: var(--cream); }
   mix-blend-mode: overlay;
   pointer-events: none;
 }
-.poster .grain {
-  position: absolute;
-  inset: 0;
-  opacity: 0.05;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
-}
 .poster .initials {
   font-size: 2.4rem;
   font-weight: 900;
@@ -585,8 +578,9 @@ nav button.active { color: var(--cream); }
 #plex-result { margin-top: 0.8rem; font-size: 0.82rem; }
 #plex-result .summary { line-height: 1.6; }
 #plex-result .summary b { color: var(--accent); }
-#plex-result table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-#plex-result td {
+.plex-result-table { overflow-x: auto; overscroll-behavior-inline: contain; }
+#plex-result table { width: 100%; min-width: 640px; border-collapse: collapse; margin-top: 0.5rem; }
+#plex-result th, #plex-result td {
   padding: 0.2rem 0.3rem;
   border-bottom: 1px solid rgba(255,255,255,0.06);
   overflow: hidden;
@@ -1761,6 +1755,29 @@ nav button.active { color: var(--cream); }
   border-radius: 50%;
   border: 3px solid var(--white-a18);
   border-top-color: var(--cream);
+#player-error {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(8, 14, 22, 0.72);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.player-error-card {
+  width: min(28rem, 100%);
+  padding: 1.25rem;
+  text-align: center;
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow);
+}
+.player-error-card p { margin: 0.5rem 0 1rem; color: var(--chrome-text-muted); }
+.player-error-actions { display: flex; justify-content: center; gap: 0.7rem; flex-wrap: wrap; }
+
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin {

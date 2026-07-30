@@ -40,6 +40,10 @@ const pcNext = document.getElementById("pc-next");
 const ccOpts = document.getElementById("cc-opts");
 const ccPop = document.getElementById("cc-pop");
 const playerSpinner = document.getElementById("player-spinner");
+const playerError = document.getElementById("player-error");
+const playerErrorMessage = document.getElementById("player-error-message");
+const playerRetry = document.getElementById("player-retry");
+const playerErrorClose = document.getElementById("player-error-close");
 const upNext = document.getElementById("up-next");
 const upNextTitle = document.getElementById("up-next-title");
 const upNextCount = document.getElementById("up-next-count");
@@ -124,6 +128,29 @@ let lastVisibleItems = [];
 // Baseline for live catalog polling. Seeded by loadHome so a catalog change
 // during the first polling interval is not silently accepted as the baseline.
 let catalogStamp = "";
+
+// Home, libraries, My List, and Manage all read the same catalog. Reuse one
+// decoded response until the lightweight revision poll says it changed.
+let catalogItems = null;
+let catalogLoading = null;
+
+async function loadCatalog() {
+  if (catalogItems) return catalogItems;
+  if (catalogLoading) return catalogLoading;
+  catalogLoading = Promise.all([
+    api("/api/v1/items"),
+    api("/api/v1/items/revision"),
+  ]).then(([items, revision]) => {
+    catalogItems = items || [];
+    catalogStamp = `${revision.count}:${revision.revision}`;
+    return catalogItems;
+  }).finally(() => { catalogLoading = null; });
+  return catalogLoading;
+}
+
+function invalidateCatalog() {
+  catalogItems = null;
+}
 
 // Transcode-session timeline state.
 let isHls = false;
@@ -430,11 +457,10 @@ async function loadItems(lib) {
   backTarget = () => loadItems(lib); // detail pages return to this library
   closeSettings();
   closeSearch();
-  const [items, phs, ml, revision] = await Promise.all([
-    api(`/api/v1/items?library=${encodeURIComponent(lib.name)}`),
+  const [items, phs, ml] = await Promise.all([
+    loadCatalog(),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
     currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
-    api("/api/v1/items/revision"),
   ]);
   playheads = phs || {};
   myListIds = ml || {};
@@ -479,7 +505,7 @@ function renderLibraryCards(visible) {
       card.className = "card";
       card.innerHTML = `
         <div class="poster" style="${posterStyle(g.key)}">
-          ${identified ? "" : `<div class="glow" style="${glowStyle(g.key)}"></div><div class="grain"></div>`}
+          ${identified ? "" : `<div class="glow" style="${glowStyle(g.key)}"></div>`}
           ${identified
             ? `<img class="poster-img" src="${escapeHtml(g.rep.posterUrl)}" loading="lazy" alt=""
                  onerror="this.remove()">`
@@ -513,7 +539,7 @@ function renderLibraryCards(visible) {
     card.className = "card";
     card.innerHTML = `
       <div class="poster" style="${posterStyle(it.title)}">
-        ${identified ? "" : `<div class="glow" style="${glowStyle(it.title)}"></div><div class="grain"></div>`}
+        ${identified ? "" : `<div class="glow" style="${glowStyle(it.title)}"></div>`}
         ${identified
           ? `<img class="poster-img" src="${escapeHtml(it.posterUrl)}" loading="lazy" alt=""
                onerror="this.remove()">`
@@ -550,7 +576,7 @@ async function loadMyList() {
   closeSettings();
   closeSearch();
   const [items, phs, ml] = await Promise.all([
-    api("/api/v1/items"),
+    loadCatalog(),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
     currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
   ]);
@@ -936,13 +962,12 @@ async function loadHome() {
   // before the fetch resolves is what caused the flash of broken layout
   // when changing nav segments.
   const [items, phs, ml] = await Promise.all([
-    api("/api/v1/items"),
+    loadCatalog(),
     currentUser ? api(`/api/v1/users/${currentUser.id}/playheads`) : {},
     currentUser ? api(`/api/v1/users/${currentUser.id}/mylist`) : {},
   ]);
   playheads = phs || {};
   myListIds = ml || {};
-  catalogStamp = `${revision.count}:${revision.revision}`;
   grid.className = "home";
 
   const visible = (items || []).filter((it) => it.state !== "missing");
@@ -1292,6 +1317,33 @@ function stopPlayback() {
   // applyResume on loadedmetadata — do not reset it here.
 }
 
+function setPlayerBackgroundInert(inert) {
+  overlay.querySelectorAll(":scope > :not(#player-error)").forEach((el) => {
+    el.inert = inert;
+  });
+}
+
+function clearPlayerError() {
+  playerError.classList.add("hidden");
+  setPlayerBackgroundInert(false);
+}
+
+function showPlayerError(item, error) {
+  stopPlayback();
+  playerSpinner.classList.add("hidden");
+  setMode("playback unavailable", "software");
+  playerErrorMessage.textContent = error?.message || "Lumina could not start this item.";
+  playerError.classList.remove("hidden");
+  setPlayerBackgroundInert(true);
+  playerRetry.onclick = () => {
+    clearPlayerError();
+    play(item);
+  };
+  playerErrorClose.onclick = closePlayer;
+  requestAnimationFrame(() => playerRetry.focus());
+  announce(`Playback failed for ${item.title}`);
+}
+
 async function play(item) {
   currentItem = item;
   lastReportAt = 0;
@@ -1299,6 +1351,7 @@ async function play(item) {
   const playerWasHidden = overlay.classList.contains("hidden");
   overlay.classList.remove("hidden");
   if (playerWasHidden) enterFullScreenSurface(pcPlay);
+  clearPlayerError();
   pcRate.textContent = "1×";
   pcVolume.value = String(video.volume);
   seekPlayed.style.width = "0";
@@ -1344,7 +1397,15 @@ async function play(item) {
     } catch { /* no journal entry — start from 0 */ }
   }
 
-  const info = await api(`/api/v1/items/${item.id}/info`);
+  let info;
+  try {
+    info = await api(`/api/v1/items/${item.id}/info`);
+  } catch (e) {
+    if (currentItem === item && !overlay.classList.contains("hidden")) {
+      showPlayerError(item, e);
+    }
+    return;
+  }
   mediaInfoJson.textContent = JSON.stringify(info, null, 2);
   document.getElementById("media-overview").textContent = item.overview || "";
   absoluteDurationS = info.durationS || 0;
@@ -1441,8 +1502,7 @@ async function startHls(item, startS) {
     try {
       await ensureHlsLibrary();
     } catch (e) {
-      playerTitle.textContent = `${item.title} — ${e.message}`;
-      toast(e.message, "err");
+      showPlayerError(item, e);
       return;
     }
   }
@@ -1473,7 +1533,7 @@ async function startHls(item, startS) {
     };
     video.play().catch(() => {});
   } else {
-    playerTitle.textContent = `${item.title} — this browser cannot play HLS`;
+    showPlayerError(item, new Error("This browser cannot play HLS video."));
   }
 }
 
@@ -1932,6 +1992,10 @@ function closeSettings() {
   leaveFullScreenSurface();
   clearInterval(activityTimer); // Now Playing stops polling when hidden
   activityTimer = null;
+  if (pendingUserViewRefresh) {
+    pendingUserViewRefresh = false;
+    refreshCurrentView();
+  }
 }
 
 async function openSettings(sectionId) {
@@ -2048,6 +2112,7 @@ async function renderOverview() {
 let manageAll = [];
 let manageLibsLoaded = false;
 let manageExpectRefresh = false; // a fix-match closed → rebuild the table
+let manageCurrentLibraries = new Set();
 
 async function loadManage() {
   const rows = document.getElementById("manage-rows");
@@ -2055,12 +2120,22 @@ async function loadManage() {
   try {
     if (!manageLibsLoaded) {
       const libs = await api("/api/v1/libraries");
+      manageCurrentLibraries = new Set(libs.map((l) => l.name));
       document.getElementById("manage-lib").innerHTML =
         `<option value="">All libraries</option>` +
         libs.map((l) => `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)}</option>`).join("");
       manageLibsLoaded = true;
     }
-    manageAll = await api("/api/v1/items");
+    manageAll = await loadCatalog();
+    const librarySelect = document.getElementById("manage-lib");
+    librarySelect.querySelectorAll("option[data-retired]").forEach((option) => option.remove());
+    const retiredLibraries = [...new Set(manageAll.map((it) => it.library))]
+      .filter((name) => name && !manageCurrentLibraries.has(name))
+      .sort((a, b) => a.localeCompare(b));
+    for (const name of retiredLibraries) {
+      librarySelect.insertAdjacentHTML("beforeend",
+        `<option data-retired value="${escapeHtml(name)}">${escapeHtml(name)} · retired</option>`);
+    }
     renderManage();
   } catch (e) {
     rows.innerHTML = `<div class="arr-error">${escapeHtml(e.message)}</div>`;
@@ -2102,25 +2177,46 @@ function renderManage() {
     const k = dupKeyFor(it);
     return k !== null && dupKeys.has(k);
   };
+  // Verified identities are sample:full:logical. Multiple active rows sharing
+  // sample:full but not the logical suffix are byte-identical files whose
+  // filenames/folders describe different movies or episodes.
+  const contentKeyFor = (it) => {
+    if (it.state !== "active") return null;
+    const parts = (it.hash || "").split(":");
+    return parts.length >= 3 ? `${parts[0]}:${parts[1]}` : null;
+  };
+  const contentCount = {};
+  for (const it of manageAll) {
+    const k = contentKeyFor(it);
+    if (k) contentCount[k] = (contentCount[k] || 0) + 1;
+  }
+  const conflictKeys = new Set(Object.keys(contentCount).filter((k) => contentCount[k] > 1));
+  const isContentConflict = (it) => {
+    const k = contentKeyFor(it);
+    return k !== null && conflictKeys.has(k);
+  };
   const counts = { matched: 0, unmatched: 0, missing: 0, extra: 0 };
   let dupRows = 0;
   const filtered = [];
   for (const it of manageAll) {
     const st = manageStatus(it);
     counts[st]++;
-    if (isDup(it)) dupRows++;
+    if (isDup(it) || isContentConflict(it)) dupRows++;
     if (lib && it.library !== lib) continue;
-    if (status === "duplicate" ? !isDup(it) : (status && st !== status)) continue;
+    if (status === "active" && it.state !== "active") continue;
+    if (status === "duplicate" ? !(isDup(it) || isContentConflict(it)) :
+      (status && status !== "active" && st !== status)) continue;
     if (q && !(it.title || "").toLowerCase().includes(q)) continue;
     filtered.push(it);
   }
+  const activeCount = counts.matched + counts.unmatched + counts.extra;
   document.getElementById("manage-summary").textContent =
-    `${manageAll.length} items · ${counts.matched} matched · ${counts.unmatched} unidentified · ` +
-    `${counts.missing} missing · ${counts.extra} extras` +
-    (dupRows ? ` · ${dupRows} duplicate match${dupRows === 1 ? "" : "es"}` : "") +
+    `${activeCount} active · ${counts.matched} matched · ${counts.unmatched} unidentified · ` +
+    `${counts.extra} extras · ${counts.missing} missing history` +
+    (dupRows ? ` · ${dupRows} duplicate/conflict${dupRows === 1 ? "" : "s"}` : "") +
     ` — showing ${Math.min(filtered.length, 300)} of ${filtered.length}`;
   const badgeFor = { matched: "direct", unmatched: "software", missing: "software", extra: "" };
-  const badgeLabel = { matched: "matched", unmatched: "unidentified", missing: "missing", extra: "extra" };
+  const badgeLabel = { matched: "matched", unmatched: "unidentified", missing: "missing history", extra: "extra" };
   const rows = document.getElementById("manage-rows");
   rows.innerHTML = filtered.slice(0, 300).map((it) => {
     const st = manageStatus(it);
@@ -2137,6 +2233,7 @@ function renderManage() {
           : ""}
       </span>
       ${isDup(it) ? `<span class="badge software" title="Another active item has the same identity — a duplicate file or a mis-match">dup</span>` : ""}
+      ${isContentConflict(it) ? `<span class="badge software" title="Byte-identical content parses as a different movie or episode at another path">content conflict</span>` : ""}
       <span class="badge ${badgeFor[st]}">${badgeLabel[st]}</span>
     </div>`;
   }).join("") || `<div class="arr-error">No items match these filters.</div>`;
@@ -2253,6 +2350,7 @@ async function renderCapabilities() {
 // avatars via the bundled set (PATCH /api/v1/users/{uid}).
 let avatarPickerUid = null;
 let avatarPickerReturnFocus = null;
+let pendingUserViewRefresh = false;
 
 function setAvatarPickerBackgroundInert(inert) {
   settingsPage.querySelector(".settings-head").inert = inert;
@@ -2289,6 +2387,7 @@ async function renderUsers() {
         currentUser = users.find((u) => u.id === button.dataset.switchUid) || currentUser;
         renderUserBadge();
         renderUsers();
+        pendingUserViewRefresh = true;
       };
     });
     el.querySelectorAll("[data-avatar-uid]").forEach((btn) => {
@@ -2689,7 +2788,11 @@ async function runPlexImport(apply) {
         to mark in Lumina <b>${r.markedLumina}</b> · to scrobble ${r.scrobbledPlex}
         ${r.errors.length ? `<br><span class="plex-error">${r.errors.length} error(s): ${escapeHtml(r.errors[0])}</span>` : ""}
       </div>
-      ${rows ? `<table>${rows}</table>` : ""}
+      ${rows ? `<div class="plex-result-table"><table>
+        <caption class="sr-only">Plex watch-history import results</caption>
+        <thead><tr><th scope="col">Title</th><th scope="col">Episode</th><th scope="col">Action</th><th scope="col">Details</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>` : ""}
       ${r.itemsTruncated ? `<div class="plex-error">…list truncated</div>` : ""}`;
     // Apply only unlocks after a preview with something to do.
     if (!apply && (r.markedLumina > 0 || r.scrobbledPlex > 0)) {
@@ -2702,6 +2805,7 @@ async function runPlexImport(apply) {
 }
 
 function closePlayer() {
+  clearPlayerError();
   overlay.classList.add("hidden");
   statsOverlay.classList.add("hidden");
   pcStats.setAttribute("aria-pressed", "false");
@@ -2989,6 +3093,7 @@ setInterval(async () => {
     const revision = await api("/api/v1/items/revision");
     const stamp = `${revision.count}:${revision.revision}`;
     if (catalogStamp && stamp !== catalogStamp) {
+      invalidateCatalog();
       refreshCurrentView();
     }
     catalogStamp = stamp;
@@ -3000,11 +3105,14 @@ setInterval(async () => {
 let activeModal = null;
 let modalReturnFocus = null;
 let modalSequence = 0;
+let modalInertTargets = [];
 
 function closeModal() {
   if (activeModal) {
     activeModal.remove();
     activeModal = null;
+    modalInertTargets.forEach((el) => { el.inert = false; });
+    modalInertTargets = [];
     if (modalReturnFocus && modalReturnFocus.isConnected) modalReturnFocus.focus();
     modalReturnFocus = null;
   }
@@ -3012,13 +3120,19 @@ function closeModal() {
   // rebuild the table so the row's badge flips without a manual reload.
   if (manageExpectRefresh) {
     manageExpectRefresh = false;
-    if (!settingsPage.classList.contains("hidden")) loadManage();
+    if (!settingsPage.classList.contains("hidden")) {
+      invalidateCatalog();
+      loadManage();
+    }
   }
 }
 
 function openModal(titleText) {
   closeModal();
   modalReturnFocus = document.activeElement;
+  modalInertTargets = [headerEl, grid, settingsPage, searchPage, overlay]
+    .filter((el) => !el.classList.contains("hidden") && !el.inert);
+  modalInertTargets.forEach((el) => { el.inert = true; });
   const wrap = document.createElement("div");
   wrap.className = "modal-wrap";
   const titleID = `modal-title-${++modalSequence}`;
@@ -3207,6 +3321,7 @@ async function openMatchModal(it) {
           if (updated) itemById.set(updated.id, updated);
           toast(`Matched: ${r.title}${r.year ? ` (${r.year})` : ""}`);
           closeModal();
+          invalidateCatalog();
           refreshCurrentView();
         } catch (e) {
           row.disabled = false;

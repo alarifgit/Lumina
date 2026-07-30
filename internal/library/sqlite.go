@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS item_paths (
 );
 CREATE INDEX IF NOT EXISTS idx_items_library ON items(library, state);
 
+-- Durable root registry: a display-name edit at an unchanged path is a
+-- rename, not a new identity namespace. The scanner syncs this table before
+-- starting or replacing root watchers.
+CREATE TABLE IF NOT EXISTS library_roots (
+    path       TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_library_roots_name ON library_roots(name);
+
 -- Constant-time change token for lightweight client polling. Item writes bump
 -- the singleton revision through triggers, including metadata and tombstones.
 CREATE TABLE IF NOT EXISTS catalog_revision (
@@ -66,8 +77,8 @@ CREATE TRIGGER IF NOT EXISTS items_revision_delete AFTER DELETE ON items BEGIN
     UPDATE catalog_revision SET revision = revision + 1 WHERE id = 1;
 END;
 
--- Scan accelerator: last-indexed (size, mtime) per path. A file whose
--- stat matches is REUSED — its content hash is not recomputed. This is
+-- Scan accelerator: last-indexed (size, nanosecond mtime) per path. A file
+-- whose stat matches reuses its resolved identity. This is
 -- the difference between a sweep reading 16 MiB per file over SMB and a
 -- sweep doing one cheap stat per file.
 CREATE TABLE IF NOT EXISTS file_states (
@@ -129,6 +140,9 @@ func (s *sqliteStore) migrate() error {
 			return err
 		}
 	}
+	if err := s.ensureGlobalPathOwnership(); err != nil {
+		return err
+	}
 	// Artwork quality bump (w780 → w1280 backdrops): stored URLs carry the
 	// size in the path, so rewrite in place instead of re-fetching 6k items.
 	// Idempotent — runs on every boot, rewrites only what still matches.
@@ -137,6 +151,49 @@ func (s *sqliteStore) migrate() error {
 	} {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migrate artwork urls: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureGlobalPathOwnership repairs historic rows where one filesystem path
+// belonged to several items, then makes single ownership a database invariant.
+func (s *sqliteStore) ensureGlobalPathOwnership() error {
+	var indexExists int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_item_paths_unique_path'`,
+	).Scan(&indexExists); err != nil {
+		return err
+	}
+	if indexExists > 0 {
+		return nil
+	}
+	queries := []string{
+		// Prefer the owner whose identity matches the cached fingerprint.
+		`DELETE FROM item_paths
+		 WHERE rowid IN (
+		   SELECT ip.rowid FROM item_paths ip
+		   JOIN items current_item ON current_item.id=ip.item_id
+		   JOIN file_states fs ON fs.path=ip.path
+		   WHERE current_item.hash<>fs.hash
+		     AND EXISTS (
+		       SELECT 1 FROM item_paths preferred
+		       JOIN items preferred_item ON preferred_item.id=preferred.item_id
+		       WHERE preferred.path=ip.path AND preferred_item.hash=fs.hash
+		     )
+		 )`,
+		// Any ambiguity left is old data with no authoritative cache entry.
+		`DELETE FROM item_paths
+		 WHERE rowid NOT IN (SELECT MAX(rowid) FROM item_paths GROUP BY path)`,
+		`UPDATE items SET state='missing', missing_at=COALESCE(missing_at, updated_at)
+		 WHERE state='active' AND NOT EXISTS (
+		   SELECT 1 FROM item_paths WHERE item_id=items.id
+		 )`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_item_paths_unique_path ON item_paths(path)`,
+	}
+	for _, q := range queries {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migrate path ownership: %w", err)
 		}
 	}
 	return nil
@@ -270,15 +327,29 @@ func (s *sqliteStore) UpsertByHash(hash, libraryName string, mutate func(it *Ite
 		}
 	}
 
-	// Sync paths: upsert each path, keep history.
+	// A live filesystem path has exactly one owner. Rehome it before the
+	// unique-path insert so in-place replacements cannot leave ghost items.
+	itemID := numericID(it.ID)
 	for _, p := range it.Paths {
+		if _, err := tx.Exec(
+			`DELETE FROM item_paths WHERE path=? AND item_id<>?`, p, itemID); err != nil {
+			return nil, fmt.Errorf("rehome path: %w", err)
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO item_paths (item_id, path, seen_at) VALUES (?, ?, ?)
 			 ON CONFLICT (item_id, path) DO UPDATE SET seen_at=excluded.seen_at`,
-			numericID(it.ID), p, fmtTime(time.Now()),
+			itemID, p, fmtTime(time.Now()),
 		); err != nil {
 			return nil, fmt.Errorf("upsert path: %w", err)
 		}
+	}
+	now := fmtTime(time.Now())
+	if _, err := tx.Exec(
+		`UPDATE items SET state=?, missing_at=?, updated_at=?
+		 WHERE state=? AND NOT EXISTS (SELECT 1 FROM item_paths WHERE item_id=items.id)`,
+		string(StateMissing), now, now, string(StateActive),
+	); err != nil {
+		return nil, fmt.Errorf("tombstone previous path owner: %w", err)
 	}
 	// Reload authoritative path list (history may exceed what mutate set).
 	paths, err := pathsForTx(tx, numericID(it.ID))
@@ -292,28 +363,47 @@ func (s *sqliteStore) UpsertByHash(hash, libraryName string, mutate func(it *Ite
 
 func (s *sqliteStore) MarkMissing(libraryName string, present map[string]bool) (int, error) {
 	items := s.List(libraryName)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	missing := 0
+	now := fmtTime(time.Now())
 	for _, it := range items {
-		if it.State != StateActive {
-			continue
-		}
 		seen := false
+		pruned := false
 		for _, p := range it.Paths {
 			if present[p] {
 				seen = true
-				break
+				continue
+			}
+			if _, err := tx.Exec(
+				`DELETE FROM item_paths WHERE item_id=? AND path=?`, numericID(it.ID), p,
+			); err != nil {
+				return missing, err
+			}
+			if _, err := tx.Exec(`DELETE FROM file_states WHERE path=?`, p); err != nil {
+				return missing, err
+			}
+			pruned = true
+		}
+		if it.State == StateActive && !seen {
+			if _, err := tx.Exec(
+				`UPDATE items SET state=?, missing_at=?, updated_at=? WHERE id=?`,
+				string(StateMissing), now, now, numericID(it.ID),
+			); err != nil {
+				return missing, err
+			}
+			missing++
+		} else if pruned {
+			if _, err := tx.Exec(`UPDATE items SET updated_at=? WHERE id=?`, now, numericID(it.ID)); err != nil {
+				return missing, err
 			}
 		}
-		if seen {
-			continue
-		}
-		if _, err := s.db.Exec(
-			`UPDATE items SET state=?, missing_at=?, updated_at=? WHERE id=?`,
-			string(StateMissing), fmtTime(time.Now()), fmtTime(time.Now()), numericID(it.ID),
-		); err != nil {
-			return missing, err
-		}
-		missing++
+	}
+	if err := tx.Commit(); err != nil {
+		return missing, err
 	}
 	return missing, nil
 }
@@ -360,9 +450,25 @@ func (s *sqliteStore) TombstonePath(path string) (bool, error) {
 // files (historic damage predating content-hash identity). UNIQUE(hash,
 // library) may refuse — the caller leaves the item as-is and logs it.
 func (s *sqliteStore) RekeyItemHash(id, hash string) error {
-	_, err := s.db.Exec(`UPDATE items SET hash=?, updated_at=? WHERE id=?`,
-		hash, fmtTime(time.Now()), numericID(id))
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	itemID := numericID(id)
+	if _, err := tx.Exec(`UPDATE items SET hash=?, updated_at=? WHERE id=?`,
+		hash, fmtTime(time.Now()), itemID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE file_states SET hash=? WHERE path IN (
+		   SELECT path FROM item_paths WHERE item_id=?
+		 )`,
+		hash, itemID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *sqliteStore) Get(id string) (*Item, error) {
@@ -448,6 +554,43 @@ func (s *sqliteStore) List(libraryName string) []Item {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
 	return out
+}
+
+func (s *sqliteStore) HashCandidates(sampleHash, libraryName string) ([]Item, error) {
+	rows, err := s.db.Query(
+		`SELECT id FROM items
+		 WHERE library=? AND (hash=? OR hash GLOB ?)`,
+		libraryName, sampleHash, sampleHash+":*")
+	if err != nil {
+		return nil, err
+	}
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	out := make([]Item, 0, len(ids))
+	for _, id := range ids {
+		it, err := s.Get(fmt.Sprintf("itm-%d", id))
+		if err != nil {
+			return nil, err
+		}
+		if it != nil {
+			out = append(out, *it)
+		}
+	}
+	return out, nil
 }
 
 func (s *sqliteStore) CatalogRevision() (count int, revision int64, err error) {

@@ -14,6 +14,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -36,20 +37,25 @@ func (s *Scanner) watchRoot(ctx context.Context, root config.LibraryRoot) {
 	if err != nil {
 		log.Printf("watcher: %s: fsnotify unavailable (%v) — falling back to sweep", root.Path, err)
 		s.setTier(root.Path, TierSweep)
-		go s.sweepLoop(ctx, root)
+		if err := s.ScanRoot(ctx, root); err != nil && ctx.Err() == nil {
+			log.Printf("watcher: recovery scan %s: %v", root.Path, err)
+		}
+		s.sweepLoop(ctx, root)
 		return
 	}
 	defer fsw.Close()
 
 	// fsnotify is not recursive: register every existing directory,
 	// then register new ones as they appear.
-	if err := filepath.WalkDir(root.Path, func(path string, d os.DirEntry, err error) error {
-		if err != nil || !d.IsDir() {
-			return nil
+	if err := walkWatchDirs(root.Path, fsw.Add); err != nil {
+		log.Printf("watcher: %s: initial dir registration failed (%v) — falling back to sweep", root.Path, err)
+		s.setTier(root.Path, TierSweep)
+		_ = fsw.Close()
+		if err := s.ScanRoot(ctx, root); err != nil && ctx.Err() == nil {
+			log.Printf("watcher: recovery scan %s: %v", root.Path, err)
 		}
-		return fsw.Add(path)
-	}); err != nil {
-		log.Printf("watcher: %s: initial dir registration: %v", root.Path, err)
+		s.sweepLoop(ctx, root)
+		return
 	}
 
 	var mu sync.Mutex
@@ -60,12 +66,36 @@ func (s *Scanner) watchRoot(ctx context.Context, root config.LibraryRoot) {
 		if t, ok := timers[path]; ok {
 			t.Stop()
 		}
-		timers[path] = time.AfterFunc(debounceAfter, func() {
+		var timer *time.Timer
+		timer = time.AfterFunc(debounceAfter, func() {
 			mu.Lock()
+			if timers[path] != timer {
+				mu.Unlock()
+				return
+			}
 			delete(timers, path)
 			mu.Unlock()
 			s.RefreshPath(path)
 		})
+		timers[path] = timer
+	}
+	fallbackToSweep := func(reason string) {
+		if ctx.Err() != nil {
+			return
+		}
+		log.Printf("watcher: %s: %s — falling back to sweep", root.Path, reason)
+		s.setTier(root.Path, TierSweep)
+		mu.Lock()
+		for _, timer := range timers {
+			timer.Stop()
+		}
+		clear(timers)
+		mu.Unlock()
+		_ = fsw.Close()
+		if err := s.ScanRoot(ctx, root); err != nil && ctx.Err() == nil {
+			log.Printf("watcher: recovery scan %s: %v", root.Path, err)
+		}
+		s.sweepLoop(ctx, root)
 	}
 
 	for {
@@ -80,6 +110,7 @@ func (s *Scanner) watchRoot(ctx context.Context, root config.LibraryRoot) {
 
 		case ev, ok := <-fsw.Events:
 			if !ok {
+				fallbackToSweep("event channel closed")
 				return
 			}
 			switch {
@@ -87,12 +118,22 @@ func (s *Scanner) watchRoot(ctx context.Context, root config.LibraryRoot) {
 				if _, err := s.store.TombstonePath(ev.Name); err != nil {
 					log.Printf("watcher: tombstone %s: %v", ev.Name, err)
 				}
+				// A renamed/removed directory may not emit an event for every
+				// child, so reconcile the root once the event burst settles.
+				debounce(root.Path)
 			case ev.Op&(fsnotify.Create|fsnotify.Write) != 0:
 				if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() {
 					if ev.Op&fsnotify.Create != 0 {
-						if err := fsw.Add(ev.Name); err != nil {
-							log.Printf("watcher: watch new dir %s: %v", ev.Name, err)
+						if shouldSkipDir(fi.Name()) {
+							continue
 						}
+						if err := walkWatchDirs(ev.Name, fsw.Add); err != nil {
+							fallbackToSweep("new directory registration failed: " + err.Error())
+							return
+						}
+						// Moved-in directory trees already contain files and
+						// may produce no child Create events.
+						debounce(ev.Name)
 					}
 					continue
 				}
@@ -103,9 +144,31 @@ func (s *Scanner) watchRoot(ctx context.Context, root config.LibraryRoot) {
 
 		case err, ok := <-fsw.Errors:
 			if !ok {
+				fallbackToSweep("error channel closed")
+				return
+			}
+			if errors.Is(err, fsnotify.ErrEventOverflow) {
+				fallbackToSweep("event queue overflow")
 				return
 			}
 			log.Printf("watcher: %s: %v", root.Path, err)
 		}
 	}
+}
+
+// walkWatchDirs registers root and every existing descendant directory.
+// fsnotify is not recursive, and moved-in trees may arrive fully populated.
+func walkWatchDirs(root string, add func(string) error) error {
+	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root && shouldSkipDir(d.Name()) {
+			return filepath.SkipDir
+		}
+		return add(path)
+	})
 }
