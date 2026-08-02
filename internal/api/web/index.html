@@ -10,13 +10,24 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<!--
+THESIS: Lumina carries one selected title or task as the visual anchor while navigation and tools change around it; it refuses the flat streaming-service wall.
+OWN-WORLD: Smoked navy and graphite hold ice-white Aero glass, pale sky refraction, pearl active states, and exact gold Lumina brand assets; glass marks floating control layers, never ordinary content.
+STORY: A desktop user resumes, discovers, manages, and watches owned media without losing context or operational truth.
+FIRST VIEWPORT: A spacious left rail frames a cinematic spotlight; a refractive Continue Watching dock overlaps its lower horizon and Recently Added emerges below.
+FORM: Carried Spotlight, Layered Horizon composition with Split Aero selection and Panorama rail spacing; surface seed 254e3584.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
+-->
 <header>
-  <h1 id="logo-word"><img id="logo-lockup" src="/brand/wordmark.webp" width="336" height="132" alt="Lumina" decoding="async"></h1>
+  <h1 id="logo-word">
+    <img id="logo-emblem" src="/brand/emblem-512.png" width="512" height="512" alt="" decoding="async">
+    <img id="logo-lockup" src="/brand/wordmark.webp" width="336" height="132" alt="Lumina" decoding="async">
+  </h1>
   <nav id="libraries" aria-label="Libraries"></nav>
   <div id="header-actions" class="seg-control">
-    <button id="search-button" aria-label="Search" title="Search"><span class="ic ic-search"></span></button>
-    <button id="arr-button" aria-label="Downloads and upcoming" title="Downloads & upcoming"><span class="ic ic-download"></span></button>
-    <button id="libs-button" aria-label="Settings" title="Settings"><span class="ic ic-settings"></span></button>
+    <button id="search-button" aria-label="Search" title="Search"><span class="ic ic-search"></span><span class="action-label">Search</span></button>
+    <button id="arr-button" aria-label="Downloads and upcoming" title="Downloads & upcoming"><span class="ic ic-download"></span><span class="action-label">Activity</span></button>
+    <button id="libs-button" aria-label="Settings" title="Settings"><span class="ic ic-settings"></span><span class="action-label">Settings</span></button>
     <div id="profile-wrap">
       <button id="user-badge" aria-label="Profile" aria-expanded="false" aria-controls="profile-menu" title="Profile"></button>
       <div id="profile-menu" class="hidden" role="region" aria-label="Profile options">
@@ -31,7 +42,10 @@
 
 <div id="settings-page" class="hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="settings-head">
-    <h2 id="settings-title">Settings</h2>
+    <div>
+      <span class="settings-kicker">Lumina control room</span>
+      <h2 id="settings-title">Settings</h2>
+    </div>
     <button id="settings-close" aria-label="Close settings" title="Close (Esc)"><span class="ic ic-close"></span></button>
   </div>
   <div class="settings-body">

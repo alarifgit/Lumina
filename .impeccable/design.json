@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-02T18:00:00.000Z",
+  "title": "Design System: Lumina",
+  "extensions": {
+    "colorMeta": {
+      "night-foundation": {
+        "role": "neutral",
+        "displayName": "Night Foundation",
+        "canonical": "#07111e",
+        "tonalRamp": [
+          "#07111e",
+          "#0d1d2d",
+          "#193047",
+          "#31516c",
+          "#567791",
+          "#83a2b8",
+          "#b9cfde",
+          "#eef6fb"
+        ]
+      },
+      "graphite-panel": {
+        "role": "neutral",
+        "displayName": "Graphite Panel",
+        "canonical": "#102033",
+        "tonalRamp": [
+          "#08111c",
+          "#102033",
+          "#1d344b",
+          "#36516a",
+          "#5a748c",
+          "#849caf",
+          "#b8c9d6",
+          "#edf3f7"
+        ]
+      },
+      "pearl": {
+        "role": "primary",
+        "displayName": "Pearl Light",
+        "canonical": "#f5f8fc",
+        "tonalRamp": [
+          "#18212b",
+          "#303d4a",
+          "#536373",
+          "#798a99",
+          "#a2b1bf",
+          "#c8d4de",
+          "#e6edf3",
+          "#f5f8fc"
+        ]
+      },
+      "ice-blue": {
+        "role": "secondary",
+        "displayName": "Aero Ice Blue",
+        "canonical": "#8db4d2",
+        "tonalRamp": [
+          "#102432",
+          "#18384d",
+          "#28536e",
+          "#40738f",
+          "#6495b2",
+          "#8db4d2",
+          "#bad4e6",
+          "#e8f4fb"
+        ]
+      },
+      "lumina-gold": {
+        "role": "tertiary",
+        "displayName": "Lumina Gold",
+        "canonical": "#c7a56b",
+        "tonalRamp": [
+          "#2a2114",
+          "#46371f",
+          "#66502c",
+          "#896d3e",
+          "#ad8b54",
+          "#c7a56b",
+          "#dfc594",
+          "#f6ead2"
+        ]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "Library Success",
+        "canonical": "#7fb98a",
+        "tonalRamp": [
+          "#11281a",
+          "#1d4129",
+          "#2d5d3c",
+          "#467b53",
+          "#639c6e",
+          "#7fb98a",
+          "#add3b5",
+          "#e2f2e5"
+        ]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Operational Warning",
+        "canonical": "#d8a24a",
+        "tonalRamp": [
+          "#2d210e",
+          "#4a3514",
+          "#6d4d1d",
+          "#936a29",
+          "#ba8738",
+          "#d8a24a",
+          "#e9c781",
+          "#faebc9"
+        ]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Playback Danger",
+        "canonical": "#f09a91",
+        "tonalRamp": [
+          "#351615",
+          "#57201e",
+          "#7c302c",
+          "#a74943",
+          "#d16d66",
+          "#f09a91",
+          "#f7c0ba",
+          "#fdeae8"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Cinematic Display",
+        "purpose": "Hero titles and dominant media identity."
+      },
+      "title": {
+        "displayName": "Surface Headline",
+        "purpose": "Browse and major surface headings."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Overviews, explanations, and dense settings information."
+      },
+      "label": {
+        "displayName": "Context Label",
+        "purpose": "Uppercase kickers and compact operational context."
+      }
+    },
+    "shadows": [
+      {
+        "name": "aero-floating",
+        "value": "0 24px 72px rgba(0, 5, 13, 0.48)",
+        "purpose": "Dialogs, the Layered Horizon dock, and major floating glass."
+      },
+      {
+        "name": "artwork-lift",
+        "value": "0 20px 48px rgba(0, 5, 13, 0.5)",
+        "purpose": "Focused or hovered media artwork."
+      },
+      {
+        "name": "glass-upper-edge",
+        "value": "inset 0 1px 0 rgba(255, 255, 255, 0.16)",
+        "purpose": "Refractive upper edge on functional glass."
+      }
+    ],
+    "motion": [
+      {
+        "name": "focus-ease",
+        "value": "cubic-bezier(0.2, 0.6, 0.2, 1)",
+        "purpose": "Navigation, cards, and focus-responsive movement."
+      },
+      {
+        "name": "state-fast",
+        "value": "180ms ease",
+        "purpose": "Hover, color, and border transitions."
+      },
+      {
+        "name": "surface-shift",
+        "value": "240ms cubic-bezier(0.2, 0.6, 0.2, 1)",
+        "purpose": "Subtle card and shell transitions."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "480px"
+      },
+      {
+        "name": "mobile",
+        "value": "760px"
+      },
+      {
+        "name": "medium-compact",
+        "value": "1100px"
+      },
+      {
+        "name": "wide-rail",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Pearl action for the one decisive next step.",
+      "html": "<button class=\"ds-btn-primary\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m8 5 11 7-11 7z\"/></svg>Play now</button>",
+      "css": ".ds-btn-primary{min-height:2.75rem;display:inline-flex;align-items:center;justify-content:center;gap:.48rem;padding:.72rem 1.35rem;border:1px solid rgba(255,255,255,.7);border-radius:999px;background:#f5f8fc;color:#07111e;font:620 .95rem system-ui,sans-serif;box-shadow:inset 0 1px 0 #fff,0 10px 30px rgba(0,6,14,.35);transition:transform 180ms cubic-bezier(.2,.6,.2,1),box-shadow 180ms ease}.ds-btn-primary svg{width:1rem;fill:currentColor}.ds-btn-primary:hover{transform:translateY(-1px);background:#fff;box-shadow:inset 0 1px 0 #fff,0 14px 34px rgba(0,6,14,.44)}.ds-btn-primary:focus-visible{outline:2px solid #e0f0fc;outline-offset:3px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Cool glass secondary action.",
+      "html": "<button class=\"ds-btn-ghost\">Media info</button>",
+      "css": ".ds-btn-ghost{min-height:2.65rem;padding:.62rem 1rem;border:1px solid rgba(225,242,254,.24);border-radius:999px;background:linear-gradient(180deg,rgba(211,235,250,.12),rgba(113,154,186,.08));color:#f5f8fc;font:500 .9rem system-ui,sans-serif;box-shadow:inset 0 1px 0 rgba(255,255,255,.16);transition:background 180ms ease,border-color 180ms ease}.ds-btn-ghost:hover{border-color:rgba(246,251,255,.42);background:rgba(211,235,250,.16)}.ds-btn-ghost:focus-visible{outline:2px solid #e0f0fc;outline-offset:3px}"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Deep translucent field for search and operational filtering.",
+      "html": "<label class=\"ds-field\"><span>Search library</span><input placeholder=\"Search titles…\"></label>",
+      "css": ".ds-field{display:grid;gap:.38rem;color:rgba(213,225,239,.62);font:700 .69rem system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase}.ds-field input{height:2.65rem;padding:0 .85rem;border:1px solid rgba(220,238,251,.18);border-radius:.8rem;background:rgba(8,20,33,.86);color:#f5f8fc;font:400 .95rem system-ui,sans-serif}.ds-field input::placeholder{color:rgba(213,225,239,.5)}.ds-field input:hover{border-color:rgba(229,244,253,.3)}.ds-field input:focus-visible{outline:2px solid #e0f0fc;outline-offset:3px}"
+    },
+    {
+      "name": "Selected Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-selected",
+      "description": "Luminous selected destination used in wide, medium, and mobile shells.",
+      "html": "<button class=\"ds-nav\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3.5 10.5 12 3l8.5 7.5v9A1.5 1.5 0 0 1 19 21h-4.5v-6h-5v6H5a1.5 1.5 0 0 1-1.5-1.5z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg><span>Home</span></button>",
+      "css": ".ds-nav{min-width:5rem;min-height:4rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.35rem;padding:.5rem;border:1px solid rgba(255,255,255,.78);border-radius:1rem;background:linear-gradient(180deg,rgba(251,253,255,.98),rgba(208,229,244,.94));color:#07111e;font:650 .68rem system-ui,sans-serif;box-shadow:inset 0 1px 0 #fff,0 12px 30px rgba(0,5,13,.35)}.ds-nav svg{width:1.35rem;height:1.35rem}.ds-nav:hover{background:#fff}.ds-nav:focus-visible{outline:2px solid #e0f0fc;outline-offset:3px}"
+    },
+    {
+      "name": "Media Card",
+      "kind": "card",
+      "refersTo": "card-media",
+      "description": "Artwork-first card with quiet metadata and a luminous focus rim.",
+      "html": "<article class=\"ds-card\"><div class=\"ds-card-art\"><span>Artwork</span></div><strong>Title</strong><small>2026 · Movie</small></article>",
+      "css": ".ds-card{width:11rem;display:grid;gap:.3rem;color:#f5f8fc;font-family:system-ui,sans-serif;transition:transform 240ms cubic-bezier(.2,.6,.2,1)}.ds-card-art{aspect-ratio:2/3;display:grid;place-items:center;border:1px solid rgba(221,238,250,.1);border-radius:1.05rem;background:#102033;color:rgba(213,225,239,.52);box-shadow:0 15px 38px rgba(0,5,13,.28)}.ds-card strong{font-size:.88rem}.ds-card small{color:rgba(199,216,230,.56)}.ds-card:hover{transform:translateY(-.4rem)}.ds-card:hover .ds-card-art,.ds-card:focus-within .ds-card-art{border-color:rgba(241,250,255,.56);box-shadow:0 22px 55px rgba(0,5,13,.5),0 0 0 2px rgba(205,232,250,.16)}"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "refersTo": null,
+      "description": "Compact semantic state without changing layout geometry.",
+      "html": "<span class=\"ds-chip\">Direct play</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;min-height:1.7rem;padding:.2rem .58rem;border:1px solid rgba(222,239,250,.15);border-radius:999px;background:rgba(187,218,239,.09);color:rgba(241,247,252,.84);font:700 .68rem system-ui,sans-serif;letter-spacing:.04em}.ds-chip:hover{border-color:rgba(235,248,255,.3);background:rgba(205,229,245,.13)}"
+    },
+    {
+      "name": "Layered Horizon Dock",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The single refractive rail that crosses the home hero edge.",
+      "html": "<section class=\"ds-dock\"><header><strong>Continue Watching</strong><span>3 in progress</span></header><div class=\"ds-dock-row\"><i></i><i></i><i></i></div></section>",
+      "css": ".ds-dock{width:min(38rem,90vw);padding:1rem;border:1px solid rgba(225,242,254,.24);border-radius:1.55rem;background:linear-gradient(150deg,rgba(119,158,188,.3),rgba(12,29,45,.9));color:#f5f8fc;font-family:system-ui,sans-serif;box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 26px 70px rgba(0,5,13,.48)}.ds-dock header{display:flex;justify-content:space-between;align-items:baseline}.ds-dock header span{color:rgba(213,225,239,.62);font-size:.75rem}.ds-dock-row{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem;margin-top:.8rem}.ds-dock-row i{aspect-ratio:16/9;border:1px solid rgba(221,238,250,.12);border-radius:.8rem;background:#102033}.ds-dock:hover{border-color:rgba(246,251,255,.36)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Carried Spotlight in Layered Aero",
+    "overview": "Lumina treats one selected title or operational task as the visual anchor and lets navigation, discovery, and controls orbit it. Real library artwork carries emotion while smoked navy foundations and cool functional glass preserve operational truth. Pearl selections provide clarity, and exact Lumina identity keeps the product unmistakably its own.",
+    "keyCharacteristics": [
+      "One dominant cinematic focal area per surface.",
+      "Cool, refractive functional glass with bright upper edges and deep ambient shadow.",
+      "Pearl active states; Lumina gold reserved for identity, progress, and rare emphasis.",
+      "Real media artwork and honest operational status throughout.",
+      "Adaptive navigation: wide rail, medium top bar, mobile bottom bar."
+    ],
+    "rules": [
+      {
+        "name": "The Gold Reserve Rule",
+        "body": "Gold belongs to Lumina identity, playback progress, and rare emphasis; never use it as the general interactive accent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Functional Glass Rule",
+        "body": "Use translucent material only for a control layer, selected state, dialog, or deliberate overlap.",
+        "section": "colors"
+      },
+      {
+        "name": "The Focal Compression Rule",
+        "body": "Large titles are tightly tracked and weighty; supporting text stays quieter and more open.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Floating Horizon Rule",
+        "body": "Only the first home rail overlaps the hero.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Bright Edge Rule",
+        "body": "Every translucent functional surface needs a restrained light edge or inset highlight plus an opaque fallback.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use the exact repository emblem and wordmark assets.",
+      "Do let real artwork lead, with scrims sized to the actual copy.",
+      "Do keep primary actions pearl and playback progress gold.",
+      "Do preserve keyboard focus, reduced-motion behavior, and opaque glass fallbacks.",
+      "Do change navigation topology at the established wide, medium, and mobile breakpoints."
+    ],
+    "donts": [
+      "Don't turn every card or settings row into decorative glass.",
+      "Don't use neon blue, broad gold fills, or gold as the default hover color.",
+      "Don't stack multiple overlapping rails beneath a hero.",
+      "Don't hide real operational states to make Settings appear simpler.",
+      "Don't trust a fixed sample of titles when sizing hero copy or catalog rendering."
+    ]
+  }
+}

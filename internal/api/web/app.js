@@ -264,13 +264,14 @@ function escapeHtml(s) {
   }[c]));
 }
 
-function addCardOpenButton(el, label, handler) {
+function addCardOpenButton(el, label, handler, prepend = false) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "card-open";
   button.setAttribute("aria-label", label);
   button.onclick = handler;
-  el.appendChild(button);
+  if (prepend) el.prepend(button);
+  else el.appendChild(button);
 }
 
 function addCardActionsButton(el, it) {
@@ -406,12 +407,44 @@ function moveNavGlider() {
 }
 window.addEventListener("resize", moveNavGlider);
 
+function navCountPhrase(count, noun) {
+  const plural = noun === "series" ? noun : `${noun}${count === 1 ? "" : "s"}`;
+  return `${count} ${plural}`;
+}
+
+function setNavButtonContent(button, iconClass, label, count = null, countNoun = "title") {
+  button.dataset.navLabel = label;
+  button.dataset.navCountNoun = countNoun;
+  button.innerHTML = `
+    <span class="nav-icon ${iconClass}" aria-hidden="true"></span>
+    <span class="nav-label">${escapeHtml(label)}</span>
+    ${count == null ? "" : `<span class="nav-count" aria-hidden="true">${count}</span>`}`;
+  button.setAttribute("aria-label", count == null
+    ? label
+    : `${label}, ${navCountPhrase(count, countNoun)}`);
+}
+
+function setNavButtonCount(button, count, countNoun = button.dataset.navCountNoun || "title") {
+  let countEl = button.querySelector(".nav-count");
+  if (!countEl) {
+    countEl = document.createElement("span");
+    countEl.className = "nav-count";
+    countEl.setAttribute("aria-hidden", "true");
+    button.appendChild(countEl);
+  }
+  countEl.textContent = String(count);
+  button.dataset.navCountNoun = countNoun;
+  button.setAttribute("aria-label",
+    `${button.dataset.navLabel || button.textContent.trim()}, ${navCountPhrase(count, countNoun)}`);
+}
+
 async function loadLibraries() {
   const libs = await api("/api/v1/libraries");
   nav.innerHTML = '<span class="seg-glider"></span>';
 
   const homeBtn = document.createElement("button");
-  homeBtn.textContent = "Home";
+  homeBtn.type = "button";
+  setNavButtonContent(homeBtn, "nav-icon-home", "Home");
   homeBtn.onclick = () => {
     setActiveNav(homeBtn);
     loadHome();
@@ -420,7 +453,10 @@ async function loadLibraries() {
 
   for (const lib of libs) {
     const btn = document.createElement("button");
-    btn.textContent = `${lib.name} (${lib.items})`;
+    btn.type = "button";
+    const kind = lib.kind === "tv" ? "tv" : "movies";
+    setNavButtonContent(btn, `nav-icon-library nav-icon-${kind}`, lib.name,
+      kind === "tv" ? null : (lib.items || 0), kind === "tv" ? "series" : "title");
     btn.title = `${lib.path} — watcher: ${lib.watcher}`;
     // loadHome() rewrites the count once items are known: TV libraries show
     // a SERIES count (Plex-style), not raw episode files.
@@ -435,7 +471,8 @@ async function loadLibraries() {
 
   // "My List" — per-user bookmarks, always the last segment.
   const mlBtn = document.createElement("button");
-  mlBtn.textContent = "My List";
+  mlBtn.type = "button";
+  setNavButtonContent(mlBtn, "nav-icon-mylist", "My List");
   mlBtn.title = "Titles you bookmarked (right-click any card → Add to My List)";
   mlBtn.dataset.kind = "mylist";
   mlBtn.onclick = () => {
@@ -452,6 +489,57 @@ async function loadLibraries() {
   if (lastVisibleItems.length > 0) updateNavCounts(lastVisibleItems);
 }
 
+const BROWSE_BATCH_SIZE = 120;
+
+function libraryCardEntries(visible) {
+  const episodes = visible.filter((it) => it.kind === "episode");
+  const others = visible.filter((it) => it.kind !== "episode");
+  const groups = new Map();
+  for (const it of episodes) {
+    const key = seriesKey(it);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  const series = [...groups.entries()].map(([key, eps]) => {
+    eps.sort(compareSE);
+    const rep = eps.find((e) => e.posterUrl) || eps[0];
+    const seasonCount = new Set(eps.map((e) => (episodeSE(e) || { s: 0 }).s)).size;
+    const unwatched = eps.filter((e) => !(playheads[e.id] && playheads[e.id].watched)).length;
+    return { key, eps, rep, seasonCount, unwatched };
+  }).sort((a, b) => a.key.localeCompare(b.key));
+  return [
+    ...series.map((group) => ({ type: "series", group })),
+    ...others.map((item) => ({ type: "item", item })),
+  ];
+}
+
+function browseSummary(visible, saved = false) {
+  const entries = libraryCardEntries(visible);
+  if (saved) {
+    const owner = currentUser ? ` for ${currentUser.name}` : "";
+    return `${entries.length} saved title${entries.length === 1 ? "" : "s"}${owner}`;
+  }
+  const episodeCount = visible.filter((it) => it.kind === "episode").length;
+  const seriesCount = entries.filter((entry) => entry.type === "series").length;
+  const otherCount = entries.length - seriesCount;
+  const parts = [];
+  if (seriesCount) {
+    parts.push(`${seriesCount} series`,
+      `${episodeCount} episode${episodeCount === 1 ? "" : "s"}`);
+  }
+  if (otherCount) parts.push(`${otherCount} title${otherCount === 1 ? "" : "s"}`);
+  return parts.join(" · ") || "No active titles yet";
+}
+
+function renderBrowseHeading(title, summary) {
+  const heading = document.createElement("div");
+  heading.className = "browse-head";
+  heading.innerHTML = `
+    <h2 class="browse-title">${escapeHtml(title)}</h2>
+    <p class="browse-summary">${escapeHtml(summary)}</p>`;
+  grid.appendChild(heading);
+}
+
 async function loadItems(lib) {
   activeLib = lib;
   backTarget = () => loadItems(lib); // detail pages return to this library
@@ -465,11 +553,14 @@ async function loadItems(lib) {
   playheads = phs || {};
   myListIds = ml || {};
   // Mutate the grid only once the data has arrived (anti-flash).
-  grid.className = "";
+  grid.className = "browse";
   grid.innerHTML = "";
-  const visible = (items || []).filter((it) => it.state !== "missing");
+  const visible = (items || []).filter((it) =>
+    it.state !== "missing" && it.library === lib.name);
+  renderBrowseHeading(lib.name, browseSummary(visible));
   if (visible.length === 0) {
-    grid.innerHTML = `<div id="empty">Nothing here yet — Lumina is scanning, or the path is empty.</div>`;
+    grid.insertAdjacentHTML("beforeend",
+      `<div id="empty">Nothing here yet — Lumina is scanning, or the path is empty.</div>`);
     announce("No titles in this library");
     return;
   }
@@ -479,93 +570,113 @@ async function loadItems(lib) {
 
 // Shared card renderer for the library + My List views: episodes group into
 // one card per series (Plex library view), everything else gets a movie card.
+function createSeriesLibraryCard(g) {
+  const identified = !!g.rep.posterUrl;
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="poster" style="${posterStyle(g.key)}">
+      ${identified ? "" : `<div class="glow" style="${glowStyle(g.key)}"></div>`}
+      ${identified
+        ? `<img class="poster-img" src="${escapeHtml(g.rep.posterUrl)}" loading="lazy" alt=""
+             onerror="this.remove()">`
+        : `<span class="initials">${posterInitials(g.key)}</span>
+           <span class="poster-title">${escapeHtml(g.key)}</span>`}
+      <button class="card-play" aria-label="Play next episode" title="Play next episode"><span class="ic ic-play"></span></button>
+      <span class="watermark">LUMINA</span>
+      ${g.unwatched > 0 ? `<span class="count-badge lib-badge">${g.unwatched}</span>` : ""}
+    </div>
+    <div class="meta">
+      <div class="title" title="${escapeHtml(g.key)}">${escapeHtml(g.key)}</div>
+      <div class="sub">${g.eps.length} episode${g.eps.length === 1 ? "" : "s"}${g.seasonCount > 1 ? ` · ${g.seasonCount} seasons` : ""}</div>
+    </div>`;
+  card.querySelector(".card-play").onclick = (e) => {
+    e.stopPropagation();
+    play(nextEpisode(g.eps));
+  };
+  addCardOpenButton(card, `Open ${g.key}`, () => openSeries(g.key, g.rep));
+  addCardActionsButton(card, g.rep);
+  card.dataset.id = g.rep.id;
+  return card;
+}
+
+function createItemLibraryCard(it) {
+  const ph = playheads[it.id];
+  const pct = ph && ph.durationMs > 0
+    ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
+  const identified = !!it.posterUrl;
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="poster" style="${posterStyle(it.title)}">
+      ${identified ? "" : `<div class="glow" style="${glowStyle(it.title)}"></div>`}
+      ${identified
+        ? `<img class="poster-img" src="${escapeHtml(it.posterUrl)}" loading="lazy" alt=""
+             onerror="this.remove()">`
+        : `<span class="initials">${posterInitials(it.title)}</span>
+           <span class="poster-title">${escapeHtml(it.title)}</span>`}
+      <button class="card-play" aria-label="Play" title="Play"><span class="ic ic-play"></span></button>
+      <span class="watermark">LUMINA</span>
+      ${ph && ph.watched ? `<span class="watched" title="Watched"><span class="ic ic-check"></span></span>` : ""}
+      ${pct > 0 && !(ph && ph.watched)
+        ? `<div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`
+        : ""}
+    </div>
+    <div class="meta">
+      <div class="title" title="${escapeHtml(it.title)}">${escapeHtml(it.title)}</div>
+      <div class="sub">${it.year ? it.year + " · " : ""}${fmtBytes(it.sizeBytes)}</div>
+    </div>`;
+  card.querySelector(".card-play").onclick = (e) => {
+    e.stopPropagation();
+    play(it);
+  };
+  addCardOpenButton(card, `Open ${it.title}`, () => openMovieDetail(it));
+  addCardActionsButton(card, it);
+  card.dataset.id = it.id;
+  return card;
+}
+
 function renderLibraryCards(visible) {
-  const episodes = visible.filter((it) => it.kind === "episode");
-  const others = visible.filter((it) => it.kind !== "episode");
+  const entries = libraryCardEntries(visible);
+  const moreWrap = document.createElement("div");
+  moreWrap.className = "browse-more-wrap";
+  const moreButton = document.createElement("button");
+  moreButton.type = "button";
+  moreButton.className = "browse-more";
+  moreWrap.appendChild(moreButton);
+  let rendered = 0;
 
-  if (episodes.length > 0) {
-    // One card per series (Plex library view), not a wall of episode files.
-    const groups = new Map();
-    for (const it of episodes) {
-      const k = seriesKey(it);
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push(it);
+  const appendBatch = (moveFocus = false) => {
+    const batch = entries.slice(rendered, rendered + BROWSE_BATCH_SIZE);
+    const fragment = document.createDocumentFragment();
+    let firstNewFocus = null;
+    for (const entry of batch) {
+      const card = entry.type === "series"
+        ? createSeriesLibraryCard(entry.group)
+        : createItemLibraryCard(entry.item);
+      if (!firstNewFocus) firstNewFocus = card.querySelector(".card-open");
+      fragment.appendChild(card);
     }
-    const series = [...groups.entries()].map(([key, eps]) => {
-      eps.sort(compareSE);
-      const rep = eps.find((e) => e.posterUrl) || eps[0];
-      const seasonCount = new Set(eps.map((e) => (episodeSE(e) || { s: 0 }).s)).size;
-      const unwatched = eps.filter((e) => !(playheads[e.id] && playheads[e.id].watched)).length;
-      return { key, eps, rep, seasonCount, unwatched };
-    }).sort((a, b) => a.key.localeCompare(b.key));
+    if (moreWrap.isConnected) grid.insertBefore(fragment, moreWrap);
+    else grid.appendChild(fragment);
+    rendered += batch.length;
 
-    for (const g of series) {
-      const identified = !!g.rep.posterUrl;
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <div class="poster" style="${posterStyle(g.key)}">
-          ${identified ? "" : `<div class="glow" style="${glowStyle(g.key)}"></div>`}
-          ${identified
-            ? `<img class="poster-img" src="${escapeHtml(g.rep.posterUrl)}" loading="lazy" alt=""
-                 onerror="this.remove()">`
-            : `<span class="initials">${posterInitials(g.key)}</span>
-               <span class="poster-title">${escapeHtml(g.key)}</span>`}
-          <button class="card-play" aria-label="Play next episode" title="Play next episode"><span class="ic ic-play"></span></button>
-          <span class="watermark">LUMINA</span>
-          ${g.unwatched > 0 ? `<span class="count-badge lib-badge">${g.unwatched}</span>` : ""}
-        </div>
-        <div class="meta">
-          <div class="title" title="${escapeHtml(g.key)}">${escapeHtml(g.key)}</div>
-          <div class="sub">${g.eps.length} episode${g.eps.length === 1 ? "" : "s"}${g.seasonCount > 1 ? ` · ${g.seasonCount} seasons` : ""}</div>
-        </div>`;
-      card.querySelector(".card-play").onclick = (e) => {
-        e.stopPropagation();
-        play(nextEpisode(g.eps));
-      };
-      addCardOpenButton(card, `Open ${g.key}`, () => openSeries(g.key, g.rep));
-      addCardActionsButton(card, g.rep);
-      card.dataset.id = g.rep.id;
-      grid.appendChild(card);
+    const remaining = entries.length - rendered;
+    if (remaining > 0) {
+      const nextCount = Math.min(BROWSE_BATCH_SIZE, remaining);
+      moreButton.textContent = `Load ${nextCount} more`;
+      moreButton.setAttribute("aria-label",
+        `Load ${nextCount} more titles; ${rendered} of ${entries.length} shown`);
+      if (!moreWrap.isConnected) grid.appendChild(moreWrap);
+    } else {
+      moreWrap.remove();
     }
-  }
+    announce(`${rendered} of ${entries.length} title${entries.length === 1 ? "" : "s"} shown`);
+    if (moveFocus && firstNewFocus) requestAnimationFrame(() => firstNewFocus.focus());
+  };
 
-  for (const it of others) {
-    const ph = playheads[it.id];
-    const pct = ph && ph.durationMs > 0
-      ? Math.min(100, (ph.positionMs / ph.durationMs) * 100) : 0;
-    const identified = !!it.posterUrl;
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `
-      <div class="poster" style="${posterStyle(it.title)}">
-        ${identified ? "" : `<div class="glow" style="${glowStyle(it.title)}"></div>`}
-        ${identified
-          ? `<img class="poster-img" src="${escapeHtml(it.posterUrl)}" loading="lazy" alt=""
-               onerror="this.remove()">`
-          : `<span class="initials">${posterInitials(it.title)}</span>
-             <span class="poster-title">${escapeHtml(it.title)}</span>`}
-        <button class="card-play" aria-label="Play" title="Play"><span class="ic ic-play"></span></button>
-        <span class="watermark">LUMINA</span>
-        ${ph && ph.watched ? `<span class="watched" title="Watched"><span class="ic ic-check"></span></span>` : ""}
-        ${pct > 0 && !(ph && ph.watched)
-          ? `<div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>`
-          : ""}
-      </div>
-      <div class="meta">
-        <div class="title" title="${escapeHtml(it.title)}">${escapeHtml(it.title)}</div>
-        <div class="sub">${it.year ? it.year + " · " : ""}${fmtBytes(it.sizeBytes)}</div>
-      </div>`;
-    card.querySelector(".card-play").onclick = (e) => {
-      e.stopPropagation();
-      play(it);
-    };
-    addCardOpenButton(card, `Open ${it.title}`, () => openMovieDetail(it));
-    addCardActionsButton(card, it);
-    card.dataset.id = it.id;
-    grid.appendChild(card);
-  }
-  announce(`${visible.length} title${visible.length === 1 ? "" : "s"} loaded`);
+  moreButton.onclick = () => appendBatch(true);
+  appendBatch();
 }
 
 // --- My List (per-user bookmarks) -------------------------------------------
@@ -583,13 +694,15 @@ async function loadMyList() {
   playheads = phs || {};
   myListIds = ml || {};
   // Mutate the grid only once the data has arrived (anti-flash).
-  grid.className = "";
+  grid.className = "browse my-list";
   grid.innerHTML = "";
   const visible = (items || []).filter((it) => it.state !== "missing");
   visible.forEach((it) => itemById.set(it.id, it));
   const mine = visible.filter((it) => myListIds[it.id]);
+  renderBrowseHeading("My List", browseSummary(mine, true));
   if (mine.length === 0) {
-    grid.innerHTML = `<div id="empty">Nothing bookmarked yet — open a card’s Actions menu to add it to My List.</div>`;
+    grid.insertAdjacentHTML("beforeend",
+      `<div id="empty">Nothing bookmarked yet — open a card’s Actions menu to add it to My List.</div>`);
     announce("My List is empty");
     return;
   }
@@ -794,6 +907,7 @@ function openMovieDetail(it) {
       <div class="hero-scrim"></div>
       <div class="hero-copy">
         ${detailBackButton()}
+        <div class="hero-kicker">Movie</div>
         <h2>${escapeHtml(it.title)}</h2>
         <div class="hero-meta">${["Movie", it.year, (it.genres || []).slice(0, 3).join(" · ")]
           .filter(Boolean).join("  ·  ")}</div>
@@ -841,6 +955,7 @@ function openSeries(key, anchor) {
       <div class="hero-scrim"></div>
       <div class="hero-copy">
         ${detailBackButton()}
+        <div class="hero-kicker">Series</div>
         <h2>${escapeHtml(key)}</h2>
         <div class="hero-meta">${["Series", rep.year, `${seasons.size} season${seasons.size === 1 ? "" : "s"}`,
           `${eps.length} episode${eps.length === 1 ? "" : "s"}`].filter(Boolean).join("  ·  ")}</div>
@@ -905,7 +1020,7 @@ function openSeries(key, anchor) {
       const it = itemById.get(row.dataset.id);
       if (!it) return;
       row.querySelector(".ep-play").onclick = (e) => { e.stopPropagation(); play(it); };
-      row.onclick = () => play(it);
+      addCardOpenButton(row, `Play ${episodeLabel(it, key)}`, () => play(it), true);
       addCardActionsButton(row, it);
     });
   }
@@ -948,8 +1063,13 @@ function updateNavCounts(visible) {
     const n = btn.dataset.kind === "tv"
       ? new Set(its.map(seriesKey)).size
       : its.length;
-    btn.textContent = `${btn.dataset.lib} (${n})`;
+    setNavButtonCount(btn, n, btn.dataset.kind === "tv" ? "series" : "title");
   });
+  const myListButton = nav.querySelector('button[data-kind="mylist"]');
+  if (myListButton) {
+    const saved = visible.filter((it) => myListIds[it.id]);
+    setNavButtonCount(myListButton, libraryCardEntries(saved).length, "title");
+  }
   moveNavGlider(); // count changes rewrap segment widths
 }
 
@@ -1017,6 +1137,7 @@ async function loadHome() {
           ${artHtml(it, "backdrop", i === 0)}
           <div class="hero-scrim"></div>
           <div class="hero-copy">
+            <div class="hero-kicker">Featured in your library</div>
             <h2>${escapeHtml(it.title)}</h2>
             <div class="hero-meta">${[it.kind === "episode" ? "Episode" : "Movie", it.year, (it.genres || []).slice(0, 2).join(" · ")].filter(Boolean).join("  ·  ")}</div>
             <p>${escapeHtml(it.overview || "Your library, direct from the source — no cloud account, no Plex pass, no transcode unless it has to.")}</p>
@@ -2113,8 +2234,10 @@ let manageAll = [];
 let manageLibsLoaded = false;
 let manageExpectRefresh = false; // a fix-match closed → rebuild the table
 let manageCurrentLibraries = new Set();
+let manageFilterTimer = null;
 
 async function loadManage() {
+  clearTimeout(manageFilterTimer);
   const rows = document.getElementById("manage-rows");
   rows.innerHTML = `<div class="arr-error">Loading…</div>`;
   try {
@@ -2249,8 +2372,15 @@ function renderManage() {
   });
 }
 
-["manage-lib", "manage-status", "manage-q"].forEach((id) => {
+["manage-lib", "manage-status"].forEach((id) => {
   document.getElementById(id).addEventListener("input", renderManage);
+});
+document.getElementById("manage-q").addEventListener("input", () => {
+  clearTimeout(manageFilterTimer);
+  manageFilterTimer = setTimeout(() => {
+    manageFilterTimer = null;
+    renderManage();
+  }, 180);
 });
 
 // --- now playing (activity) ---------------------------------------------------
