@@ -442,11 +442,15 @@ func (s *Scanner) reconcileSplitPaths(ctx context.Context, root config.LibraryRo
 	}
 }
 
-// repairItemPaths recomputes sampled and full hashes without trusting cached
-// file state. The first path retains the item/watch history; paths with
+// repairItemPaths verifies every path once, then trusts only an explicit
+// full-verification marker whose size, nanosecond mtime, and canonical identity
+// still match. The first path retains the item/watch history; paths with
 // different bytes or conflicting parsed identities are detached and re-indexed
 // under their own verified identity.
 func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int {
+	if s.itemPathsStillVerified(it) {
+		return 0
+	}
 	type checked struct {
 		path    string
 		sample  string
@@ -475,6 +479,19 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int 
 			return -1
 		}
 		all = append(all, checked{p, sample, full, parsedContentIdentity(root, p), fi})
+	}
+	for _, c := range all {
+		current, err := os.Stat(c.path)
+		if err != nil {
+			log.Printf("scanner: reconcile %s (%q): re-stat %s: %v — retry later",
+				it.ID, it.Title, c.path, err)
+			return -1
+		}
+		if current.IsDir() || current.Size() != c.fi.Size() || current.ModTime().UnixNano() != c.fi.ModTime().UnixNano() {
+			log.Printf("scanner: reconcile %s (%q): %s changed while hashing — retry later",
+				it.ID, it.Title, c.path)
+			return -1
+		}
 	}
 	owner := all[0]
 	canonical := canonicalIdentity(owner.sample, owner.full, owner.logical)
@@ -507,11 +524,47 @@ func (s *Scanner) repairItemPaths(root config.LibraryRoot, it library.Item) int 
 		log.Printf("scanner: reconcile: %s detached from %s (%q) — full hash/logical identity differs",
 			filepath.Base(c.path), it.ID, it.Title)
 	}
+	for _, c := range all {
+		sameLogical := owner.logical == "" || c.logical == "" || owner.logical == c.logical
+		if c.full != owner.full || !sameLogical {
+			continue
+		}
+		if err := s.store.SetVerifiedFileState(
+			c.path, c.fi.Size(), c.fi.ModTime().UnixNano(), canonical,
+		); err != nil {
+			log.Printf("scanner: reconcile %s (%q): cache verified path %s: %v",
+				it.ID, it.Title, c.path, err)
+		}
+	}
 	if detached == 0 {
 		log.Printf("scanner: reconcile %s (%q): all %d paths are byte-identical with compatible identities — keeping merged",
 			it.ID, it.Title, len(all))
 	}
 	return detached
+}
+
+func (s *Scanner) itemPathsStillVerified(it library.Item) bool {
+	if len(it.Paths) < 2 {
+		return false
+	}
+	sampleEnd := strings.IndexByte(it.Hash, ':')
+	if sampleEnd <= 0 {
+		return false
+	}
+	if _, ok := verifiedFullFromIdentity(it.Hash, it.Hash[:sampleEnd]); !ok {
+		return false
+	}
+	for _, path := range it.Paths {
+		fi, err := os.Stat(path)
+		if err != nil || fi.IsDir() {
+			return false
+		}
+		size, mtime, hash, ok := s.store.VerifiedFileState(path)
+		if !ok || size != fi.Size() || mtime != fi.ModTime().UnixNano() || hash != it.Hash {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Scanner) sweepLoop(ctx context.Context, root config.LibraryRoot) {

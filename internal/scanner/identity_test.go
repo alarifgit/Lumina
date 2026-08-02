@@ -76,6 +76,41 @@ func TestExactDuplicatePromotesToVerifiedIdentityAndMerges(t *testing.T) {
 	}
 }
 
+func TestMultiPathVerificationCacheUsesNanosecondMtime(t *testing.T) {
+	root := config.LibraryRoot{Name: "Movies", Path: t.TempDir(), Kind: "movies"}
+	scanner, store := openIdentityTestScanner(t, root)
+	first := filepath.Join(root.Path, "Copy A", "Movie.2024.mkv")
+	second := filepath.Join(root.Path, "Copy B", "Movie.2024.mkv")
+	writeIdentityTestFile(t, first, []byte("identical movie bytes"))
+	writeIdentityTestFile(t, second, []byte("identical movie bytes"))
+	baseTime := time.Unix(1_700_000_000, 100)
+	for _, path := range []string{first, second} {
+		if err := os.Chtimes(path, baseTime, baseTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	indexIdentityTestFile(t, scanner, root, first)
+	indexIdentityTestFile(t, scanner, root, second)
+	items := store.List(root.Name)
+	if len(items) != 1 {
+		t.Fatalf("exact duplicate produced %d items", len(items))
+	}
+	if n := scanner.repairItemPaths(root, items[0]); n != 0 {
+		t.Fatalf("initial verification repaired %d paths, want 0", n)
+	}
+	items = store.List(root.Name)
+	if !scanner.itemPathsStillVerified(items[0]) {
+		t.Fatal("unchanged duplicate paths did not use the verification cache")
+	}
+	changedTime := time.Unix(1_700_000_000, 500_000_000)
+	if err := os.Chtimes(second, changedTime, changedTime); err != nil {
+		t.Fatal(err)
+	}
+	if scanner.itemPathsStillVerified(items[0]) {
+		t.Fatal("same-second nanosecond mtime change did not invalidate verification")
+	}
+}
+
 func writeSampleCollisionFile(t *testing.T, path string, middle byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

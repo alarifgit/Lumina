@@ -417,7 +417,8 @@ func mergeItemReferencesTx(tx *sql.Tx, sourceID, destinationID int64) error {
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE file_states SET hash=(SELECT hash FROM items WHERE id=?)
+		`UPDATE file_states
+		 SET hash=(SELECT hash FROM items WHERE id=?), full_verified=0
 		 WHERE path IN (SELECT path FROM item_paths WHERE item_id=?)`,
 		destinationID, destinationID,
 	); err != nil {

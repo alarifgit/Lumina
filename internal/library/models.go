@@ -79,6 +79,12 @@ type Store interface {
 	FileState(path string) (size, mtime int64, hash string, ok bool)
 	// SetFileState records what a path looked like when its identity was resolved.
 	SetFileState(path string, size, mtime int64, hash string) error
+	// VerifiedFileState returns state only when the complete file was hashed
+	// at the recorded size and mtime. Sampled identities are deliberately
+	// excluded: they are an accelerator, not proof that two paths match.
+	VerifiedFileState(path string) (size, mtime int64, hash string, ok bool)
+	// SetVerifiedFileState records a definitive full-file verification.
+	SetVerifiedFileState(path string, size, mtime int64, hash string) error
 
 	Close() error
 }

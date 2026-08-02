@@ -1,6 +1,7 @@
 package library
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 )
@@ -69,6 +70,62 @@ func TestTombstonePathRemovesDirectoryTreeAndCachedState(t *testing.T) {
 	}
 	if _, _, _, ok := store.FileState(outside); !ok {
 		t.Fatal("unrelated file state was removed")
+	}
+}
+
+func TestVerifiedFileStateRequiresExplicitFullVerification(t *testing.T) {
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const path = "/media/movie.mkv"
+	if err := store.SetFileState(path, 10, 20, "sample"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, ok := store.VerifiedFileState(path); ok {
+		t.Fatal("sampled file state was treated as fully verified")
+	}
+	if err := store.SetVerifiedFileState(path, 10, 20, "canonical"); err != nil {
+		t.Fatal(err)
+	}
+	size, mtime, hash, ok := store.VerifiedFileState(path)
+	if !ok || size != 10 || mtime != 20 || hash != "canonical" {
+		t.Fatalf("verified state = (%d, %d, %q, %v)", size, mtime, hash, ok)
+	}
+	if err := store.SetFileState(path, 10, 21, "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, ok := store.VerifiedFileState(path); ok {
+		t.Fatal("ordinary state update did not invalidate full verification")
+	}
+}
+
+func TestOpenStoreMigratesLegacyFileStateVerification(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "lumina.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TABLE file_states (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL, hash TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	const path = "/media/legacy.mkv"
+	if err := store.SetVerifiedFileState(path, 10, 20, "canonical"); err != nil {
+		t.Fatal(err)
+	}
+	size, mtime, hash, ok := store.VerifiedFileState(path)
+	if !ok || size != 10 || mtime != 20 || hash != "canonical" {
+		t.Fatalf("migrated verified state = (%d, %d, %q, %v)", size, mtime, hash, ok)
 	}
 }
 

@@ -82,10 +82,11 @@ END;
 -- the difference between a sweep reading 16 MiB per file over SMB and a
 -- sweep doing one cheap stat per file.
 CREATE TABLE IF NOT EXISTS file_states (
-    path  TEXT    PRIMARY KEY,
-    size  INTEGER NOT NULL,
-    mtime INTEGER NOT NULL,
-    hash  TEXT    NOT NULL
+    path          TEXT    PRIMARY KEY,
+    size          INTEGER NOT NULL,
+    mtime         INTEGER NOT NULL,
+    hash          TEXT    NOT NULL,
+    full_verified INTEGER NOT NULL DEFAULT 0
 );
 
 -- Phase 3: users + watch-state journal (append-only; resume state is derived).
@@ -126,6 +127,10 @@ func (s *sqliteStore) migrate() error {
 	}
 	if err := s.ensureColumn("users", "avatar",
 		`ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("file_states", "full_verified",
+		`ALTER TABLE file_states ADD COLUMN full_verified INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
 	for _, col := range []struct{ name, ddl string }{
@@ -278,8 +283,30 @@ func (s *sqliteStore) FileState(path string) (size, mtime int64, hash string, ok
 // SetFileState records what a path looked like when it was hashed.
 func (s *sqliteStore) SetFileState(path string, size, mtime int64, hash string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO file_states (path, size, mtime, hash) VALUES (?, ?, ?, ?)
-		 ON CONFLICT (path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime, hash=excluded.hash`,
+		`INSERT INTO file_states (path, size, mtime, hash, full_verified) VALUES (?, ?, ?, ?, 0)
+		 ON CONFLICT (path) DO UPDATE SET
+		   size=excluded.size, mtime=excluded.mtime, hash=excluded.hash, full_verified=0`,
+		path, size, mtime, hash)
+	return err
+}
+
+// VerifiedFileState returns only a cache entry backed by a complete file hash.
+func (s *sqliteStore) VerifiedFileState(path string) (size, mtime int64, hash string, ok bool) {
+	err := s.db.QueryRow(
+		`SELECT size, mtime, hash FROM file_states WHERE path=? AND full_verified=1`, path).
+		Scan(&size, &mtime, &hash)
+	if err != nil {
+		return 0, 0, "", false
+	}
+	return size, mtime, hash, true
+}
+
+// SetVerifiedFileState records a full-file verification at an exact stat.
+func (s *sqliteStore) SetVerifiedFileState(path string, size, mtime int64, hash string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO file_states (path, size, mtime, hash, full_verified) VALUES (?, ?, ?, ?, 1)
+		 ON CONFLICT (path) DO UPDATE SET
+		   size=excluded.size, mtime=excluded.mtime, hash=excluded.hash, full_verified=1`,
 		path, size, mtime, hash)
 	return err
 }
@@ -461,7 +488,7 @@ func (s *sqliteStore) RekeyItemHash(id, hash string) error {
 		return err
 	}
 	if _, err := tx.Exec(
-		`UPDATE file_states SET hash=? WHERE path IN (
+		`UPDATE file_states SET hash=?, full_verified=0 WHERE path IN (
 		   SELECT path FROM item_paths WHERE item_id=?
 		 )`,
 		hash, itemID,
